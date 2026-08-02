@@ -2,7 +2,7 @@ schema: ws-doc-writer-benchmark-fixtures/v1
 benchmark_revision: ws-doc-writer-frozen-10/v1
 application_baseline: f46e3f0abb335fc37fe03b6b168ce07f0656cbf9
 runner_version: ws-doc-writer-benchmark-runner/v1
-runner_sha256: f8950e83cd39f51e4b5964d40ea081d84ba34c5416d629549c5d6d67b0477392
+runner_sha256: 129ec25668804191fdbfc5f533c03df3721eaf48cf312049711e16b58de30511
 cases_manifest_sha256: 752c10021cc2de49ac38187d56b0f192d4005df62ed8e7e894b848e693cfa3a7
 contract_hashes:
   schemas/scoring.yaml: 29246ca2957dbaed37a34f40ffd9370016098ede027cc88f4188ff9091daf36e

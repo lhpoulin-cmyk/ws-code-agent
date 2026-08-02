@@ -1,0 +1,56 @@
+schema: ws-doc-writer-models/v1
+status: proposed-not-pulled
+target_workstation: ws-matriarch
+common_benchmark:
+  context: 8192
+  temperature: 0.2
+  top_p: 0.9
+  seed: 42
+  streaming: false
+  thinking: disabled
+candidates:
+  - tag: qwen3:14b-q4_K_M
+    digest: unresolved-until-pull
+    publisher: unresolved
+    license: unresolved
+    quantization: q4_K_M
+    model_size: unresolved
+    context_tested: unresolved
+    gpu_residency: unresolved
+    vram_consumption: unresolved
+    load_time: unresolved
+    first_token_latency: unresolved
+    generation_rate: unresolved
+    thermal_observations: unresolved
+    benchmark_score: unresolved
+    operator_disposition: unresolved
+  - tag: gemma3:12b-it-q4_K_M
+    digest: unresolved-until-pull
+    publisher: unresolved
+    license: unresolved
+    quantization: q4_K_M
+    model_size: unresolved
+    context_tested: unresolved
+    gpu_residency: unresolved
+    vram_consumption: unresolved
+    load_time: unresolved
+    first_token_latency: unresolved
+    generation_rate: unresolved
+    thermal_observations: unresolved
+    benchmark_score: unresolved
+    operator_disposition: unresolved
+  - tag: mistral-nemo:12b-instruct-2407-q4_K_M
+    digest: unresolved-until-pull
+    publisher: unresolved
+    license: unresolved
+    quantization: q4_K_M
+    model_size: unresolved
+    context_tested: unresolved
+    gpu_residency: unresolved
+    vram_consumption: unresolved
+    load_time: unresolved
+    first_token_latency: unresolved
+    generation_rate: unresolved
+    thermal_observations: unresolved
+    benchmark_score: unresolved
+    operator_disposition: unresolved

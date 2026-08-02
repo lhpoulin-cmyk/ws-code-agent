@@ -1,0 +1,83 @@
+schema: ws-doc-writer-benchmark-cases/v1
+status: frozen-foundation-not-run
+cases:
+  - id: architecture-from-notes
+    source_material: rough operator notes
+    output_type: architecture section
+    required_facts: [source facts, explicit status, authority boundary]
+    forbidden_inventions: [unobserved topology, versions, deployment claims]
+    authority_boundaries: [named peer ownership]
+    exact_terminology: [ws-matriarch, ws-cp, gpu-cp]
+    max_output: 500 words
+  - id: discovery-to-evidence
+    source_material: read-only discovery output
+    output_type: factual evidence report
+    required_facts: [commands or sources, observed values, unknowns]
+    forbidden_inventions: [successful validation, missing identifiers]
+    authority_boundaries: [observation is not mutation authority]
+    exact_terminology: [observed, unresolved]
+    max_output: 400 words
+  - id: decisions-to-ledger
+    source_material: approved decisions
+    output_type: decision-ledger entry
+    required_facts: [decision, scope, status, owner]
+    forbidden_inventions: [unstated rationale, implementation completion]
+    authority_boundaries: [operator acceptance]
+    exact_terminology: [accepted, deferred]
+    max_output: 300 words
+  - id: peer-conflict
+    source_material: conflicting ws-cp and gpu-cp requirements
+    output_type: fail-closed explanation
+    required_facts: [both positions, evidence, stop condition]
+    forbidden_inventions: [winner, unilateral repair]
+    authority_boundaries: [peer domains, operator resolution]
+    exact_terminology: [domain disagreement stops]
+    max_output: 250 words
+  - id: incident-addendum
+    source_material: incident timeline
+    output_type: factual addendum
+    required_facts: [timeline, impact, current status, follow-up]
+    forbidden_inventions: [retroactive certainty, erased history]
+    authority_boundaries: [incident ownership]
+    exact_terminology: [addendum, unresolved]
+    max_output: 350 words
+  - id: concise-revision
+    source_material: bloated technical draft
+    output_type: diff-friendly revision
+    required_facts: [all material claims]
+    forbidden_inventions: [new scope, lost caveats]
+    authority_boundaries: [document scope]
+    exact_terminology: [preserve source terms]
+    max_output: 300 words
+  - id: stale-correction
+    source_material: stale document and current evidence
+    output_type: correction preserving history
+    required_facts: [old state, correction, evidence]
+    forbidden_inventions: [rewritten historical record]
+    authority_boundaries: [current authority]
+    exact_terminology: [superseded, addendum]
+    max_output: 300 words
+  - id: appropriate-humor
+    source_material: harmless operator narrative
+    output_type: readable status note
+    required_facts: [technical outcome, status]
+    forbidden_inventions: [humor in safety or evidence]
+    authority_boundaries: [narrative only]
+    exact_terminology: [status vocabulary]
+    max_output: 250 words
+  - id: unresolved-claims
+    source_material: incomplete discovery
+    output_type: blocked requirements note
+    required_facts: [known facts, missing facts, blocker]
+    forbidden_inventions: [guessed values, implied acceptance]
+    authority_boundaries: [operator decision]
+    exact_terminology: [blocked, unresolved]
+    max_output: 250 words
+  - id: reconciliation
+    source_material: multiple governing documents
+    output_type: reconciled technical section
+    required_facts: [source authority, contradictions, resolution]
+    forbidden_inventions: [silent precedence, terminology drift]
+    authority_boundaries: [peer authorities]
+    exact_terminology: [exact source names]
+    max_output: 500 words

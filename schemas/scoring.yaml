@@ -1,0 +1,15 @@
+schema: ws-doc-writer-scoring/v1
+blind_model_identity: true
+dimensions:
+  - factual_preservation
+  - unsupported_fact_resistance
+  - voice_fidelity
+  - instruction_compliance
+  - authority_boundary_accuracy
+  - terminology_consistency
+  - clarity
+  - brevity
+  - repetition
+  - diff_friendliness
+scale: 0-5
+decision_rule: scores inform operator selection; numeric total never selects a winner alone

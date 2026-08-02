@@ -5,7 +5,10 @@ target_workstation: ws-matriarch
 device:
   model: Crucial Gen5 NVMe
   observed_linux_name: nvme0n1
-  stable_identity: unresolved-until-ws-cp-discovery
+  serial: "2532525E0E43"
+  wwn: eui.000000000000000100a07525525e0e43
+  gpt_guid: 291D1F46-7569-49DD-BD40-72D83D5D0502
+  stable_identity: proven-by-phase1-discovery
 source_geometry:
   unpartitioned_gap_gib: 153.1
   location: between nvme0n1p3 and nvme0n1p5
@@ -13,6 +16,10 @@ allocation:
   size_gb: 128
   source: unpartitioned-gap-only
   remaining_gap: unassigned
+  start_sector: 739276800
+  end_sector: 989276799
+  sector_count: 250000000
+  bytes: 128000000000
 exclusions:
   - consume-full-gap
   - nvme0n1p6-free-space

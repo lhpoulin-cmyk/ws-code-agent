@@ -40,3 +40,7 @@ This is an intended requirement, not observed partition state or execution
 authority. The exact device identity, partition plan, filesystem, mount path,
 free-space proof, and rollback/recovery procedure remain unresolved. Any
 partition mutation belongs in a separately reviewed `ws-cp` packet.
+
+The application also requires the five project-quota categories, the
+reproducibility schema, encrypted evidence contract, and daily soak records.
+It does not partition, format, mount, or configure quotas itself.

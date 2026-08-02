@@ -1,0 +1,27 @@
+schema: ws-doc-writer-reproducibility/v1
+required:
+  - model_tag
+  - resolved_model_digest
+  - quantization
+  - ollama_version
+  - rocm_version
+  - driver_version
+  - gpu_identity
+  - tested_context
+  - generation_settings
+  - prompt_revision
+  - voice_revision
+  - benchmark_corpus_revision
+  - source_material_hashes
+  - raw_output_reference
+  - blinded_evaluation_identity
+  - scoring
+  - operator_disposition
+  - timing
+  - vram_residency
+  - thermals
+  - power_observation
+rules:
+  digest_identity: same-tag-different-digest-is-a-different-subject
+  raw_output: retained-in-encrypted-evidence-store
+  model_blobs: unencrypted-reconstructable-not-authoritative-evidence

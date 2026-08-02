@@ -19,3 +19,8 @@ thermals, digest mismatch, inconsistent benchmark, or peer disagreement.
 
 Completion requires pinned digests, preserved original outputs, blinded review,
 validation evidence, peer acceptance, and explicit operator disposition.
+
+The packet must consume the storage manifest, reproducibility schema, evidence
+encryption contract, and daily soak template. It remains blocked until `ws-cp`
+proves disk geometry and storage acceptance and `gpu-cp` proves accelerator
+acceptance.

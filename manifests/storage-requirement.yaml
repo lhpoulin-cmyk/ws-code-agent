@@ -1,0 +1,35 @@
+schema: ws-doc-writer-storage/v1
+status: intended-not-created
+workload: ws-doc-writer
+target_workstation: ws-matriarch
+device:
+  model: Crucial Gen5 NVMe
+  observed_linux_name: nvme0n1
+  stable_identity: unresolved-until-ws-cp-discovery
+source_geometry:
+  unpartitioned_gap_gib: 153.1
+  location: between nvme0n1p3 and nvme0n1p5
+allocation:
+  size_gb: 128
+  source: unpartitioned-gap-only
+  remaining_gap: unassigned
+exclusions:
+  - consume-full-gap
+  - nvme0n1p6-free-space
+  - resize-or-move-existing-partitions
+  - destructive-identity-by-device-path-alone
+filesystem:
+  type: xfs
+  project_quotas: required
+  mount: /srv/ws-doc-writer
+  fstrim: scheduled
+directories:
+  models: {quota_gib: 64}
+  benchmarks: {quota_gib: 20}
+  evidence: {quota_gib: 16}
+  staging: {quota_gib: 8}
+  state: {quota_gib: 4}
+  reserve: remaining-usable-filesystem-capacity
+quota_policy:
+  automatic_growth: false
+  change_requires: [observed-usage, written-reason, impact-review, operator-approval, updated-manifest-and-evidence]

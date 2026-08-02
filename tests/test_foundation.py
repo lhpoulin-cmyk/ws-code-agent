@@ -48,3 +48,23 @@ def test_no_live_acceptance_claim():
     text = (ROOT / "README.md").read_text() + (ROOT / "manifests/models.yaml").read_text()
     assert "No model has been pulled" in text
     assert "proposed-not-pulled" in text
+
+
+def test_storage_and_soak_contract():
+    storage = yaml.safe_load((ROOT / "manifests/storage-requirement.yaml").read_text())
+    assert storage["allocation"]["size_gb"] == 128
+    assert storage["allocation"]["source"] == "unpartitioned-gap-only"
+    assert storage["allocation"]["remaining_gap"] == "unassigned"
+    assert "nvme0n1p6-free-space" in storage["exclusions"]
+    assert storage["filesystem"]["type"] == "xfs"
+    assert storage["filesystem"]["project_quotas"] == "required"
+    assert storage["quota_policy"]["automatic_growth"] is False
+    quota_total = sum(v["quota_gib"] for v in storage["directories"].values() if "quota_gib" in v)
+    assert quota_total == 112
+    assert quota_total < storage["allocation"]["size_gb"]
+    soak = yaml.safe_load((ROOT / "benchmarks/daily-soak-record.template.yaml").read_text())
+    assert soak["day"] == "required-1-through-14"
+    encryption = (ROOT / "docs/evidence-encryption.md").read_text()
+    assert "SOPS" in encryption and "age" in encryption
+    reproducibility = yaml.safe_load((ROOT / "schemas/reproducibility.yaml").read_text())
+    assert reproducibility["rules"]["model_blobs"]

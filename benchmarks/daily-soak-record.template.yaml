@@ -1,0 +1,32 @@
+schema: ws-doc-writer-daily-soak/v1
+status: template
+day: required-1-through-14
+date: required
+operator: required
+filesystem:
+  total_usable: required
+  quota_usage_by_project: required
+  daily_growth_by_category: required
+  free_space_reserve: required
+models:
+  tags_and_digests: required
+ollama:
+  service_health: required
+  api_bind_state: required
+gpu:
+  residency: required
+  generation_performance: required
+  temperature: required
+  power: required
+model_load_behavior: required
+benchmark_progress: required
+outputs:
+  accepted: required
+  rejected: required
+evidence:
+  encryption_and_recoverability: required
+prompt_and_voice_changes: required
+application_errors: required
+cpu_fallback_or_partial_offload_events: required
+unresolved_discrepancies: required
+operator_observations: required

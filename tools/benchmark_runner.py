@@ -150,7 +150,7 @@ def validate_api_and_models() -> dict[str, Any]:
         raise RuntimeError(f"API is not loopback-only: {matches}")
     _, version = api("/api/version")
     raw, tags = api("/api/tags")
-    observed = {item["name"]: item["digest"] for item in tags.get("models", [])}
+    observed = {item["name"]: (item["digest"] if item["digest"].startswith("sha256:") else "sha256:" + item["digest"]) for item in tags.get("models", [])}
     expected = {tag: digest for tag, digest, _ in MODELS}
     if observed != expected:
         raise RuntimeError(f"model inventory mismatch: {observed}")

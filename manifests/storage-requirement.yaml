@@ -23,6 +23,16 @@ filesystem:
   project_quotas: required
   mount: /srv/ws-doc-writer
   fstrim: scheduled
+encryption:
+  type: luks2
+  mapper: ws-doc-writer
+  passphrase: shared-with-foundation-interactive-never-recorded
+  recovery_key: independent-random-keyslot
+  protected_vault_copies: 2
+  header_backups: 2
+  crypttab_identity: persistent-uuid
+  mount_identity: persistent-filesystem-uuid
+  discard: permitted-with-privacy-tradeoff
 directories:
   models: {quota_gib: 64}
   benchmarks: {quota_gib: 20}

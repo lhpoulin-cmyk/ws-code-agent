@@ -68,3 +68,8 @@ def test_storage_and_soak_contract():
     assert "SOPS" in encryption and "age" in encryption
     reproducibility = yaml.safe_load((ROOT / "schemas/reproducibility.yaml").read_text())
     assert reproducibility["rules"]["model_blobs"]
+    encrypted = (ROOT / "docs/encrypted-storage.md").read_text()
+    assert "LUKS2" in encrypted and "ws-doc-writer" in encrypted
+    assert "shared passphrase" in encrypted
+    assert "must never fall back" in encrypted
+    assert "allocation-pattern" in encrypted

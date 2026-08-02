@@ -15,3 +15,9 @@ anomalies. No automatic deletion of accepted evidence is authorized.
 The exact age/SOPS identity and recovery method are unresolved pending
 `auth-cp` or the approved existing secret authority. Private keys, SOPS
 secrets, and decrypted evidence never enter Git.
+
+Local-at-rest protection is a separate layer: the application volume is LUKS2
+with an interactively entered passphrase shared with Foundation and an
+independent recovery key protected in both approved vaults. The shared
+passphrase coupling is an explicitly accepted operator tradeoff. LUKS2 does
+not replace SOPS/age for portable configuration or exported evidence.

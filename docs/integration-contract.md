@@ -44,3 +44,6 @@ partition mutation belongs in a separately reviewed `ws-cp` packet.
 The application also requires the five project-quota categories, the
 reproducibility schema, encrypted evidence contract, and daily soak records.
 It does not partition, format, mount, or configure quotas itself.
+
+The encrypted-storage stack is defined in `docs/encrypted-storage.md` and
+requires the volume to be available before application or GPU acceptance.

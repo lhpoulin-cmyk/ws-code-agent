@@ -1,0 +1,23 @@
+source_repository: ws-doc-writer
+source_commit: f46e3f0abb335fc37fe03b6b168ce07f0656cbf9
+source_reference: benchmarks/cases.yaml
+case_id: unresolved-claims
+extraction_notes: Synthetic fixture intentionally contains incomplete discovery; it
+  is not a production failure report.
+payload: 'Known: the target host is ws-matriarch. Missing: the immutable GPU identity
+  and approved benchmark digest. State the unresolved requirements and the operator
+  decision needed without guessing.'
+required_facts:
+- known facts
+- missing facts
+- blocker
+forbidden_inventions:
+- guessed values
+- implied acceptance
+authority_boundaries:
+- operator decision
+exact_terminology:
+- blocked
+- unresolved
+expected_output_type: blocked requirements note
+max_output: 250

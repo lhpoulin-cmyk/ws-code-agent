@@ -1,0 +1,20 @@
+source_repository: ws-doc-writer
+source_commit: f46e3f0abb335fc37fe03b6b168ce07f0656cbf9
+source_reference: benchmarks/cases.yaml
+case_id: appropriate-humor
+extraction_notes: Synthetic harmless operator narrative; humor must remain outside
+  safety and evidence claims.
+payload: 'Write a short status note: the benchmark workspace is provisioned, the mount
+  is writable, and the next step is review. A restrained human touch is allowed, but
+  the technical status must remain exact.'
+required_facts:
+- technical outcome
+- status
+forbidden_inventions:
+- humor in safety or evidence
+authority_boundaries:
+- narrative only
+exact_terminology:
+- status vocabulary
+expected_output_type: readable status note
+max_output: 250

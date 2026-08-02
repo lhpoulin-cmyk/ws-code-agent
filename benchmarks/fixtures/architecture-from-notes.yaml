@@ -1,0 +1,25 @@
+source_repository: ws-doc-writer
+source_commit: f46e3f0abb335fc37fe03b6b168ce07f0656cbf9
+source_reference: benchmarks/cases.yaml
+case_id: architecture-from-notes
+extraction_notes: Synthetic fixture based on operator-owned peer-boundary concepts;
+  not a deployment record.
+payload: Operator notes say gpu-cp owns RX 9070 XT identity and ws-cp owns Ollama
+  mechanics. The target is ws-matriarch. The notes do not establish driver compatibility
+  or workload acceptance.
+required_facts:
+- source facts
+- explicit status
+- authority boundary
+forbidden_inventions:
+- unobserved topology
+- versions
+- deployment claims
+authority_boundaries:
+- named peer ownership
+exact_terminology:
+- ws-matriarch
+- ws-cp
+- gpu-cp
+expected_output_type: architecture section
+max_output: 500

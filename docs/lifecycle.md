@@ -26,3 +26,13 @@ never authoritative by itself.
 | `SUPERSEDED` | A later accepted artifact replaces it without erasing history. |
 
 `ACCEPTED` requires both validation evidence and explicit operator acceptance.
+
+
+## Benchmark lifecycle
+
+The frozen benchmark lifecycle is: commit application fixtures and contracts;
+validate hashes and runtime gates; execute the 3-by-10 matrix sequentially;
+retain unmodified raw responses; produce anonymous review outputs; complete
+operator scoring; and record an explicit disposition. A generated response is
+never `ACCEPTED` without factual, voice, authority-boundary, and operator
+review.

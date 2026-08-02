@@ -17,8 +17,11 @@ and returns to the operator.
 
 ## Current status
 
-Foundation only. No model has been pulled, no service has been changed, and no
-benchmark has run. The initial workload is `ws-doc-writer` on `ws-matriarch`.
+The frozen ten-case benchmark implementation is prepared in the application
+repository. The runner requires a clean committed revision, validates all
+frozen hashes and host gates, executes 30 sequential model/case runs, and
+produces raw evidence plus a blinded review bundle. Generated prose remains
+`REVIEW_REQUIRED`; no model winner or document acceptance is automatic.
 
 ## Layout
 

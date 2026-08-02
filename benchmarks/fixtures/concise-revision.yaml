@@ -1,0 +1,20 @@
+source_repository: ws-doc-writer
+source_commit: f46e3f0abb335fc37fe03b6b168ce07f0656cbf9
+source_reference: benchmarks/cases.yaml
+case_id: concise-revision
+extraction_notes: Synthetic fixture based on a bloated technical paragraph; no external
+  source is asserted.
+payload: 'Rewrite this requirement without losing material caveats: use the encrypted
+  workspace, require loopback API exposure, preserve raw outputs, and obtain operator
+  acceptance before promotion.'
+required_facts:
+- all material claims
+forbidden_inventions:
+- new scope
+- lost caveats
+authority_boundaries:
+- document scope
+exact_terminology:
+- preserve source terms
+expected_output_type: diff-friendly revision
+max_output: 300

@@ -1,0 +1,22 @@
+source_repository: ws-doc-writer
+source_commit: f46e3f0abb335fc37fe03b6b168ce07f0656cbf9
+source_reference: benchmarks/cases.yaml
+case_id: discovery-to-evidence
+extraction_notes: Synthetic fixture based on the read-only discovery pattern; values
+  are intentionally limited to the supplied text.
+payload: Read-only discovery observed hostname ws-matriarch and an RX 9070 XT at PCI
+  0000:03:00.0. ROCm compatibility and permissions remain unresolved in this fixture.
+required_facts:
+- commands or sources
+- observed values
+- unknowns
+forbidden_inventions:
+- successful validation
+- missing identifiers
+authority_boundaries:
+- observation is not mutation authority
+exact_terminology:
+- observed
+- unresolved
+expected_output_type: factual evidence report
+max_output: 400

@@ -44,10 +44,10 @@ def test_peer_boundary_and_no_forbidden_identities():
     assert "conflict" in text
 
 
-def test_no_live_acceptance_claim():
+def test_no_automatic_acceptance_claim():
     text = (ROOT / "README.md").read_text() + (ROOT / "manifests/models.yaml").read_text()
-    assert "No model has been pulled" in text
-    assert "proposed-not-pulled" in text
+    assert "operator" in text.lower()
+    assert "operator_disposition: unresolved" in text
 
 
 def test_storage_and_soak_contract():

@@ -1,6 +1,6 @@
 # Ollama and benchmark coordination packet
 
-Status: **prepared / blocked / not executable**.
+Status: **implemented / ready for execution after commit**.
 
 `ws-doc-writer` supplies prompts, frozen cases, scoring, and acceptance
 requirements. `ws-cp` must perform any workstation/Ollama mutation. `gpu-cp`
@@ -24,3 +24,14 @@ The packet must consume the storage manifest, reproducibility schema, evidence
 encryption contract, and daily soak template. It remains blocked until `ws-cp`
 proves disk geometry and storage acceptance and `gpu-cp` proves accelerator
 acceptance.
+
+
+## Implemented benchmark revision
+
+The application owns ten frozen, provenance-labeled fixtures, scoring and
+reproducibility contracts, and `tools/benchmark_runner.py`. The runner validates
+all hashes, runtime gates, pinned model identities, loopback exposure, 8192
+context, disabled thinking, sequential execution, 100% GPU residency, raw
+output retention, blind mapping separation, and `REVIEW_REQUIRED` disposition.
+It writes only beneath `/srv/ws-doc-writer/benchmarks` and never chooses a
+model or marks generated prose accepted.

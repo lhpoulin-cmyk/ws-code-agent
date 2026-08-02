@@ -1,0 +1,24 @@
+source_repository: ws-doc-writer
+source_commit: f46e3f0abb335fc37fe03b6b168ce07f0656cbf9
+source_reference: benchmarks/cases.yaml
+case_id: incident-addendum
+extraction_notes: Synthetic fixture intentionally models an incident timeline; it
+  is not presented as a real incident.
+payload: 'Synthetic timeline: at 10:00 a read-only probe ran in a restricted namespace;
+  at 10:05 host-visible inspection showed the mount was rw; current status is validated
+  host state; follow-up is to use the host-visible path for live evidence.'
+required_facts:
+- timeline
+- impact
+- current status
+- follow-up
+forbidden_inventions:
+- retroactive certainty
+- erased history
+authority_boundaries:
+- incident ownership
+exact_terminology:
+- addendum
+- unresolved
+expected_output_type: factual addendum
+max_output: 350

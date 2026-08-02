@@ -1,0 +1,24 @@
+source_repository: ws-doc-writer
+source_commit: f46e3f0abb335fc37fe03b6b168ce07f0656cbf9
+source_reference: benchmarks/cases.yaml
+case_id: decisions-to-ledger
+extraction_notes: Synthetic fixture based on operator decision-record concepts; no
+  implementation completion is implied.
+payload: The operator accepted a dedicated benchmark workspace under /srv/ws-doc-writer/benchmarks.
+  Scope is benchmark runtime storage. Owner is ws-cp for filesystem mechanics; application
+  acceptance remains with ws-doc-writer.
+required_facts:
+- decision
+- scope
+- status
+- owner
+forbidden_inventions:
+- unstated rationale
+- implementation completion
+authority_boundaries:
+- operator acceptance
+exact_terminology:
+- accepted
+- deferred
+expected_output_type: decision-ledger entry
+max_output: 300

@@ -1,0 +1,22 @@
+source_repository: ws-doc-writer
+source_commit: f46e3f0abb335fc37fe03b6b168ce07f0656cbf9
+source_reference: benchmarks/cases.yaml
+case_id: stale-correction
+extraction_notes: Synthetic fixture models stale prose and current evidence; it is
+  not a historical record.
+payload: 'Old note: no model was pulled. Current evidence: three pinned model tags
+  are present and smoke-tested. State the correction as an addendum and preserve the
+  old claim as superseded.'
+required_facts:
+- old state
+- correction
+- evidence
+forbidden_inventions:
+- rewritten historical record
+authority_boundaries:
+- current authority
+exact_terminology:
+- superseded
+- addendum
+expected_output_type: correction preserving history
+max_output: 300

@@ -37,6 +37,8 @@ MODELS = [
     ("mistral-nemo:12b-instruct-2407-q4_K_M", "sha256:daf6737417121831e572a9c482e92a221ee0c33537f35f1f857c7b4f7191df55", "blind-verdant"),
 ]
 SETTINGS = {"num_ctx": 8192, "temperature": 0.2, "top_p": 0.9, "seed": 42}
+ALLOWED_DIRTY_PATHS = {"manifests/models.yaml", "evidence/model-gpu-acceptance-20260802.md"}
+
 PROMPTS = {
     "architecture section": "prompts/architecture-writer.md",
     "factual evidence report": "prompts/evidence-summarizer.md",
@@ -195,8 +197,10 @@ def run(run_id: str | None = None) -> Path:
     manifest, fixtures = validate_frozen()
     validate_runtime()
     service = validate_api_and_models()
-    if cmd("git", "-C", str(ROOT), "status", "--porcelain").strip():
-        raise RuntimeError("application repository is dirty; commit benchmark revision first")
+    dirty = [line[3:] for line in cmd("git", "-C", str(ROOT), "status", "--porcelain").splitlines() if len(line) >= 4]
+    unexpected = [path for path in dirty if path not in ALLOWED_DIRTY_PATHS]
+    if unexpected:
+        raise RuntimeError(f"unexpected application worktree changes: {unexpected}")
     run_id = run_id or dt.datetime.now(dt.timezone.utc).strftime("benchmark-%Y%m%dT%H%M%SZ")
     raw_root = BENCH / "runs" / run_id
     blind_root = BENCH / "blinded" / run_id

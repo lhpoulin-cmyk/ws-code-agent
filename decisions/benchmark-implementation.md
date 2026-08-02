@@ -1,6 +1,6 @@
 # Frozen benchmark implementation decision
 
-Status: **prepared / operator review required**
+Status: **executed / operator review required**
 
 `ws-doc-writer` owns the ten case definitions, synthetic source-material
 fixtures, blinding semantics, scoring rubric, provenance, and application

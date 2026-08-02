@@ -1,6 +1,6 @@
 # Ollama and benchmark coordination packet
 
-Status: **implemented / ready for execution after commit**.
+Status: **executed / operator review required**.
 
 `ws-doc-writer` supplies prompts, frozen cases, scoring, and acceptance
 requirements. `ws-cp` must perform any workstation/Ollama mutation. `gpu-cp`
@@ -35,3 +35,6 @@ context, disabled thinking, sequential execution, 100% GPU residency, raw
 output retention, blind mapping separation, and `REVIEW_REQUIRED` disposition.
 It writes only beneath `/srv/ws-doc-writer/benchmarks` and never chooses a
 model or marks generated prose accepted.
+
+
+The first complete run succeeded as `benchmark-20260802T234320Z` with 30 outputs. Operator review and disposition remain required.

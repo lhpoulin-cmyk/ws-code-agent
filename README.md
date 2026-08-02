@@ -23,6 +23,9 @@ frozen hashes and host gates, executes 30 sequential model/case runs, and
 produces raw evidence plus a blinded review bundle. Generated prose remains
 `REVIEW_REQUIRED`; no model winner or document acceptance is automatic.
 
+The first complete 30-output run is recorded as `benchmark-20260802T234320Z`; operator scoring and
+disposition remain outstanding.
+
 ## Layout
 
 - `docs/` lifecycle and integration contracts

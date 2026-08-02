@@ -132,10 +132,10 @@ def validate_runtime() -> None:
     source, target, fstype, options = cmd("findmnt", "-no", "SOURCE,TARGET,FSTYPE,OPTIONS", str(RUNTIME)).strip().split()
     if target != str(RUNTIME) or fstype != "xfs" or "rw" not in options.split(",") or "prjquota" not in options.split(","):
         raise RuntimeError(f"runtime mount invariant failed: {source} {target} {fstype} {options}")
-    stat = cmd("xfs_io", "-c", "stat", str(BENCH)).lower()
+    stat = cmd("sudo", "-n", "xfs_io", "-c", "stat", str(BENCH)).lower()
     if "project = 1002" not in stat and "project: 1002" not in stat:
         raise RuntimeError("benchmark directory is not project 1002")
-    quota = cmd("xfs_quota", "-x", "-c", "report -h", str(RUNTIME))
+    quota = cmd("sudo", "-n", "xfs_quota", "-x", "-c", "report -h", str(RUNTIME))
     line = next((line for line in quota.splitlines() if line.strip().startswith("benchmarks")), "")
     if "20G" not in line:
         raise RuntimeError("benchmark quota is not 20 GiB")

@@ -24,6 +24,15 @@ changes without explicit authority.
 This foundation task authorizes no live Ollama, GPU, workstation, firewall, or
 service mutation.
 
+## Durable read-only escalation
+
+When an approved lab filesystem or secret vault is mounted read-only, an agent
+may request task-scoped read-only access and the operator may grant it. Sudo or
+root privileges may be used only for task-relevant metadata and configuration
+inspection. This never authorizes remounting, writing vaults, changing
+ownership/permissions, enrolling keys, altering storage or services, or reading
+unrelated secret contents. Never print or store secret material.
+
 ## Voice
 
 Read and follow this repository's `VOICE.md`. Repository-local rules may

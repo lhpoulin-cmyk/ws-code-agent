@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import sqlite3
+import pytest
 
 from docwriter_web import AppConfig, DocWriterApp
 from docwriter_web.generation import (
@@ -18,6 +19,9 @@ from docwriter_web.generation import (
     serialized_json,
     sha256_text,
 )
+from docwriter_web.prompt_contracts import PROMPT_VERSION as V2_PROMPT_VERSION
+from docwriter_web.prompt_contracts import load_phase_b_assets
+from docwriter_web.generation import delimited_source_payload, parse_response_v2, request_payload_v2, validate_task_adherence
 
 
 class FakeHTTPResponse:
@@ -78,7 +82,7 @@ def test_success_persists_fixed_settings_provenance_and_review_required(tmp_path
     source = "The observed service remains local and review is unresolved."
     fake = FakeClient(result_for(source))
     application.ollama_client = fake
-    response = request(application, f"/trial/{trial_id}/generate", "POST", {"csrf": "x", "model_identifier": "arbitrary"})
+    response = request(application, f"/trial/{trial_id}/generate", "POST", {"csrf": "x", "model_identifier": MODEL})
     assert response["status"].startswith("303")
     assert fake.calls == [source]
     with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
@@ -89,8 +93,60 @@ def test_success_persists_fixed_settings_provenance_and_review_required(tmp_path
     assert json.loads(trial[3])[0]["category"] == "no material issue found"
     assert trial[4] == "The service remains local, and review is unresolved."
     assert trial[5] == "REVIEW_REQUIRED"
-    assert attempt[0] == 1 and attempt[1] == PROMPT_VERSION and attempt[2] == sha256_text(prompt_for(source))
+    assert attempt[0] == 1 and attempt[1] == V2_PROMPT_VERSION and attempt[2] == application.contract_bundle.composed_hash
     assert attempt[4] and "source paragraph" in attempt[5] and attempt[6] == sha256_text(trial[4]) and attempt[7] == "COMPLETED"
+
+
+def test_generation_rejects_arbitrary_browser_model(tmp_path):
+    application = make_app(tmp_path)
+    trial_id = make_trial(application)
+    response = request(application, f"/trial/{trial_id}/generate", "POST", {"csrf": "x", "model_identifier": "http://attacker.invalid/model"})
+    assert response["status"].startswith("400")
+
+
+def test_v2_chat_request_roles_schema_and_provenance():
+    bundle, profiles = load_phase_b_assets()
+    profile = profiles["mistral-nemo-12b"]
+    source = "I changed fields after a health transition, and one detail remains uncertain."
+    payload = request_payload_v2(bundle, profile, source)
+    assert payload["messages"][0]["role"] == "system"
+    assert payload["messages"][1]["role"] == "user"
+    assert delimited_source_payload(source) in payload["messages"][1]["content"]
+    assert source not in payload["messages"][0]["content"]
+    assert payload["format"] == bundle.schema
+    valid = json.dumps({"integrity_findings": [{"category": "ambiguity", "detail": "One detail remains uncertain.", "related_passage": "one detail", "blocks_approval": False, "resolution_authority": "operator"}], "conversational_proposal": "I changed fields after a health transition, and one detail remains uncertain."})
+    findings, proposal = parse_response_v2(valid)
+    assert findings[0]["category"] == "ambiguity"
+    assert validate_task_adherence(source, proposal) == "passed"
+
+
+def test_v2_chat_client_preserves_raw_http_and_metadata():
+    bundle, profiles = load_phase_b_assets()
+    profile = profiles["mistral-nemo-12b"]
+    source = "I changed fields after a health transition, and one detail remains uncertain."
+    calls = []
+
+    def opener(request, timeout):
+        calls.append((request.full_url, json.loads(request.data.decode()) if request.data else None))
+        if request.full_url.endswith("/api/tags"):
+            return FakeHTTPResponse({"models": [{"name": profile.model_identifier, "digest": profile.expected_digest.removeprefix("sha256:")}]})
+        return FakeHTTPResponse({"message": {"role": "assistant", "content": json.dumps({"integrity_findings": [{"category": "ambiguity", "detail": "One detail remains uncertain.", "related_passage": "one detail", "blocks_approval": False, "resolution_authority": "operator"}], "conversational_proposal": source})}, "done": True, "eval_count": 8})
+
+    result = OllamaClient(opener=opener).generate_v2(source, bundle, profile)
+    assert calls[1][0].endswith("/api/chat")
+    assert calls[1][1]["messages"][1]["content"].startswith("TASK: EDIT_SOURCE_PARAGRAPH")
+    assert result.transport_type == "chat" and result.adapter_id == profile.adapter_id
+    assert result.task_adherence_result == "passed"
+    assert '"message"' in result.raw_ollama_response
+
+
+def test_v2_task_adherence_rejects_author_directed_and_point_of_view_shifts():
+    with pytest.raises(Exception, match="addresses"):
+        validate_task_adherence("I wrote this after waking.", "Hi there, I rewrote this for you.")
+    with pytest.raises(Exception, match="first-person"):
+        validate_task_adherence("I wrote this after waking.", "The author wrote this after waking.")
+    with pytest.raises(Exception, match="question"):
+        validate_task_adherence("I wrote this after waking.", "I wrote this after waking. What do you think?")
 
 
 def test_malformed_response_fails_closed_and_retry_is_new_attempt(tmp_path):

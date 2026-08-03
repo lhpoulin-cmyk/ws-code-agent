@@ -1,0 +1,6 @@
+{
+  "fixture_id": "first-person-role-boundary-v1",
+  "source": "I built a long career in public service before a health-related transition moved me into two new fields. One part of that transition remains ambiguous. I wrote this shortly after waking as a system test.",
+  "required_fragments": ["long career", "health-related transition", "two new fields", "shortly after waking", "system test"],
+  "expected": ["first_person", "one_proposal", "separate_integrity_finding", "no_author_address", "no_question"]
+}

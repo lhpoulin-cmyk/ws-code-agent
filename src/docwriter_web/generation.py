@@ -5,12 +5,15 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import re
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
+
+from .prompt_contracts import AdapterProfile, ContractBundle
 
 MODEL = "mistral-nemo:12b-instruct-2407-q4_K_M"
 MODEL_DIGEST = "sha256:daf6737417121831e572a9c482e92a221ee0c33537f35f1f857c7b4f7191df55"
@@ -27,6 +30,7 @@ ERROR_CLASSES = {
     "RESPONSE_SCHEMA_INVALID",
     "PROPOSAL_FIELD_MISSING",
     "UNKNOWN_FAILURE",
+    "TASK_ADHERENCE_FAILED",
 }
 
 PROMPT_CONTRACT = """You are Doc Writer's conversational proposal reviewer.
@@ -90,7 +94,7 @@ def parse_response(raw_response: str) -> tuple[list[dict[str, str]], str]:
             raise ResponseSchemaError("structured response is missing conversational_proposal", "PROPOSAL_FIELD_MISSING")
         raise ResponseSchemaError("structured response fields are invalid")
     findings, proposal = decoded["integrity_findings"], decoded["conversational_proposal"]
-    if not isinstance(findings, list) or not isinstance(proposal, str) or not proposal.strip():
+    if not isinstance(findings, list) or not isinstance(proposal, str) or not proposal.strip() or len(proposal) > 12000:
         if not isinstance(proposal, str) or not proposal.strip():
             raise ResponseSchemaError("conversational_proposal is empty", "PROPOSAL_FIELD_MISSING")
         raise ResponseSchemaError("structured response types are invalid")
@@ -122,6 +126,18 @@ class GenerationResult:
     response_hash: str
     proposal_hash: str
     telemetry: dict[str, Any]
+    transport_type: str = "generate"
+    transport_endpoint: str = "/api/generate"
+    adapter_id: str = "legacy-v1"
+    adapter_version: str = "legacy-v1"
+    request_serializer_version: str = "legacy-v1"
+    message_roles: tuple[str, ...] = ()
+    canonical_contract_hashes: dict[str, str] | None = None
+    composed_contract_hash: str = ""
+    schema_version: str = ""
+    schema_hash: str = ""
+    response_schema: str = ""
+    task_adherence_result: str = "not_run"
 
 
 class OllamaError(RuntimeError):
@@ -132,12 +148,66 @@ class OllamaError(RuntimeError):
         self.error_class = error_class if error_class in ERROR_CLASSES else "UNKNOWN_FAILURE"
 
 
+class TaskAdherenceError(OllamaError):
+    def __init__(self, message: str):
+        super().__init__(message, error_class="TASK_ADHERENCE_FAILED")
+
+
+def delimited_source_payload(source: str) -> str:
+    return f"TASK: EDIT_SOURCE_PARAGRAPH\n\nSOURCE_PARAGRAPH_BEGIN\n{source}\nSOURCE_PARAGRAPH_END\n\nReturn only the required structured response."
+
+
+def v2_system_prompt(bundle: ContractBundle, profile: AdapterProfile) -> str:
+    return "\n\n".join((bundle.composed_text, f"Adapter instructions ({profile.adapter_id}): {profile.adapter_instructions}", "Return exactly the response schema named conversational-proposal-v2. Do not emit commentary outside the schema."))
+
+
+def request_payload_v2(bundle: ContractBundle, profile: AdapterProfile, source: str) -> dict[str, Any]:
+    options = {"num_ctx": profile.generation_settings["context"], "temperature": profile.generation_settings["temperature"], "top_p": profile.generation_settings["top_p"], "seed": profile.generation_settings["seed"]}
+    return {"model": profile.model_identifier, "messages": [{"role": "system", "content": v2_system_prompt(bundle, profile)}, {"role": "user", "content": delimited_source_payload(source)}], "stream": False, "format": bundle.schema, "think": False, "options": options}
+
+
+def parse_response_v2(raw_response: str) -> tuple[list[dict[str, Any]], str]:
+    try:
+        value = json.loads(raw_response)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ResponseSchemaError("v2 response is not valid JSON") from exc
+    if not isinstance(value, dict) or set(value) != {"integrity_findings", "conversational_proposal"}:
+        raise ResponseSchemaError("v2 response has unexpected top-level fields")
+    findings, proposal = value["integrity_findings"], value["conversational_proposal"]
+    categories = {"confirmed_conflict", "apparent_conflict_requiring_authority_review", "unsupported_claim", "ambiguity", "no_material_issue_found"}
+    if not isinstance(findings, list) or not isinstance(proposal, str) or not proposal.strip():
+        raise ResponseSchemaError("v2 response has invalid proposal or findings")
+    normalized = []
+    required = {"category", "detail", "related_passage", "blocks_approval", "resolution_authority"}
+    for finding in findings:
+        if not isinstance(finding, dict) or set(finding) != required or finding["category"] not in categories or not isinstance(finding["detail"], str) or not 0 < len(finding["detail"]) <= 4000 or not isinstance(finding["related_passage"], str) or len(finding["related_passage"]) > 1000 or not isinstance(finding["blocks_approval"], bool) or not isinstance(finding["resolution_authority"], str) or len(finding["resolution_authority"]) > 1000:
+            raise ResponseSchemaError("v2 integrity finding is invalid")
+        normalized.append(finding)
+    return normalized, proposal.strip()
+
+
+def validate_task_adherence(source: str, proposal: str, required_fragments: tuple[str, ...] = ()) -> str:
+    if re.match(r"\s*(hi|hello|hey|thanks|thank you)\b", proposal, re.IGNORECASE):
+        raise TaskAdherenceError("proposal addresses or greets the author")
+    if "?" in proposal:
+        raise TaskAdherenceError("proposal asks a question")
+    if re.search(r"\b(version|option|alternative)\s*[12]\b", proposal, re.IGNORECASE) or "\n---\n" in proposal:
+        raise TaskAdherenceError("proposal contains multiple versions")
+    first_person = re.search(r"\b(i|i'm|i’ve|i've|my|me|we|we're|we’ve|we've|our|us)\b", source, re.IGNORECASE)
+    if first_person and not re.search(r"\b(i|i'm|i’ve|i've|my|me|we|we're|we’ve|we've|our|us)\b", proposal, re.IGNORECASE):
+        raise TaskAdherenceError("proposal shifts an explicitly first-person source")
+    missing = [fragment for fragment in required_fragments if fragment not in proposal]
+    if missing:
+        raise TaskAdherenceError("proposal omits a required material sentence")
+    return "passed"
+
+
 class OllamaClient:
     def __init__(self, base_url: str = "http://127.0.0.1:11434", opener: Callable = urllib.request.urlopen):
         self.base_url = base_url.rstrip("/")
         self.opener = opener
 
-    def _request(self, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _request_raw(self, path: str, payload: dict[str, Any] | None = None) -> tuple[dict[str, Any], str]:
         data = None if payload is None else serialized_json(payload).encode("utf-8")
         request = urllib.request.Request(self.base_url + path, data=data, headers={"Content-Type": "application/json"} if data else {})
         try:
@@ -169,7 +239,10 @@ class OllamaClient:
             raise OllamaError("local Ollama returned invalid JSON", raw.decode("utf-8", errors="replace"), error_class="RESPONSE_SCHEMA_INVALID") from exc
         if not isinstance(value, dict):
             raise OllamaError("local Ollama response is not an object", raw.decode("utf-8", errors="replace"), error_class="RESPONSE_SCHEMA_INVALID")
-        return value
+        return value, raw.decode("utf-8", errors="replace")
+
+    def _request(self, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._request_raw(path, payload)[0]
 
     def installed_digest(self, model: str) -> str:
         tags = self._request("/api/tags")
@@ -200,3 +273,27 @@ class OllamaClient:
         telemetry = {key: response_payload[key] for key in ("total_duration", "load_duration", "prompt_eval_count", "prompt_eval_duration", "eval_count", "eval_duration") if key in response_payload and isinstance(response_payload[key], (int, float))}
         telemetry["wall_seconds"] = round(time.monotonic() - started_monotonic, 6)
         return GenerationResult(MODEL, digest, serialized_json(request_payload), prompt, sha256_text(prompt), started_at, completed_at, raw, response_payload, findings, proposal, exact_diff(source, proposal), sha256_text(raw), sha256_text(proposal), telemetry)
+
+    def generate_v2(self, source: str, bundle: ContractBundle, profile: AdapterProfile, required_fragments: tuple[str, ...] = ()) -> GenerationResult:
+        digest = self.installed_digest(profile.model_identifier)
+        if digest != profile.expected_digest:
+            raise OllamaError("installed model digest does not match the configured adapter profile")
+        request_payload = request_payload_v2(bundle, profile, source)
+        request_json = serialized_json(request_payload)
+        started_at = utc_now()
+        started_monotonic = time.monotonic()
+        response_payload, raw_http = self._request_raw("/api/chat", request_payload)
+        completed_at = utc_now()
+        message = response_payload.get("message")
+        raw_content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(raw_content, str) or not raw_content.strip():
+            raise OllamaError("local Ollama chat response has no structured response text", raw_http, response_payload, "EMPTY_RESPONSE")
+        try:
+            findings, proposal = parse_response_v2(raw_content)
+            adherence = validate_task_adherence(source, proposal, required_fragments)
+        except (ResponseSchemaError, TaskAdherenceError) as exc:
+            error_class = getattr(exc, "error_class", "RESPONSE_SCHEMA_INVALID")
+            raise OllamaError(str(exc), raw_http, response_payload, error_class) from exc
+        telemetry = {key: response_payload[key] for key in ("total_duration", "load_duration", "prompt_eval_count", "prompt_eval_duration", "eval_count", "eval_duration") if key in response_payload and isinstance(response_payload[key], (int, float))}
+        telemetry["wall_seconds"] = round(time.monotonic() - started_monotonic, 6)
+        return GenerationResult(profile.model_identifier, digest, request_json, v2_system_prompt(bundle, profile), bundle.composed_hash, started_at, completed_at, raw_http, response_payload, findings, proposal, exact_diff(source, proposal), sha256_text(raw_http), sha256_text(proposal), telemetry, "chat", "/api/chat", profile.adapter_id, profile.profile_version, profile.request_serializer_version, ("system", "user"), bundle.contract_hashes, bundle.composed_hash, bundle.version, bundle.schema_hash, serialized_json(bundle.schema), adherence)

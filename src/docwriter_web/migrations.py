@@ -25,6 +25,7 @@ MIGRATION_NAMES = (
     "review-events-append-only-v1",
     "review-event-chain-v1",
     "legacy-review-supersession-v1",
+    "prompt-provenance-v2-v1",
 )
 
 
@@ -136,6 +137,49 @@ def _foreign_keys_and_routing(db: sqlite3.Connection, commit: str) -> None:
             _ledger(db, name, commit, before, before_hash)
 
 
+def _prompt_provenance_v2(db: sqlite3.Connection, commit: str) -> None:
+    name = "prompt-provenance-v2-v1"
+    if _migration_applied(db, name):
+        return
+    before, before_hash = _counts(db), _database_hash(db)
+    columns = {
+        "transport_type": "TEXT NOT NULL DEFAULT ''",
+        "transport_endpoint": "TEXT NOT NULL DEFAULT ''",
+        "adapter_id": "TEXT NOT NULL DEFAULT ''",
+        "adapter_version": "TEXT NOT NULL DEFAULT ''",
+        "request_serializer_version": "TEXT NOT NULL DEFAULT ''",
+        "message_roles": "TEXT NOT NULL DEFAULT ''",
+        "canonical_contract_hashes": "TEXT NOT NULL DEFAULT '{}'",
+        "composed_contract_hash": "TEXT NOT NULL DEFAULT ''",
+        "schema_version": "TEXT NOT NULL DEFAULT ''",
+        "schema_hash": "TEXT NOT NULL DEFAULT ''",
+        "response_schema": "TEXT NOT NULL DEFAULT ''",
+        "task_adherence_result": "TEXT NOT NULL DEFAULT 'not_run'",
+    }
+    for column, definition in columns.items():
+        _add_column(db, "generation_attempts", column, definition)
+    db.executescript("""
+    CREATE TRIGGER IF NOT EXISTS generation_attempts_v2_provenance_immutable
+    BEFORE UPDATE ON generation_attempts
+    WHEN OLD.transport_type<>NEW.transport_type
+      OR OLD.transport_endpoint<>NEW.transport_endpoint
+      OR OLD.adapter_id<>NEW.adapter_id
+      OR OLD.adapter_version<>NEW.adapter_version
+      OR OLD.request_serializer_version<>NEW.request_serializer_version
+      OR OLD.message_roles<>NEW.message_roles
+      OR OLD.canonical_contract_hashes<>NEW.canonical_contract_hashes
+      OR OLD.composed_contract_hash<>NEW.composed_contract_hash
+      OR OLD.schema_version<>NEW.schema_version
+      OR OLD.schema_hash<>NEW.schema_hash
+      OR OLD.response_schema<>NEW.response_schema
+      OR (OLD.task_adherence_result<>NEW.task_adherence_result
+          AND NOT (OLD.status='RUNNING' AND OLD.task_adherence_result='not_run'
+                   AND NEW.task_adherence_result IN ('passed','failed')))
+    BEGIN SELECT RAISE(ABORT, 'v2 request provenance is immutable'); END;
+    """)
+    _ledger(db, name, commit, before, before_hash)
+
+
 def _attempt_events(db: sqlite3.Connection, commit: str) -> None:
     name = "generation-attempt-events-v1"
     if _migration_applied(db, name):
@@ -177,6 +221,12 @@ def _immutability(db: sqlite3.Connection, commit: str) -> None:
       OR OLD.request_json<>NEW.request_json OR OLD.model_identifier<>NEW.model_identifier
       OR OLD.model_digest<>NEW.model_digest OR OLD.generation_settings<>NEW.generation_settings
       OR OLD.started_at<>NEW.started_at OR OLD.application_version<>NEW.application_version
+      OR OLD.transport_type<>NEW.transport_type OR OLD.transport_endpoint<>NEW.transport_endpoint
+      OR OLD.adapter_id<>NEW.adapter_id OR OLD.adapter_version<>NEW.adapter_version
+      OR OLD.request_serializer_version<>NEW.request_serializer_version OR OLD.message_roles<>NEW.message_roles
+      OR OLD.canonical_contract_hashes<>NEW.canonical_contract_hashes OR OLD.composed_contract_hash<>NEW.composed_contract_hash
+      OR OLD.schema_version<>NEW.schema_version OR OLD.schema_hash<>NEW.schema_hash
+      OR OLD.response_schema<>NEW.response_schema OR OLD.task_adherence_result<>NEW.task_adherence_result
     BEGIN SELECT RAISE(ABORT, 'generation attempt provenance is immutable'); END;
     CREATE TRIGGER IF NOT EXISTS generation_attempt_events_no_update
     BEFORE UPDATE ON generation_attempt_events BEGIN SELECT RAISE(ABORT, 'attempt events are append-only'); END;
@@ -269,6 +319,7 @@ def apply_migrations(db: sqlite3.Connection, application_commit: str) -> None:
     )""")
     _archive_and_recovery(db, application_commit)
     _foreign_keys_and_routing(db, application_commit)
+    _prompt_provenance_v2(db, application_commit)
     _attempt_events(db, application_commit)
     _immutability(db, application_commit)
     _review_append_only(db, application_commit)

@@ -31,9 +31,11 @@ from .generation import (
     serialized_json,
     sha256_text,
     utc_now,
+    request_payload_v2,
 )
 from .migrations import apply_migrations
 from .recovery_guidance import Guidance, guidance_for
+from .prompt_contracts import load_phase_b_assets
 
 MAX_SOURCE = 12000
 MAX_FIELD = 12000
@@ -100,6 +102,7 @@ class DocWriterApp:
     def __init__(self, config: AppConfig):
         self.config = config
         self.ollama_client = OllamaClient(config.ollama_url)
+        self.contract_bundle, self.adapter_profiles = load_phase_b_assets()
         self._generation_lock = threading.Lock()
         self._generating: set[str] = set()
         self._initialize()
@@ -401,7 +404,7 @@ class DocWriterApp:
     def _latest_attempt(self, db: sqlite3.Connection, trial_id: str) -> sqlite3.Row | None:
         return db.execute("SELECT * FROM generation_attempts WHERE trial_id=? ORDER BY started_at DESC LIMIT 1", (trial_id,)).fetchone()
 
-    def _generate_trial(self, trial_id: str) -> tuple[str, str]:
+    def _generate_trial(self, trial_id: str, requested_model: str | None = None) -> tuple[str, str]:
         if not self._generation_lock.acquire(blocking=False):
             raise RuntimeError("another generation is already running")
         try:
@@ -413,15 +416,23 @@ class DocWriterApp:
                 if not version:
                     raise ValueError("source version is unavailable")
                 attempt_id = f"generation-{secrets.token_hex(8)}"
-                request_json = serialized_json(request_payload_for(trial["source_text"]))
+                selected_model = requested_model or trial["model_identifier"]
+                profile = next((item for item in self.adapter_profiles.values() if item.model_identifier == selected_model), None)
+                if profile is None:
+                    raise ValueError("the selected model has no protected Phase B adapter profile")
+                v2_request = request_payload_v2(self.contract_bundle, profile, trial["source_text"])
+                request_json = serialized_json(v2_request)
                 started_at = utc_now()
-                db.execute("INSERT INTO generation_attempts(attempt_id,trial_id,source_version_id,source_text,source_sha256,prompt_version,prompt_text,prompt_sha256,request_json,model_identifier,model_digest,generation_settings,started_at,completed_at,raw_ollama_response,response_sha256,integrity_findings,normalized_proposal,proposal_sha256,source_to_proposal_diff,telemetry,application_version,status,error,error_class) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id, trial_id, version["version_id"], trial["source_text"], trial["source_sha256"], PROMPT_VERSION, prompt_for(trial["source_text"]), sha256_text(prompt_for(trial["source_text"])), request_json, MODEL, MODEL_DIGEST, serialized_json(GENERATION_SETTINGS), started_at, "", "", "", "[]", "", "", "", "{}", self.config.version, "RUNNING", "", ""))
+                db.execute("INSERT INTO generation_attempts(attempt_id,trial_id,source_version_id,source_text,source_sha256,prompt_version,prompt_text,prompt_sha256,request_json,model_identifier,model_digest,generation_settings,started_at,completed_at,raw_ollama_response,response_sha256,integrity_findings,normalized_proposal,proposal_sha256,source_to_proposal_diff,telemetry,application_version,status,error,error_class,transport_type,transport_endpoint,adapter_id,adapter_version,request_serializer_version,message_roles,canonical_contract_hashes,composed_contract_hash,schema_version,schema_hash,response_schema,task_adherence_result) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id, trial_id, version["version_id"], trial["source_text"], trial["source_sha256"], self.contract_bundle.version, self.contract_bundle.composed_text, self.contract_bundle.composed_hash, request_json, profile.model_identifier, profile.expected_digest, serialized_json(profile.generation_settings), started_at, "", "", "", "[]", "", "", "", "{}", self.config.version, "RUNNING", "", "", profile.transport, "/api/chat", profile.adapter_id, profile.profile_version, profile.request_serializer_version, serialized_json(profile.supported_message_roles), serialized_json(self.contract_bundle.contract_hashes), self.contract_bundle.composed_hash, self.contract_bundle.version, self.contract_bundle.schema_hash, serialized_json(self.contract_bundle.schema), "not_run"))
                 self._record_attempt_event(db, attempt_id, None, "RUNNING")
             try:
-                result = self.ollama_client.generate(trial["source_text"])
+                if hasattr(self.ollama_client, "generate_v2"):
+                    result = self.ollama_client.generate_v2(trial["source_text"], self.contract_bundle, profile)
+                else:
+                    result = self.ollama_client.generate(trial["source_text"])
             except OllamaError as exc:
                 with self._db() as db:
-                    db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,telemetry=?,status=?,error_class=?,error=? WHERE attempt_id=?", (utc_now(), exc.raw_response, sha256_text(exc.raw_response) if exc.raw_response else "", serialized_json(exc.response_payload), "FAILED", exc.error_class, str(exc), attempt_id))
+                    db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,telemetry=?,status=?,error_class=?,error=?,task_adherence_result=? WHERE attempt_id=?", (utc_now(), exc.raw_response, sha256_text(exc.raw_response) if exc.raw_response else "", serialized_json(exc.response_payload), "FAILED", exc.error_class, str(exc), "failed" if exc.error_class == "TASK_ADHERENCE_FAILED" else "not_run", attempt_id))
                     self._record_attempt_event(db, attempt_id, "RUNNING", "REQUEST_TIMEOUT" if exc.error_class == "REQUEST_TIMEOUT" else "FAILED", exc.error_class)
                 return attempt_id, "failed"
             with self._db() as db:
@@ -433,9 +444,9 @@ class DocWriterApp:
                 findings_json = json.dumps(result.integrity_findings, ensure_ascii=False, sort_keys=True)
                 lineage = json.loads(current["revision_lineage"] or "[]")
                 lineage.append(attempt_id)
-                db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,integrity_findings=?,normalized_proposal=?,proposal_sha256=?,source_to_proposal_diff=?,telemetry=?,status=?,error_class=?,error=? WHERE attempt_id=?", (result.completed_at, result.raw_ollama_response, result.response_hash, findings_json, result.proposal, result.proposal_hash, result.source_to_proposal_diff, serialized_json(result.telemetry), "COMPLETED", "", "", attempt_id))
+                db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,integrity_findings=?,normalized_proposal=?,proposal_sha256=?,source_to_proposal_diff=?,telemetry=?,status=?,error_class=?,error=?,task_adherence_result=? WHERE attempt_id=?", (result.completed_at, result.raw_ollama_response, result.response_hash, findings_json, result.proposal, result.proposal_hash, result.source_to_proposal_diff, serialized_json(result.telemetry), "COMPLETED", "", "", result.task_adherence_result, attempt_id))
                 self._record_attempt_event(db, attempt_id, "RUNNING", "COMPLETED")
-                db.execute("UPDATE trials SET updated_at=?,model_identifier=?,model_digest=?,generation_parameters=?,integrity_findings=?,raw_output=?,normalized_output=?,review_status='REVIEW_REQUIRED',revision_lineage=? WHERE trial_id=?", (result.completed_at, result.model_identifier, result.model_digest, serialized_json(GENERATION_SETTINGS), findings_json, result.raw_ollama_response, result.proposal, json.dumps(lineage), trial_id))
+                db.execute("UPDATE trials SET updated_at=?,model_identifier=?,model_digest=?,generation_parameters=?,integrity_findings=?,raw_output=?,normalized_output=?,review_status='REVIEW_REQUIRED',revision_lineage=? WHERE trial_id=?", (result.completed_at, result.model_identifier, result.model_digest, serialized_json(profile.generation_settings), findings_json, result.raw_ollama_response, result.proposal, json.dumps(lineage), trial_id))
                 self._save_version(db, db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone(), "GENERATED")
             return attempt_id, "completed"
         finally:
@@ -606,15 +617,19 @@ class DocWriterApp:
         review_error_html = f"<p class='error' id='review-error'>{html.escape(review_error)}</p>" if review_error else (f"<p class='status' id='review-saved'>{html.escape(review_notice)}</p>" if review_notice else "")
         current_note = next((event["note_text"] for event in reversed(review_events) if event["event_type"] == "REVIEW_NOTE" and (event["note_text"] or "").strip()), "")
         review_form = f"""<section id='review-rationale'><h2>Operator review record</h2>{review_error_html}<p>Review notes are durable review material, not publishable document prose. Private steering is stored and displayed separately.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/review'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='review_note'>Current reviewer note / rationale</label><textarea id='review_note' name='note_text' maxlength='{MAX_NOTES}' aria-describedby='review-help'>{html.escape(current_note)}</textarea><p id='review-help' class='muted'>Describe what sounded generic, what did not sound like the operator, exact rejected passages, and preferred replacement wording.</p><label for='related_passage'>Exact phrase or passage, if applicable</label><textarea id='related_passage' name='related_passage' maxlength='{MAX_NOTES}'></textarea><label><input type='checkbox' name='private_steering' value='1'> Private operator aside / steering note (never publishable prose)</label><button type='submit'>Save review note</button></form><h3>Review history</h3><table><tr><th>Timestamp</th><th>Reviewer</th><th>Event</th><th>Decision</th><th>Note</th><th>Visibility</th></tr>{review_history or '<tr><td colspan="6">No review events recorded.</td></tr>'}</table></section>"""
-        generation = f"""<section id='generation-attempts'><h2>Generate conversational proposal</h2><p>Server-owned model: <code>{MODEL}</code><br>Model status: installed digest reconciled before execution<br>Settings: context 8192, temperature 0.2, top-p 0.9, seed 42, streaming disabled, thinking disabled</p><p class='muted'>Execution uses local Ollama only. The result remains <code>REVIEW_REQUIRED</code> and is never accepted automatically.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/generate' onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Generating…';"><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button type='submit'>Generate conversational proposal</button></form></section>"""
+        model_options = "".join(f"<option {'selected' if profile.model_identifier == trial['model_identifier'] else ''}>{html.escape(profile.model_identifier)}</option>" for profile in self.adapter_profiles.values())
+        generation = f"""<section id='generation-attempts'><h2>Generate conversational proposal</h2><p>Prompt contract: <code>conversational-proposal-v2</code><br>Controlled settings: context 8192, temperature 0.2, top-p 0.9, seed 42, streaming disabled, thinking disabled</p><p class='muted'>Execution uses local Ollama only. The result remains <code>REVIEW_REQUIRED</code> and is never accepted automatically.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/generate' onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Generating…';"><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='generation-model'>Server-owned model adapter</label><select id='generation-model' name='model_identifier'>{model_options}</select><button type='submit'>Generate conversational proposal</button></form></section>"""
         attempt_view = ""
         diff_view = ""
         if attempt:
+            v2_provenance = ""
+            if attempt["transport_type"]:
+                v2_provenance = f"<details><summary>Prompt and request provenance</summary><p>Contract version: <code>{html.escape(attempt['prompt_version'])}</code><br>Adapter: <code>{html.escape(attempt['adapter_id'])}</code> · version <code>{html.escape(attempt['adapter_version'])}</code><br>Transport: <code>{html.escape(attempt['transport_type'])}</code> · endpoint <code>{html.escape(attempt['transport_endpoint'])}</code><br>Message roles: <code>{html.escape(attempt['message_roles'])}</code><br>Request serializer: <code>{html.escape(attempt['request_serializer_version'])}</code><br>Schema: <code>{html.escape(attempt['schema_version'])}</code> · SHA-256 <code>{html.escape(attempt['schema_hash'])}</code><br>Contract hashes: <code>{html.escape(attempt['canonical_contract_hashes'])}</code><br>Composed contract SHA-256: <code>{html.escape(attempt['composed_contract_hash'])}</code><br>Task adherence: <code>{html.escape(attempt['task_adherence_result'])}</code></p><details><summary>Exact serialized request</summary><pre>{html.escape(attempt['request_json'])}</pre></details><details><summary>Response schema</summary><pre>{html.escape(attempt['response_schema'])}</pre></details></details>"
             if attempt["status"] == "FAILED":
                 error_class = attempt["error_class"] or "UNKNOWN_FAILURE"
                 detail = attempt["error"] or "No further error detail was recorded."
                 raw_view = f"<details><summary>Preserved raw Ollama response</summary><pre>{html.escape(attempt['raw_ollama_response'])}</pre></details>" if attempt["raw_ollama_response"] else "<p>No raw Ollama response was persisted.</p>"
-                attempt_view = f"<section><h2>Generation attempt</h2><p class='error'>FAILED · {html.escape(error_class)}</p><p>{html.escape(detail)}</p>{raw_view}<p>Generation failed closed; the existing draft was preserved. An explicit retry creates a new immutable attempt.</p></section>"
+                attempt_view = f"<section><h2>Generation attempt</h2><p class='error'>FAILED · {html.escape(error_class)}</p><p>{html.escape(detail)}</p>{raw_view}<p>Generation failed closed; the existing draft was preserved. An explicit retry creates a new immutable attempt.</p>{v2_provenance}</section>"
             elif attempt["status"] == "STALE_SOURCE":
                 attempt_view = "<section><h2>Generation attempt</h2><p class='status'>Source changed during generation; the result was not applied to this draft.</p></section>"
             elif attempt["status"] == "RUNNING":
@@ -622,7 +637,7 @@ class DocWriterApp:
             elif attempt["status"] == "COMPLETED":
                 diff_view = f"""<section><h2>Exact diff</h2><pre class='prose'>{html.escape(attempt['source_to_proposal_diff'] or '(no textual difference)')}</pre></section>"""
                 legacy_notice = "<p class='status'>COMPLETED_WITHOUT_NORMALIZATION · the attempt predates the normalized-output contract.</p>" if not (trial["normalized_output"] or "").strip() else ""
-                attempt_view = f"""<details class='panel'><summary><strong>Full provenance and raw model output</strong></summary>{legacy_notice}<p>Attempt <code>{html.escape(attempt['attempt_id'])}</code>; prompt contract <code>{html.escape(attempt['prompt_version'])}</code>; prompt SHA-256 <code>{html.escape(attempt['prompt_sha256'])}</code>; response SHA-256 <code>{html.escape(attempt['response_sha256'])}</code>; proposal SHA-256 <code>{html.escape(attempt['proposal_sha256'])}</code>; source version <code>{attempt['source_version_id']}</code>.</p><details><summary>Raw Ollama response</summary><pre>{html.escape(attempt['raw_ollama_response'])}</pre></details><p>Telemetry: <code>{html.escape(attempt['telemetry'])}</code></p></details>"""
+                attempt_view = f"""<details class='panel'><summary><strong>Full provenance and raw model output</strong></summary>{legacy_notice}<p>Attempt <code>{html.escape(attempt['attempt_id'])}</code>; prompt contract <code>{html.escape(attempt['prompt_version'])}</code>; prompt SHA-256 <code>{html.escape(attempt['prompt_sha256'])}</code>; response SHA-256 <code>{html.escape(attempt['response_sha256'])}</code>; proposal SHA-256 <code>{html.escape(attempt['proposal_sha256'])}</code>; source version <code>{attempt['source_version_id']}</code>.</p><details><summary>Raw Ollama response</summary><pre>{html.escape(attempt['raw_ollama_response'])}</pre></details><p>Telemetry: <code>{html.escape(attempt['telemetry'])}</code></p>{v2_provenance}</details>"""
         generation_history = "".join(f"<tr><td>{html.escape(item['started_at'])}</td><td>{html.escape(item['completed_at'] or 'running')}</td><td>{html.escape(item['status'])}</td><td>{html.escape(item['model_identifier'])}</td><td>{item['source_version_id']}</td><td>{html.escape(item['error'] or '—')}</td></tr>" for item in attempts) or "<tr><td colspan='6'>No generation attempts recorded.</td></tr>"
         no_attempt_view = "<section><h2>Generation attempt</h2><p class='error'>REQUEST_NOT_STARTED</p><p>This trial has no generation attempt. The source was saved, but no request was submitted to Ollama.</p></section>" if not attempt else ""
         archive_form = f"<form method='post' action='/trial/{html.escape(trial['trial_id'])}/archive'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button class='secondary' type='submit'>Archive trial</button></form>"
@@ -755,7 +770,7 @@ class DocWriterApp:
                 parts, trial_id, form = path.strip("/").split("/"), path.strip("/").split("/")[1], self._parse_form(environ)
                 if not self._csrf_valid(environ, form): raise PermissionError("CSRF validation failed")
                 if len(parts) == 3 and parts[2] == "generate":
-                    self._generate_trial(trial_id)
+                    self._generate_trial(trial_id, form.get("model_identifier") or None)
                     start_response("303 See Other", [("Location", f"/trial/{trial_id}")]); return [b""]
                 with self._db() as db:
                     trial = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()

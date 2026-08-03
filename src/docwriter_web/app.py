@@ -120,7 +120,27 @@ class DocWriterApp:
                     telemetry TEXT NOT NULL, application_version TEXT NOT NULL,
                     status TEXT NOT NULL, error TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS review_events (
+                    event_id TEXT PRIMARY KEY, trial_id TEXT NOT NULL REFERENCES trials(trial_id),
+                    generation_attempt_id TEXT REFERENCES generation_attempts(attempt_id),
+                    event_type TEXT NOT NULL, decision TEXT, note_text TEXT,
+                    private_steering INTEGER NOT NULL DEFAULT 0, related_passage TEXT,
+                    reviewer_identity TEXT, created_at TEXT NOT NULL, prior_event_id TEXT,
+                    content_hash TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS review_events_trial_idx ON review_events(trial_id, created_at);
             """)
+            legacy = db.execute("SELECT trial_id, recorded_at, action, snapshot FROM trial_versions WHERE action LIKE 'DECISION_%'").fetchall()
+            for row in legacy:
+                decision = row["action"][len("DECISION_"):]
+                if decision not in DECISIONS:
+                    continue
+                event_id = f"review-legacy-{row['trial_id']}-{row['recorded_at']}"
+                exists = db.execute("SELECT 1 FROM review_events WHERE event_id=?", (event_id,)).fetchone()
+                if exists:
+                    continue
+                payload = {"event_id": event_id, "trial_id": row["trial_id"], "event_type": "DECISION", "decision": decision, "note_text": "", "private_steering": False, "related_passage": "", "reviewer_identity": "", "created_at": row["recorded_at"], "prior_event_id": None}
+                db.execute("INSERT INTO review_events(event_id,trial_id,generation_attempt_id,event_type,decision,note_text,private_steering,related_passage,reviewer_identity,created_at,prior_event_id,content_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (event_id, row["trial_id"], None, "DECISION", decision, "", 0, "", "", row["recorded_at"], None, sha256_text(json.dumps(payload, sort_keys=True))))
 
     def _db(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.config.database)
@@ -143,6 +163,31 @@ class DocWriterApp:
         except (ValueError, UnicodeDecodeError):
             return False
         return self._password_ok(user, password)
+
+    def _authenticated_user(self, environ: dict) -> str:
+        header = environ.get("HTTP_AUTHORIZATION", "")
+        if not header.startswith("Basic "):
+            return ""
+        try:
+            user, password = base64.b64decode(header[6:], validate=True).decode("utf-8").split(":", 1)
+        except (ValueError, UnicodeDecodeError):
+            return ""
+        return user if self._password_ok(user, password) else ""
+
+    def _review_events(self, db: sqlite3.Connection, trial_id: str) -> list[sqlite3.Row]:
+        return db.execute("SELECT * FROM review_events WHERE trial_id=? ORDER BY created_at, event_id", (trial_id,)).fetchall()
+
+    def _review_rationale_missing(self, events: list[sqlite3.Row], status: str) -> bool:
+        if status not in {"REJECTED", "REVISION_REQUIRED"}:
+            return False
+        return not any(event["event_type"] == "REVIEW_NOTE" and (event["note_text"] or "").strip() for event in events)
+
+    def _insert_review_event(self, db: sqlite3.Connection, trial_id: str, event_type: str, decision: str | None, note_text: str, private_steering: bool, related_passage: str, reviewer_identity: str, generation_attempt_id: str | None = None, created_at: str | None = None) -> str:
+        prior = db.execute("SELECT event_id FROM review_events WHERE trial_id=? ORDER BY created_at DESC, event_id DESC LIMIT 1", (trial_id,)).fetchone()
+        event_id, timestamp = f"review-{secrets.token_hex(8)}", created_at or utc_now()
+        payload = {"event_id": event_id, "trial_id": trial_id, "generation_attempt_id": generation_attempt_id, "event_type": event_type, "decision": decision, "note_text": note_text, "private_steering": bool(private_steering), "related_passage": related_passage, "reviewer_identity": reviewer_identity, "created_at": timestamp, "prior_event_id": prior["event_id"] if prior else None}
+        db.execute("INSERT INTO review_events(event_id,trial_id,generation_attempt_id,event_type,decision,note_text,private_steering,related_passage,reviewer_identity,created_at,prior_event_id,content_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (event_id, trial_id, generation_attempt_id, event_type, decision, note_text, int(private_steering), related_passage, reviewer_identity, timestamp, payload["prior_event_id"], sha256_text(json.dumps(payload, sort_keys=True))))
+        return event_id
 
     def _parse_form(self, environ: dict) -> dict[str, str]:
         try:
@@ -247,10 +292,16 @@ class DocWriterApp:
 <label for='reviewer_notes'>Reviewer notes</label><textarea id='reviewer_notes' name='reviewer_notes' maxlength='{MAX_NOTES}'>{value('reviewer_notes')}</textarea><button type='submit'>Save draft</button></form>"""
         return self._html("New trial", body, csrf)
 
-    def _render_trial(self, trial: sqlite3.Row, versions: list[sqlite3.Row], attempt: sqlite3.Row | None, csrf: str) -> str:
+    def _render_trial(self, trial: sqlite3.Row, versions: list[sqlite3.Row], attempt: sqlite3.Row | None, review_events: list[sqlite3.Row], csrf: str, review_error: str = "", review_notice: str = "") -> str:
         def block(label: str, text: str) -> str:
             return f"<section><h2>{html.escape(label)}</h2><pre>{html.escape(text or '—')}</pre></section>"
         history = "".join(f"<tr><td>{v['version_id']}</td><td>{html.escape(v['recorded_at'])}</td><td>{html.escape(v['action'])}</td></tr>" for v in versions)
+        rationale_missing = self._review_rationale_missing(review_events, trial["review_status"])
+        review_status = html.escape(trial["review_status"] + (" · REVIEW_RATIONALE_MISSING" if rationale_missing else ""))
+        review_history = "".join(f"<tr><td>{html.escape(event['created_at'])}</td><td>{html.escape(event['reviewer_identity'] or 'legacy / unavailable')}</td><td>{html.escape(event['event_type'])}</td><td>{html.escape(event['decision'] or '')}</td><td>{html.escape(event['note_text'] or '—')}</td><td>{'private steering' if event['private_steering'] else 'review note'}</td></tr>" for event in review_events)
+        review_error_html = f"<p class='error' id='review-error'>{html.escape(review_error)}</p>" if review_error else (f"<p class='status' id='review-saved'>{html.escape(review_notice)}</p>" if review_notice else "")
+        current_note = next((event["note_text"] for event in reversed(review_events) if event["event_type"] == "REVIEW_NOTE" and (event["note_text"] or "").strip()), "")
+        review_form = f"""<section><h2>Operator review record</h2>{review_error_html}<p>Review notes are durable review material, not publishable document prose. Private steering is stored and displayed separately.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/review'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='review_note'>Current reviewer note / rationale</label><textarea id='review_note' name='note_text' maxlength='{MAX_NOTES}' aria-describedby='review-help'>{html.escape(current_note)}</textarea><p id='review-help' class='muted'>Describe what sounded generic, what did not sound like the operator, exact rejected passages, and preferred replacement wording.</p><label for='related_passage'>Exact phrase or passage, if applicable</label><textarea id='related_passage' name='related_passage' maxlength='{MAX_NOTES}'></textarea><label><input type='checkbox' name='private_steering' value='1'> Private operator aside / steering note (never publishable prose)</label><button type='submit'>Save review note</button></form><h3>Review history</h3><table><tr><th>Timestamp</th><th>Reviewer</th><th>Event</th><th>Decision</th><th>Note</th><th>Visibility</th></tr>{review_history or '<tr><td colspan="6">No review events recorded.</td></tr>'}</table></section>"""
         generation = f"""<section><h2>Generate conversational proposal</h2><p>Server-owned model: <code>{MODEL}</code><br>Model status: installed digest reconciled before execution<br>Settings: context 8192, temperature 0.2, top-p 0.9, seed 42, streaming disabled, thinking disabled</p><p class='muted'>Execution uses local Ollama only. The result remains <code>REVIEW_REQUIRED</code> and is never accepted automatically.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/generate' onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Generating…';"><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button type='submit'>Generate conversational proposal</button></form></section>"""
         attempt_view = ""
         if attempt:
@@ -260,10 +311,10 @@ class DocWriterApp:
                 attempt_view = "<section><h2>Generation attempt</h2><p class='status'>Source changed during generation; the result was not applied to this draft.</p></section>"
             elif attempt["status"] == "COMPLETED":
                 attempt_view = f"""<section><h2>Generation provenance</h2><p>Attempt <code>{html.escape(attempt['attempt_id'])}</code>; prompt contract <code>{html.escape(attempt['prompt_version'])}</code>; prompt SHA-256 <code>{html.escape(attempt['prompt_sha256'])}</code>; response SHA-256 <code>{html.escape(attempt['response_sha256'])}</code>; proposal SHA-256 <code>{html.escape(attempt['proposal_sha256'])}</code>; source version <code>{attempt['source_version_id']}</code>.</p><details><summary>Raw Ollama response</summary><pre>{html.escape(attempt['raw_ollama_response'])}</pre></details><h3>Exact source-to-proposal diff</h3><pre>{html.escape(attempt['source_to_proposal_diff'] or '(no textual difference)')}</pre><p>Telemetry: <code>{html.escape(attempt['telemetry'])}</code></p></section>"""
-        body = f"""<h1>Trial <code>{html.escape(trial['trial_id'])}</code></h1><p class='status'>Review status: {html.escape(trial['review_status'])}</p><p>Created {html.escape(trial['created_at'])}; updated {html.escape(trial['updated_at'])}; source SHA-256 <code>{html.escape(trial['source_sha256'])}</code></p><p>Model: <code>{html.escape(trial['model_identifier'])}</code><br>Digest: <code>{html.escape(trial['model_digest'])}</code></p>
+        body = f"""<h1>Trial <code>{html.escape(trial['trial_id'])}</code></h1><p class='status'>Review status: {review_status}</p><p>Created {html.escape(trial['created_at'])}; updated {html.escape(trial['updated_at'])}; source SHA-256 <code>{html.escape(trial['source_sha256'])}</code></p><p>Model: <code>{html.escape(trial['model_identifier'])}</code><br>Digest: <code>{html.escape(trial['model_digest'])}</code></p>
 {generation}{attempt_view}
 {block('Source paragraph', trial['source_text'])}{block('Integrity findings', trial['integrity_findings'])}{block('Raw model output', trial['raw_output'])}{block('Normalized proposal', trial['normalized_output'])}{block('Reviewer notes', trial['reviewer_notes'])}
-<section><h2>Decision</h2><form method='post' action='/trial/{html.escape(trial['trial_id'])}/decision'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><select name='decision'>{''.join(f'<option>{decision}</option>' for decision in sorted(DECISIONS))}</select><button type='submit'>Record decision</button></form></section><section><h2>Version history</h2><table><tr><th>Version</th><th>When</th><th>Action</th></tr>{history}</table></section><p><a href='/trial/{html.escape(trial['trial_id'])}/artifact'>View artifact/provenance</a> · <a href='/trial/{html.escape(trial['trial_id'])}/edit'>Edit</a></p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/delete'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button class='danger' type='submit'>Delete trial</button></form>"""
+<section><h2>Decision</h2><form method='post' action='/trial/{html.escape(trial['trial_id'])}/decision'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='decision'>Decision</label><select id='decision' name='decision'>{''.join(f'<option>{decision}</option>' for decision in sorted(DECISIONS))}</select><label for='decision_reason'>Decision rationale (required for rejection or revision)</label><textarea id='decision_reason' name='decision_reason' maxlength='{MAX_NOTES}'></textarea><button type='submit'>Record decision</button></form></section>{review_form}<section><h2>Draft version history</h2><table><tr><th>Version</th><th>When</th><th>Action</th></tr>{history}</table></section><p><a href='/trial/{html.escape(trial['trial_id'])}/artifact'>View artifact/provenance</a> · <a href='/trial/{html.escape(trial['trial_id'])}/edit'>Edit</a></p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/delete'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button class='danger' type='submit'>Delete trial</button></form>"""
         return self._html("Trial", body, csrf)
 
     def __call__(self, environ: dict, start_response: Callable):
@@ -298,7 +349,7 @@ class DocWriterApp:
                         current = json.loads(versions[-1]["snapshot"]) if versions else {}
                         diff = "".join(difflib.unified_diff((previous.get("normalized_output", "") + "\n").splitlines(True), (current.get("normalized_output", "") + "\n").splitlines(True), fromfile="previous normalized proposal", tofile="current normalized proposal"))
                         content = self._html("Artifact", f"<h1>Artifact/provenance</h1><pre>{html.escape(artifact)}</pre><h2>Exact normalized-proposal diff</h2><pre>{html.escape(diff or '(no normalized proposal change)')}</pre>", csrf)
-                    else: content = self._render_trial(trial, db.execute("SELECT * FROM trial_versions WHERE trial_id=? ORDER BY version_id", (trial_id,)).fetchall(), self._latest_attempt(db, trial_id), csrf)
+                    else: content = self._render_trial(trial, db.execute("SELECT * FROM trial_versions WHERE trial_id=? ORDER BY version_id", (trial_id,)).fetchall(), self._latest_attempt(db, trial_id), self._review_events(db, trial_id), csrf, review_notice="Review note saved." if urllib.parse.parse_qs(environ.get("QUERY_STRING", "")).get("review_saved") == ["1"] else "")
             elif method == "POST" and path.startswith("/trial/"):
                 parts, trial_id, form = path.strip("/").split("/"), path.strip("/").split("/")[1], self._parse_form(environ)
                 if not self._csrf_valid(environ, form): raise PermissionError("CSRF validation failed")
@@ -309,11 +360,26 @@ class DocWriterApp:
                     trial = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
                     if not trial: raise LookupError("trial not found")
                     if parts[2] == "delete":
+                        db.execute("DELETE FROM review_events WHERE trial_id=?", (trial_id,))
                         db.execute("DELETE FROM trial_versions WHERE trial_id=?", (trial_id,)); db.execute("DELETE FROM trials WHERE trial_id=?", (trial_id,))
+                    elif parts[2] == "review":
+                        note_text = form.get("note_text", "").strip()[:MAX_NOTES]
+                        related_passage = form.get("related_passage", "").strip()[:MAX_NOTES]
+                        private_steering = form.get("private_steering", "") == "1"
+                        if not note_text:
+                            raise ValueError("Reviewer note is required; enter the rationale or operator aside beside the review field.")
+                        self._insert_review_event(db, trial_id, "REVIEW_NOTE", None, note_text, private_steering, related_passage, self._authenticated_user(environ))
+                        db.execute("UPDATE trials SET updated_at=? WHERE trial_id=?", (utc_now(), trial_id))
+                        start_response("303 See Other", [("Location", f"/trial/{trial_id}?review_saved=1")]); return [b""]
                     elif parts[2] == "decision":
                         decision = form.get("decision", "")
                         if decision not in DECISIONS: raise ValueError("invalid decision")
-                        db.execute("UPDATE trials SET review_status=?,updated_at=? WHERE trial_id=?", (decision, utc_now(), trial_id)); self._save_version(db, db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone(), f"DECISION_{decision}")
+                        reason = form.get("decision_reason", "").strip()[:MAX_NOTES]
+                        if decision in {"REJECTED", "REVISION_REQUIRED"} and not reason:
+                            raise ValueError(f"{decision} requires a non-empty rationale beside the decision field.")
+                        now = utc_now()
+                        event_id = self._insert_review_event(db, trial_id, "DECISION", decision, reason, False, "", self._authenticated_user(environ))
+                        db.execute("UPDATE trials SET review_status=?,updated_at=? WHERE trial_id=?", (decision, now, trial_id)); self._save_version(db, db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone(), f"DECISION_{decision}")
                     elif parts[2] == "save":
                         source, model = form.get("source_text", ""), form.get("model_identifier", "")
                         if not source or len(source) > MAX_SOURCE or model not in MODEL_DIGESTS: raise ValueError("invalid draft")
@@ -326,5 +392,5 @@ class DocWriterApp:
         except RuntimeError as exc:
             start_response("409 Conflict", self._headers()); return [str(exc).encode()]
         except (LookupError, ValueError) as exc:
-            start_response("400 Bad Request", self._headers()); return [str(exc).encode()]
+            start_response("400 Bad Request", self._headers()); return [f"<p class='error' id='review-error'>{html.escape(str(exc))}</p>".encode()]
         start_response("200 OK", self._headers(csrf)); return [content.encode("utf-8")]

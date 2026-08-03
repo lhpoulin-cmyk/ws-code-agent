@@ -26,7 +26,7 @@ def test_authentication_and_home(tmp_path):
     assert request(application, auth=False)["status"].startswith("401")
     response = request(application)
     assert response["status"].startswith("200")
-    assert "Model execution</strong><p class='status'>disabled" in response["body"]
+    assert "Model execution</strong><p class='status'>enabled" in response["body"]
 
 
 def test_draft_versions_decision_and_delete(tmp_path):

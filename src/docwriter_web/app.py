@@ -225,8 +225,8 @@ class DocWriterApp:
         with self._db() as db:
             count = db.execute("SELECT count(*) FROM trials WHERE review_status NOT IN ('ACCEPTED','REJECTED')").fetchone()[0]
         storage = "healthy" if self.config.runtime_root.is_dir() and os.access(self.config.state_dir, os.W_OK) else "unavailable"
-        body = f"""<h1>Doc Writer</h1><p class='muted'>Authenticated local review surface. Model execution is disabled.</p>
-<div class='grid'><section><strong>Service health</strong><p class='status'>healthy</p></section><section><strong>Storage health</strong><p class='status'>{html.escape(storage)}</p></section><section><strong>Application version</strong><p><code>{html.escape(self.config.version)}</code></p></section><section><strong>Canonical hostname</strong><p><code>{html.escape(self.config.canonical_host)}</code></p></section><section><strong>Model execution</strong><p class='status'>disabled</p></section><section><strong>Open review trials</strong><p class='status'>{count}</p></section></div>
+        body = f"""<h1>Doc Writer</h1><p class='muted'>Authenticated local review surface. Model execution is enabled for server-owned observation-period generation.</p>
+<div class='grid'><section><strong>Service health</strong><p class='status'>healthy</p></section><section><strong>Storage health</strong><p class='status'>{html.escape(storage)}</p></section><section><strong>Application version</strong><p><code>{html.escape(self.config.version)}</code></p></section><section><strong>Canonical hostname</strong><p><code>{html.escape(self.config.canonical_host)}</code></p></section><section><strong>Model execution</strong><p class='status'>enabled</p></section><section><strong>Open review trials</strong><p class='status'>{count}</p></section></div>
 <section><p>Benchmark observation: strongest raw writing performance among tested candidates: Mistral Nemo.</p><p>Generated prose remains <code>REVIEW_REQUIRED</code>. Frozen benchmark evidence is read-only.</p></section>"""
         return self._html("Home", body, csrf)
 

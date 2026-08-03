@@ -35,7 +35,7 @@ def test_draft_versions_decision_and_delete(tmp_path):
     created = request(application, "/trial", "POST", {"source_text": "A source paragraph.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"})
     assert created["status"].startswith("303")
     trial_id = created["headers"][0][1].rsplit("/", 1)[-1]
-    assert "REVIEW_REQUIRED" in request(application, f"/trial/{trial_id}")["body"]
+    assert "REVIEW_REQUIRED" in trial_page(application, trial_id)["body"]
     edited = request(application, f"/trial/{trial_id}/save", "POST", {"source_text": "An edited source paragraph.", "model_identifier": "mistral-nemo:12b-instruct-2407Z", "csrf": "x"})
     assert edited["status"].startswith("400")
     edited = request(application, f"/trial/{trial_id}/save", "POST", {"source_text": "An edited source paragraph.", "model_identifier": "mistral-nemo:12b-instruct-2407_K_M", "csrf": "x"})
@@ -46,12 +46,19 @@ def test_draft_versions_decision_and_delete(tmp_path):
         assert db.execute("select count(*) from trial_versions where trial_id=?", (trial_id,)).fetchone()[0] == 2
     decision = request(application, f"/trial/{trial_id}/decision", "POST", {"decision": "REVISION_REQUIRED", "decision_reason": "The proposal needs a more direct voice.", "csrf": "x"})
     assert decision["status"].startswith("303")
-    assert "REVISION_REQUIRED" in request(application, f"/trial/{trial_id}")["body"]
-    assert request(application, f"/trial/{trial_id}/delete", "POST", {"csrf": "x"})["status"].startswith("303")
+    assert "REVISION_REQUIRED" in trial_page(application, trial_id)["body"]
+    assert request(application, f"/trial/{trial_id}/delete", "POST", {"csrf": "x"})["status"].startswith("400")
+    assert request(application, f"/trial/{trial_id}/archive", "POST", {"csrf": "x"})["status"].startswith("303")
+    assert "Archived trial" in trial_page(application, trial_id)["body"]
+    assert request(application, f"/trial/{trial_id}/restore", "POST", {"csrf": "x"})["status"].startswith("303")
 
 
 def _trial_id(response):
     return response["headers"][0][1].rsplit("/", 1)[-1]
+
+
+def trial_page(application, trial_id):
+    return request(application, f"/project/alpha/trial/{trial_id}")
 
 
 def test_decision_rationale_rules_and_csrf(tmp_path):
@@ -75,12 +82,12 @@ def test_legacy_rejection_gets_later_rationale_without_rewriting_decision(tmp_pa
         db.execute("insert into trial_versions(trial_id,recorded_at,action,snapshot) values(?,?,?,?)", (trial_id, original_time, "DECISION_REJECTED", snapshot))
         db.commit()
     restarted = DocWriterApp(application.config)
-    page = request(restarted, f"/trial/{trial_id}")["body"]
+    page = trial_page(restarted, trial_id)["body"]
     assert "REVIEW_RATIONALE_MISSING" in page and "legacy / unavailable" in page
     saved = request(restarted, f"/trial/{trial_id}/review", "POST", {"note_text": "The opening sounded generic and did not sound like the operator.", "related_passage": "The opening sentence.", "private_steering": "1", "csrf": "x"})
     assert saved["status"].startswith("303") and "review_saved=1" in saved["headers"][0][1]
     refreshed = DocWriterApp(application.config)
-    page = request(refreshed, f"/trial/{trial_id}")["body"]
+    page = trial_page(refreshed, trial_id)["body"]
     assert "The opening sounded generic" in page and "private steering" in page
     with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
         events = db.execute("select event_type,decision,note_text,private_steering,created_at from review_events where trial_id=? order by created_at,event_id", (trial_id,)).fetchall()
@@ -104,7 +111,7 @@ def test_note_revisions_are_immutable_and_lineage_unchanged(tmp_path):
         first_hash = db.execute("select content_hash from review_events where event_id=?", (first_id,)).fetchone()[0]
         assert second[0] == first_id and first_hash != second[1]
         assert db.execute("select revision_lineage from trials where trial_id=?", (trial_id,)).fetchone()[0] == '["generation-fixed"]'
-    assert "First rationale" in request(DocWriterApp(application.config), f"/trial/{trial_id}")["body"]
+    assert "First rationale" in trial_page(DocWriterApp(application.config), trial_id)["body"]
 
 
 def test_no_model_execution_route(tmp_path):
@@ -119,9 +126,9 @@ def test_all_trials_listing_filters_search_and_deleted_exclusion(tmp_path):
     request(application, f"/trial/{accepted}/decision", "POST", {"decision": "ACCEPTED", "csrf": "x"})
     request(application, f"/trial/{rejected}/decision", "POST", {"decision": "REJECTED", "decision_reason": "Not direct enough.", "csrf": "x"})
     deleted = _trial_id(request(application, "/trial", "POST", {"source_text": "Deleted writing sample.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"}))
-    request(application, f"/trial/{deleted}/delete", "POST", {"csrf": "x"})
+    request(application, f"/trial/{deleted}/archive", "POST", {"csrf": "x"})
     all_page = request(application, "/trials")["body"]
-    assert accepted in all_page and rejected in all_page and deleted not in all_page
+    assert accepted in all_page and rejected in all_page and deleted in all_page
     assert "ACCEPTED" in request(application, "/trials?status=ACCEPTED")["body"]
     rejected_page = request(application, "/trials?status=REJECTED")["body"]
     assert rejected in rejected_page and accepted not in rejected_page
@@ -156,7 +163,7 @@ def test_existing_trial_detail_order_and_collapsed_provenance(tmp_path):
     with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
         db.execute("insert into generation_attempts(attempt_id,trial_id,source_version_id,source_text,source_sha256,prompt_version,prompt_text,prompt_sha256,request_json,model_identifier,model_digest,generation_settings,started_at,completed_at,raw_ollama_response,response_sha256,integrity_findings,normalized_proposal,proposal_sha256,source_to_proposal_diff,telemetry,application_version,status,error,error_class) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", ("generation-test", trial_id, 1, "Source paragraph.", "source-hash", "prompt-v1", "prompt", "prompt-hash", "{}", "mistral-nemo:12b-instruct-2407-q4_K_M", "sha256:test", "{}", "2026-08-03T00:00:00+00:00", "2026-08-03T00:00:01+00:00", "raw", "raw-hash", "[]", "Proposal.", "proposal-hash", "diff", "{}", "test-version", "COMPLETED", "", ""))
         db.execute("update trials set normalized_output=? where trial_id=?", ("Proposal.", trial_id)); db.commit()
-    body = request(application, f"/trial/{trial_id}")["body"]
+    body = trial_page(application, trial_id)["body"]
     assert "Source paragraph" in body and "Conversational proposal" in body and "Exact diff" in body
     assert "<details class='panel'><summary><strong>Full provenance" in body
     assert body.index("Source paragraph") < body.index("Conversational proposal") < body.index("Exact diff")
@@ -188,7 +195,8 @@ def test_alpha_project_backfill_and_project_hierarchy(tmp_path):
     assert "Alpha Trial" in page and "2 trials" in page
     detail = request(application, "/project/alpha")["body"]
     assert first in detail and second in detail and "New trial" in detail
-    assert "Projects</a>" in request(application, f"/trial/{first}")["body"]
+    assert request(application, f"/trial/{first}")["status"].startswith("301")
+    assert "Projects</a>" in trial_page(application, first)["body"]
 
 
 def test_project_create_edit_archive_restore_and_no_orphan(tmp_path):
@@ -211,7 +219,7 @@ def test_project_create_edit_archive_restore_and_no_orphan(tmp_path):
 def test_project_scoped_and_global_review_queues_and_incomplete_state(tmp_path):
     application = app(tmp_path)
     trial_id = _trial_id(request(application, "/trial", "POST", {"source_text": "Unsumbitted source.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"}))
-    page = request(application, f"/trial/{trial_id}")["body"]
+    page = trial_page(application, trial_id)["body"]
     assert "REQUEST_NOT_STARTED" in page and "no generation attempt" in page
     assert trial_id in request(application, "/review-queue")["body"]
     assert trial_id in request(application, "/project/alpha?status=needs_review")["body"]
@@ -224,7 +232,7 @@ def test_failed_attempt_classification_and_raw_response_render(tmp_path):
     from docwriter_web.generation import OllamaError
     application.ollama_client = type("FailingClient", (), {"generate": lambda self, source: (_ for _ in ()).throw(OllamaError("Ollama HTTP status 500", '{"error":"safe"}', {"error": "safe"}, "OLLAMA_HTTP_ERROR"))})()
     assert request(application, f"/trial/{trial_id}/generate", "POST", {"csrf": "x"})["status"].startswith("303")
-    body = request(application, f"/trial/{trial_id}")["body"]
+    body = trial_page(application, trial_id)["body"]
     assert "OLLAMA_HTTP_ERROR" in body and "Preserved raw Ollama response" in body and '{&quot;error&quot;:&quot;safe&quot;}' in body
     with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
         assert db.execute("select error_class,status from generation_attempts").fetchone() == ("OLLAMA_HTTP_ERROR", "FAILED")
@@ -239,4 +247,4 @@ def test_stale_running_attempt_is_recovered_without_rewriting_history(tmp_path):
     restarted = DocWriterApp(application.config)
     with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
         assert db.execute("select status,error_class,raw_ollama_response from generation_attempts where attempt_id='generation-stale'").fetchone() == ("FAILED", "STUCK_RUNNING", "preserved-raw")
-    assert "STUCK_RUNNING" in request(restarted, f"/trial/{trial_id}")["body"]
+    assert "STUCK_RUNNING" in trial_page(restarted, trial_id)["body"]

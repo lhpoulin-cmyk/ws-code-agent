@@ -168,6 +168,9 @@ class DocWriterApp:
                 decision = row["action"][len("DECISION_"):]
                 if decision not in DECISIONS:
                     continue
+                existing_decision = db.execute("SELECT 1 FROM review_events WHERE trial_id=? AND event_type='DECISION' AND created_at=? LIMIT 1", (row["trial_id"], row["recorded_at"])).fetchone()
+                if existing_decision:
+                    continue
                 event_id = f"review-legacy-{row['trial_id']}-{row['recorded_at']}"
                 exists = db.execute("SELECT 1 FROM review_events WHERE event_id=?", (event_id,)).fetchone()
                 if exists:

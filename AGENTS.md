@@ -24,6 +24,16 @@ changes without explicit authority.
 This foundation task authorizes no live Ollama, GPU, workstation, firewall, or
 service mutation.
 
+## Coordinated cross-repository plays
+
+An explicitly authorized task may cross peer repositories and must route each
+mutation through its owning repository or interface. Peer authority remains
+independent; coordination does not supersede or reinterpret a peer contract.
+Record the reason for each repository transition, inspect its local doctrine,
+preserve unrelated work, and commit only coherent repository-owned changes.
+Stop on incompatible domain claims. Never copy secrets or private operator
+material between repositories.
+
 ## Durable read-only escalation
 
 When an approved lab filesystem or secret vault is mounted read-only, an agent

@@ -219,6 +219,77 @@ class DocWriterApp:
         return bool(expected and supplied) and hmac.compare_digest(expected, supplied)
 
     def _html(self, title: str, body: str, csrf: str) -> str:
+        style = """        :root {
+          color-scheme: light;
+          --ink: #182631;
+          --ink-soft: #526575;
+          --paper: #fbfcfd;
+          --canvas: #e9eef1;
+          --line: #d3dde2;
+          --blue: #176b91;
+          --blue-deep: #0e4058;
+          --copper: #b76638;
+          --green: #26734d;
+          --amber: #8a6417;
+          --red: #a23b35;
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; min-height: 100vh; background: var(--canvas); color: var(--ink); font: 16px/1.65 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        body::before { content: ""; display: block; height: 4px; background: linear-gradient(90deg, var(--copper) 0 18%, var(--blue) 18% 100%); }
+        a { color: var(--blue-deep); text-decoration: none; }
+        a:hover { color: var(--copper); text-decoration: underline; }
+        header { background: var(--ink); color: #eef4f6; padding: 1.2rem max(1.25rem, calc((100vw - 1180px) / 2)); box-shadow: 0 3px 12px #10212c33; }
+        .brand { color: #fff; font-size: 1.45rem; font-weight: 800; letter-spacing: -.025em; }
+        header nav { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-top: .7rem; }
+        header nav a { color: #c9d9df; font-size: .94rem; font-weight: 650; }
+        header nav a:hover { color: #fff; }
+        .health { margin-left: auto; color: #a9bbc3; font-size: .85rem; }
+        main { max-width: 1040px; margin: 0 auto; padding: 2.5rem 1.25rem 5rem; }
+        h1, h2, h3 { color: var(--ink); letter-spacing: -.02em; }
+        h1 { margin: 0 0 .45rem; font-size: clamp(1.85rem, 4vw, 2.7rem); line-height: 1.08; }
+        h2 { margin: .1rem 0 .7rem; font-size: 1.25rem; line-height: 1.25; }
+        h3 { margin: 0 0 .25rem; font-size: 1rem; }
+        section, form, .panel { margin: 1.1rem 0; padding: 1.35rem; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 22px #20323d0b; }
+        .actions { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; justify-content: space-between; }
+        .muted, .meta { color: var(--ink-soft); }
+        .meta { font-size: .88rem; }
+        label { display: block; margin: .8rem 0 .3rem; color: var(--ink); font-weight: 750; }
+        textarea, input, select { width: 100%; padding: .7rem .75rem; border: 1px solid #aebdc5; border-radius: 7px; background: #fff; color: var(--ink); font: inherit; }
+        textarea { min-height: 9rem; }
+        textarea:focus, input:focus, select:focus, button:focus, a.button:focus { outline: 3px solid #6db5d2; outline-offset: 2px; }
+        input[type="checkbox"] { width: auto; margin-right: .4rem; accent-color: var(--blue); }
+        button, .button { display: inline-block; padding: .68rem 1rem; border: 1px solid transparent; border-radius: 7px; background: var(--blue); color: #fff; font-weight: 750; cursor: pointer; text-decoration: none; transition: background .12s ease, transform .12s ease; }
+        button:hover, .button:hover { background: var(--blue-deep); color: #fff; text-decoration: none; transform: translateY(-1px); }
+        button.secondary, .button.secondary { background: #e3ebee; color: var(--blue-deep); }
+        button.danger { background: var(--red); }
+        .badge { display: inline-block; padding: .22rem .65rem; border-radius: 999px; background: #e1ebef; color: var(--blue-deep); font-size: .78rem; font-weight: 800; letter-spacing: .025em; white-space: nowrap; }
+        .badge.review { background: #fff0c2; color: var(--amber); }
+        .badge.accepted { background: #dcefe3; color: var(--green); }
+        .badge.rejected { background: #f6dfdc; color: var(--red); }
+        .badge.revision { background: #f9e8d8; color: #934b1d; }
+        .badge.failed { background: #eadff1; color: #70437e; }
+        .notice { padding: .75rem 1rem; border-left: 4px solid var(--green); border-radius: 6px; background: #e7f4eb; color: #1d5c3e; font-weight: 700; }
+        .error { padding: .75rem 1rem; border-left: 4px solid var(--red); border-radius: 6px; background: #fbe8e5; color: #862f2b; font-weight: 700; }
+        .trial-list { display: grid; gap: .85rem; }
+        .trial-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1rem; align-items: center; padding: 1.1rem 1.2rem; background: var(--paper); border: 1px solid var(--line); border-left: 4px solid #9fb6c0; border-radius: 10px; box-shadow: 0 4px 12px #20323d0b; }
+        .trial-card:hover { border-left-color: var(--copper); box-shadow: 0 7px 18px #20323d18; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .85rem; }
+        .grid section { margin: 0; }
+        .prose { max-width: 72ch; margin: 0 auto; padding: 1.15rem 1.35rem; background: #fff; border-left: 4px solid var(--blue); border-radius: 4px; font-family: Georgia, "Times New Roman", serif; font-size: 1.16rem; line-height: 1.82; white-space: pre-wrap; }
+        pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+        table { width: 100%; border-collapse: collapse; font-size: .93rem; }
+        th, td { padding: .62rem .55rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+        th { color: var(--ink-soft); font-size: .76rem; letter-spacing: .06em; text-transform: uppercase; }
+        .quiet { background: #f4f7f8; border-color: #dce5e8; }
+        .filters { display: flex; flex-wrap: wrap; gap: .45rem; align-items: center; }
+        .filters a { padding: .35rem .72rem; border: 1px solid var(--line); border-radius: 999px; background: #f5f8f9; color: var(--blue-deep); font-size: .9rem; font-weight: 650; }
+        .filters a.active { border-color: var(--blue); background: var(--blue); color: #fff; }
+        details > summary { cursor: pointer; color: var(--blue-deep); font-weight: 750; }
+        details > summary:hover { color: var(--copper); }
+        code { padding: .1rem .3rem; border-radius: 4px; background: #e8eef0; color: var(--blue-deep); font-size: .9em; }
+        @media (max-width: 700px) { main { padding-top: 1.5rem; } .trial-card { grid-template-columns: 1fr; } .health { width: 100%; margin-left: 0; } }
+        """
+        return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>{html.escape(title)} · Doc Writer</title><style>{style}</style></head><body><header><a class='brand' href='/'>Doc Writer</a><nav><a href='/'>Review queue</a><a href='/trials'>All trials</a><a href='/trial/new'>New trial</a><a href='/system'>System status</a><span class='health'>Local review service · <a href='/system'>status</a></span></nav></header><main>{body}</main></body></html>"""
         return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>{html.escape(title)} · Doc Writer</title>
 <style>:root{{color-scheme:light}}body{{font:16px/1.6 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:1180px;margin:0 auto;padding:0 1.25rem 4rem;color:#1f2933;background:#f6f7f9}}a{{color:#075985;text-decoration:none}}a:hover{{text-decoration:underline}}header{{padding:1.25rem 0 1rem;border-bottom:1px solid #d9e0e7;margin-bottom:2rem}}.brand{{font-size:1.35rem;font-weight:750;color:#18212b}}nav{{display:flex;flex-wrap:wrap;gap:1rem;margin-top:.7rem;align-items:center}}.health{{margin-left:auto;color:#52606d;font-size:.9rem}}main{{max-width:1040px;margin:0 auto}}section,form,.panel{{background:#fff;border:1px solid #d9e0e7;border-radius:10px;padding:1.25rem;margin:1rem 0;box-shadow:0 1px 2px #172b4d0d}}h1{{font-size:2rem;line-height:1.2;margin:0 0 .5rem}}h2{{font-size:1.25rem;line-height:1.3;margin:.1rem 0 .75rem}}h3{{font-size:1rem;margin:1.25rem 0 .5rem}}label{{display:block;font-weight:700;margin:.8rem 0 .25rem}}textarea,input,select{{width:100%;box-sizing:border-box;padding:.7rem;border:1px solid #aeb8c2;border-radius:6px;font:inherit;background:#fff}}textarea{{min-height:9rem}}input[type=checkbox]{{width:auto;margin-right:.4rem}}button,.button{{display:inline-block;padding:.65rem 1rem;border:0;border-radius:6px;background:#075985;color:white;font-weight:700;cursor:pointer;text-decoration:none}}button:hover,.button:hover{{background:#064a6b;text-decoration:none}}button.secondary,.button.secondary{{background:#e7eef3;color:#164e63}}button.danger{{background:#991b1b}}.muted{{color:#52606d}}.status{{font-weight:700}}.badge{{display:inline-block;border-radius:999px;padding:.2rem .65rem;font-size:.82rem;font-weight:750;white-space:nowrap;background:#e7eef3;color:#164e63}}.badge.review{{background:#fff1c7;color:#7a4d00}}.badge.accepted{{background:#dcfce7;color:#166534}}.badge.rejected{{background:#fee2e2;color:#991b1b}}.badge.revision{{background:#ffedd5;color:#9a3412}}.badge.failed{{background:#f3e8ff;color:#6b21a8}}.notice{{padding:.7rem 1rem;border-radius:6px;background:#ecfdf5;color:#166534;font-weight:700}}.error{{padding:.7rem 1rem;border-radius:6px;background:#fef2f2;color:#991b1b;font-weight:650}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem}}.trial-list{{display:grid;gap:.8rem}}.trial-card{{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1rem;align-items:center;background:#fff;border:1px solid #d9e0e7;border-radius:10px;padding:1rem 1.15rem}}.trial-card h3{{margin:0 0 .25rem}}.meta{{color:#52606d;font-size:.9rem}}.actions{{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}}table{{border-collapse:collapse;width:100%;font-size:.94rem}}td,th{{border-bottom:1px solid #d5dbe1;text-align:left;padding:.6rem;vertical-align:top}}th{{color:#52606d;font-size:.85rem;text-transform:uppercase;letter-spacing:.03em}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}}.prose{{font-family:Georgia,'Times New Roman',serif;font-size:1.12rem;line-height:1.75;white-space:pre-wrap}}.quiet{{background:#f8fafc;border-color:#e5e7eb}}.filters{{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}}.filters a{{padding:.35rem .7rem;border-radius:999px;background:#e7eef3}}.filters a.active{{background:#075985;color:#fff}}@media(max-width:700px){{.trial-card{{grid-template-columns:1fr}}.health{{margin-left:0;width:100%}}}}
 </style></head><body><header><a class='brand' href='/'>Doc Writer</a><nav><a href='/'>Review queue</a><a href='/trials'>All trials</a><a href='/trial/new'>New trial</a><a href='/system'>System status</a><span class='health'>Local review service · <a href='/system'>status</a></span></nav></header><main>{body}</main></body></html>"""

@@ -160,3 +160,11 @@ def test_existing_trial_detail_order_and_collapsed_provenance(tmp_path):
     assert "Source paragraph" in body and "Conversational proposal" in body and "Exact diff" in body
     assert "<details class='panel'><summary><strong>Full provenance" in body
     assert body.index("Source paragraph") < body.index("Conversational proposal") < body.index("Exact diff")
+
+
+def test_review_workspace_visual_identity_and_focus_styles(tmp_path):
+    body = request(app(tmp_path), "/")["body"]
+    assert "background: var(--ink)" in body
+    assert "--copper: #b76638" in body
+    assert "outline: 3px solid #6db5d2" in body
+    assert "Review queue" in body and "System status" in body

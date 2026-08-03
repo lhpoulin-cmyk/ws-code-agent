@@ -12,6 +12,7 @@ from docwriter_web.generation import (
     GenerationResult,
     OllamaClient,
     OllamaError,
+    ResponseSchemaError,
     exact_diff,
     prompt_for,
     serialized_json,
@@ -165,3 +166,51 @@ def test_mocked_ollama_digest_mismatch_fails_closed():
         assert "digest" in str(exc)
     else:
         raise AssertionError("digest mismatch did not fail closed")
+
+
+def test_response_parser_classifies_missing_proposal_and_malformed_json():
+    try:
+        from docwriter_web.generation import parse_response
+        parse_response('{"integrity_findings": []}')
+    except ResponseSchemaError as exc:
+        assert exc.error_class == "PROPOSAL_FIELD_MISSING"
+    else:
+        raise AssertionError("missing proposal was accepted")
+    try:
+        parse_response("not json")
+    except ResponseSchemaError as exc:
+        assert exc.error_class == "RESPONSE_SCHEMA_INVALID"
+    else:
+        raise AssertionError("malformed JSON was accepted")
+
+
+def test_ollama_request_classifies_timeout_http_and_empty_response():
+    def timeout_opener(request, timeout):
+        raise TimeoutError("timed out")
+    try:
+        OllamaClient(opener=timeout_opener)._request("/api/generate", {})
+    except OllamaError as exc:
+        assert exc.error_class == "REQUEST_TIMEOUT"
+    else:
+        raise AssertionError("timeout was not classified")
+
+    def http_opener(request, timeout):
+        raise __import__("urllib.error", fromlist=["HTTPError"]).HTTPError(request.full_url, 503, "unavailable", {}, __import__("io").BytesIO(b'{"error":"safe"}'))
+    try:
+        OllamaClient(opener=http_opener)._request("/api/generate", {})
+    except OllamaError as exc:
+        assert exc.error_class == "OLLAMA_HTTP_ERROR" and exc.raw_response == '{"error":"safe"}'
+    else:
+        raise AssertionError("HTTP failure was not classified")
+
+    class EmptyResponse:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def read(self, limit=-1): return b""
+    def empty_opener(request, timeout): return EmptyResponse()
+    try:
+        OllamaClient(opener=empty_opener)._request("/api/generate", {})
+    except OllamaError as exc:
+        assert exc.error_class == "EMPTY_RESPONSE"
+    else:
+        raise AssertionError("empty response was not classified")

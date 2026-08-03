@@ -19,6 +19,15 @@ GENERATION_SETTINGS = {"context": 8192, "temperature": 0.2, "top_p": 0.9, "seed"
 REQUEST_TIMEOUT_SECONDS = 90
 MAX_MODEL_RESPONSE = 50000
 INTEGRITY_CATEGORIES = {"confirmed conflict", "apparent conflict requiring authority review", "unsupported claim", "ambiguity", "no material issue found"}
+ERROR_CLASSES = {
+    "OLLAMA_UNAVAILABLE",
+    "REQUEST_TIMEOUT",
+    "OLLAMA_HTTP_ERROR",
+    "EMPTY_RESPONSE",
+    "RESPONSE_SCHEMA_INVALID",
+    "PROPOSAL_FIELD_MISSING",
+    "UNKNOWN_FAILURE",
+}
 
 PROMPT_CONTRACT = """You are Doc Writer's conversational proposal reviewer.
 
@@ -63,22 +72,35 @@ def request_payload_for(source: str) -> dict[str, Any]:
     return {"model": MODEL, "prompt": prompt_for(source), "stream": False, "format": response_schema(), "think": False, "options": {"num_ctx": GENERATION_SETTINGS["context"], "temperature": GENERATION_SETTINGS["temperature"], "top_p": GENERATION_SETTINGS["top_p"], "seed": GENERATION_SETTINGS["seed"]}}
 
 
+class ResponseSchemaError(ValueError):
+    def __init__(self, message: str, error_class: str = "RESPONSE_SCHEMA_INVALID"):
+        super().__init__(message)
+        self.error_class = error_class
+
+
 def parse_response(raw_response: str) -> tuple[list[dict[str, str]], str]:
     if len(raw_response.encode("utf-8")) > MAX_MODEL_RESPONSE:
-        raise ValueError("model response exceeds output limit")
-    decoded = json.loads(raw_response)
+        raise ResponseSchemaError("model response exceeds output limit")
+    try:
+        decoded = json.loads(raw_response)
+    except json.JSONDecodeError as exc:
+        raise ResponseSchemaError("model response is not valid JSON") from exc
     if not isinstance(decoded, dict) or set(decoded) != {"integrity_findings", "conversational_proposal"}:
-        raise ValueError("structured response fields are invalid")
+        if isinstance(decoded, dict) and "conversational_proposal" not in decoded:
+            raise ResponseSchemaError("structured response is missing conversational_proposal", "PROPOSAL_FIELD_MISSING")
+        raise ResponseSchemaError("structured response fields are invalid")
     findings, proposal = decoded["integrity_findings"], decoded["conversational_proposal"]
     if not isinstance(findings, list) or not isinstance(proposal, str) or not proposal.strip():
-        raise ValueError("structured response types are invalid")
+        if not isinstance(proposal, str) or not proposal.strip():
+            raise ResponseSchemaError("conversational_proposal is empty", "PROPOSAL_FIELD_MISSING")
+        raise ResponseSchemaError("structured response types are invalid")
     normalized: list[dict[str, str]] = []
     for finding in findings:
         if not isinstance(finding, dict) or set(finding) != {"category", "detail"}:
-            raise ValueError("integrity finding shape is invalid")
+            raise ResponseSchemaError("integrity finding shape is invalid")
         category, detail = finding["category"], finding["detail"]
         if category not in INTEGRITY_CATEGORIES or not isinstance(detail, str) or len(detail) > 4000:
-            raise ValueError("integrity finding value is invalid")
+            raise ResponseSchemaError("integrity finding value is invalid")
         normalized.append({"category": category, "detail": detail})
     return normalized, proposal.strip()
 
@@ -103,10 +125,11 @@ class GenerationResult:
 
 
 class OllamaError(RuntimeError):
-    def __init__(self, message: str, raw_response: str = "", response_payload: dict[str, Any] | None = None):
+    def __init__(self, message: str, raw_response: str = "", response_payload: dict[str, Any] | None = None, error_class: str = "UNKNOWN_FAILURE"):
         super().__init__(message)
         self.raw_response = raw_response
         self.response_payload = response_payload or {}
+        self.error_class = error_class if error_class in ERROR_CLASSES else "UNKNOWN_FAILURE"
 
 
 class OllamaClient:
@@ -120,16 +143,32 @@ class OllamaClient:
         try:
             with self.opener(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
                 raw = response.read(MAX_MODEL_RESPONSE + 1)
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise OllamaError("local Ollama request failed") from exc
+        except urllib.error.HTTPError as exc:
+            raw = exc.read(MAX_MODEL_RESPONSE + 1)
+            try:
+                payload_value = json.loads(raw.decode("utf-8"))
+                payload = payload_value if isinstance(payload_value, dict) else {}
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                payload = {}
+            raise OllamaError(f"Ollama HTTP status {exc.code}", raw.decode("utf-8", errors="replace"), payload, "OLLAMA_HTTP_ERROR") from exc
+        except TimeoutError as exc:
+            raise OllamaError("local Ollama request timed out", error_class="REQUEST_TIMEOUT") from exc
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, TimeoutError):
+                raise OllamaError("local Ollama request timed out", error_class="REQUEST_TIMEOUT") from exc
+            raise OllamaError("local Ollama is unavailable", error_class="OLLAMA_UNAVAILABLE") from exc
+        except OSError as exc:
+            raise OllamaError("local Ollama is unavailable", error_class="OLLAMA_UNAVAILABLE") from exc
         if len(raw) > MAX_MODEL_RESPONSE:
-            raise OllamaError("local Ollama response exceeds output limit")
+            raise OllamaError("local Ollama response exceeds output limit", error_class="RESPONSE_SCHEMA_INVALID")
+        if not raw:
+            raise OllamaError("local Ollama returned an empty response", error_class="EMPTY_RESPONSE")
         try:
             value = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise OllamaError("local Ollama returned invalid JSON") from exc
+            raise OllamaError("local Ollama returned invalid JSON", raw.decode("utf-8", errors="replace"), error_class="RESPONSE_SCHEMA_INVALID") from exc
         if not isinstance(value, dict):
-            raise OllamaError("local Ollama response is not an object")
+            raise OllamaError("local Ollama response is not an object", raw.decode("utf-8", errors="replace"), error_class="RESPONSE_SCHEMA_INVALID")
         return value
 
     def installed_digest(self, model: str) -> str:
@@ -152,12 +191,12 @@ class OllamaClient:
         response_payload = self._request("/api/generate", request_payload)
         completed_at = utc_now()
         raw = response_payload.get("response")
-        if not isinstance(raw, str):
-            raise OllamaError("local Ollama response has no structured response text")
+        if not isinstance(raw, str) or not raw.strip():
+            raise OllamaError("local Ollama response has no structured response text", serialized_json(response_payload), response_payload, "EMPTY_RESPONSE")
         try:
             findings, proposal = parse_response(raw)
-        except ValueError as exc:
-            raise OllamaError(str(exc), raw, response_payload) from exc
+        except ResponseSchemaError as exc:
+            raise OllamaError(str(exc), raw, response_payload, exc.error_class) from exc
         telemetry = {key: response_payload[key] for key in ("total_duration", "load_duration", "prompt_eval_count", "prompt_eval_duration", "eval_count", "eval_duration") if key in response_payload and isinstance(response_payload[key], (int, float))}
         telemetry["wall_seconds"] = round(time.monotonic() - started_monotonic, 6)
         return GenerationResult(MODEL, digest, serialized_json(request_payload), prompt, sha256_text(prompt), started_at, completed_at, raw, response_payload, findings, proposal, exact_diff(source, proposal), sha256_text(raw), sha256_text(proposal), telemetry)

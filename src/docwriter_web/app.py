@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Callable
 
 from .generation import (
+    ERROR_CLASSES,
     GENERATION_SETTINGS,
     MODEL,
     MODEL_DIGEST,
@@ -36,6 +37,13 @@ MAX_SOURCE = 12000
 MAX_FIELD = 12000
 MAX_NOTES = 4000
 DECISIONS = {"ACCEPTED", "REVISION_REQUIRED", "REJECTED"}
+STALE_RUNNING_SECONDS = 120
+PROJECT_ACTIVE = "ACTIVE"
+PROJECT_ARCHIVED = "ARCHIVED"
+ALPHA_PROJECT_ID = "project-alpha"
+ALPHA_PROJECT_SLUG = "alpha"
+ALPHA_PROJECT_NAME = "Alpha Trial"
+ALPHA_PROJECT_PURPOSE = "The first live project for developing and validating Doc Writer's prompt, tone, review process, generation behavior, and user interface."
 MODEL_DIGESTS = {
     "qwen3:14b-q4_K_M": "sha256:bdbd181c33f2ed1b31c972991882db3cf4d192569092138a7d29e973cd9debe8",
     "gemma3:12b-it-q4_K_M": "sha256:f4031aab637d1ffa37b425704ae0e4fad0314754d17ded67322e4b95836f8a",
@@ -95,6 +103,17 @@ class DocWriterApp:
         with self._db() as db:
             db.executescript("""
                 PRAGMA foreign_keys=ON;
+                CREATE TABLE IF NOT EXISTS projects (
+                    project_id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+                    purpose TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL, archived_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS project_migration_events (
+                    event_id TEXT PRIMARY KEY, migration_name TEXT NOT NULL UNIQUE,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id),
+                    trial_count_before INTEGER NOT NULL, trial_count_assigned INTEGER NOT NULL,
+                    recorded_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS trials (
                     trial_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                     source_text TEXT NOT NULL, source_sha256 TEXT NOT NULL,
@@ -102,7 +121,7 @@ class DocWriterApp:
                     generation_parameters TEXT NOT NULL, integrity_findings TEXT NOT NULL,
                     raw_output TEXT NOT NULL, normalized_output TEXT NOT NULL,
                     review_status TEXT NOT NULL, reviewer_notes TEXT NOT NULL,
-                    revision_lineage TEXT NOT NULL
+                    revision_lineage TEXT NOT NULL, project_id TEXT REFERENCES projects(project_id)
                 );
                 CREATE TABLE IF NOT EXISTS trial_versions (
                     version_id INTEGER PRIMARY KEY AUTOINCREMENT, trial_id TEXT NOT NULL REFERENCES trials(trial_id),
@@ -118,7 +137,7 @@ class DocWriterApp:
                     integrity_findings TEXT NOT NULL, normalized_proposal TEXT NOT NULL,
                     proposal_sha256 TEXT NOT NULL, source_to_proposal_diff TEXT NOT NULL,
                     telemetry TEXT NOT NULL, application_version TEXT NOT NULL,
-                    status TEXT NOT NULL, error TEXT NOT NULL
+                    status TEXT NOT NULL, error TEXT NOT NULL, error_class TEXT NOT NULL DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS review_events (
                     event_id TEXT PRIMARY KEY, trial_id TEXT NOT NULL REFERENCES trials(trial_id),
@@ -130,6 +149,20 @@ class DocWriterApp:
                 );
                 CREATE INDEX IF NOT EXISTS review_events_trial_idx ON review_events(trial_id, created_at);
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(generation_attempts)")}
+            if "error_class" not in columns:
+                db.execute("ALTER TABLE generation_attempts ADD COLUMN error_class TEXT NOT NULL DEFAULT ''")
+            trial_columns = {row["name"] for row in db.execute("PRAGMA table_info(trials)")}
+            if "project_id" not in trial_columns:
+                db.execute("ALTER TABLE trials ADD COLUMN project_id TEXT REFERENCES projects(project_id)")
+            now = utc_now()
+            db.execute("INSERT OR IGNORE INTO projects(project_id,slug,name,purpose,status,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,NULL)", (ALPHA_PROJECT_ID, ALPHA_PROJECT_SLUG, ALPHA_PROJECT_NAME, ALPHA_PROJECT_PURPOSE, PROJECT_ACTIVE, now, now))
+            before = db.execute("SELECT count(*) FROM trials").fetchone()[0]
+            assigned = db.execute("SELECT count(*) FROM trials WHERE project_id=?", (ALPHA_PROJECT_ID,)).fetchone()[0]
+            db.execute("UPDATE trials SET project_id=? WHERE project_id IS NULL", (ALPHA_PROJECT_ID,))
+            after = db.execute("SELECT count(*) FROM trials WHERE project_id=?", (ALPHA_PROJECT_ID,)).fetchone()[0]
+            db.execute("INSERT OR IGNORE INTO project_migration_events(event_id,migration_name,project_id,trial_count_before,trial_count_assigned,recorded_at) VALUES(?,?,?,?,?,?)", ("migration-projects-alpha-v1", "projects-alpha-v1", ALPHA_PROJECT_ID, before, after - assigned, now))
+            self._recover_stale_attempts(db)
             legacy = db.execute("SELECT trial_id, recorded_at, action, snapshot FROM trial_versions WHERE action LIKE 'DECISION_%'").fetchall()
             for row in legacy:
                 decision = row["action"][len("DECISION_"):]
@@ -141,6 +174,18 @@ class DocWriterApp:
                     continue
                 payload = {"event_id": event_id, "trial_id": row["trial_id"], "event_type": "DECISION", "decision": decision, "note_text": "", "private_steering": False, "related_passage": "", "reviewer_identity": "", "created_at": row["recorded_at"], "prior_event_id": None}
                 db.execute("INSERT INTO review_events(event_id,trial_id,generation_attempt_id,event_type,decision,note_text,private_steering,related_passage,reviewer_identity,created_at,prior_event_id,content_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (event_id, row["trial_id"], None, "DECISION", decision, "", 0, "", "", row["recorded_at"], None, sha256_text(json.dumps(payload, sort_keys=True))))
+
+    def _recover_stale_attempts(self, db: sqlite3.Connection) -> None:
+        now = datetime.now(timezone.utc)
+        rows = db.execute("SELECT attempt_id, started_at FROM generation_attempts WHERE status='RUNNING'").fetchall()
+        for row in rows:
+            try:
+                started = datetime.fromisoformat(row["started_at"])
+                age = (now - started).total_seconds()
+            except (TypeError, ValueError):
+                age = STALE_RUNNING_SECONDS + 1
+            if age > STALE_RUNNING_SECONDS:
+                db.execute("UPDATE generation_attempts SET completed_at=?,status=?,error_class=?,error=? WHERE attempt_id=? AND status='RUNNING'", (utc_now(), "FAILED", "STUCK_RUNNING", "generation exceeded the bounded timeout and was recovered on application startup", row["attempt_id"]))
 
     def _db(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.config.database)
@@ -181,6 +226,29 @@ class DocWriterApp:
         if status not in {"REJECTED", "REVISION_REQUIRED"}:
             return False
         return not any(event["event_type"] == "REVIEW_NOTE" and (event["note_text"] or "").strip() for event in events)
+
+    def _project(self, db: sqlite3.Connection, project_id: str) -> sqlite3.Row | None:
+        return db.execute("SELECT * FROM projects WHERE project_id=?", (project_id,)).fetchone()
+
+    def _active_projects(self, db: sqlite3.Connection) -> list[sqlite3.Row]:
+        return db.execute("SELECT * FROM projects WHERE status=? ORDER BY CASE WHEN project_id=? THEN 0 ELSE 1 END, name, project_id", (PROJECT_ACTIVE, ALPHA_PROJECT_ID)).fetchall()
+
+    def _default_project_id(self, db: sqlite3.Connection) -> str:
+        row = db.execute("SELECT project_id FROM projects WHERE status=? ORDER BY updated_at DESC, project_id LIMIT 1", (PROJECT_ACTIVE,)).fetchone()
+        if not row:
+            raise ValueError("no active project is available; create or restore a project first")
+        return row["project_id"]
+
+    def _project_counts(self, db: sqlite3.Connection, project_id: str) -> dict[str, int]:
+        row = db.execute("""SELECT count(*) total,
+            sum(CASE WHEN review_status IN ('REVIEW_REQUIRED','REVISION_REQUIRED') THEN 1 ELSE 0 END) needs_review,
+            sum(CASE WHEN review_status='REVISION_REQUIRED' THEN 1 ELSE 0 END) revision_required,
+            sum(CASE WHEN review_status='ACCEPTED' THEN 1 ELSE 0 END) accepted,
+            sum(CASE WHEN review_status='REJECTED' THEN 1 ELSE 0 END) rejected,
+            sum(CASE WHEN NOT EXISTS (SELECT 1 FROM generation_attempts ga WHERE ga.trial_id=trials.trial_id)
+                      OR EXISTS (SELECT 1 FROM generation_attempts ga WHERE ga.trial_id=trials.trial_id AND ga.status IN ('FAILED','RUNNING')) THEN 1 ELSE 0 END) incomplete
+            FROM trials WHERE project_id=?""", (project_id,)).fetchone()
+        return {key: int(row[key] or 0) for key in ("total", "needs_review", "revision_required", "accepted", "rejected", "incomplete")}
 
     def _insert_review_event(self, db: sqlite3.Connection, trial_id: str, event_type: str, decision: str | None, note_text: str, private_steering: bool, related_passage: str, reviewer_identity: str, generation_attempt_id: str | None = None, created_at: str | None = None) -> str:
         prior = db.execute("SELECT event_id FROM review_events WHERE trial_id=? ORDER BY created_at DESC, event_id DESC LIMIT 1", (trial_id,)).fetchone()
@@ -289,10 +357,10 @@ class DocWriterApp:
         code { padding: .1rem .3rem; border-radius: 4px; background: #e8eef0; color: var(--blue-deep); font-size: .9em; }
         @media (max-width: 700px) { main { padding-top: 1.5rem; } .trial-card { grid-template-columns: 1fr; } .health { width: 100%; margin-left: 0; } }
         """
-        return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>{html.escape(title)} · Doc Writer</title><style>{style}</style></head><body><header><a class='brand' href='/'>Doc Writer</a><nav><a href='/'>Review queue</a><a href='/trials'>All trials</a><a href='/trial/new'>New trial</a><a href='/system'>System status</a><span class='health'>Local review service · <a href='/system'>status</a></span></nav></header><main>{body}</main></body></html>"""
+        return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>{html.escape(title)} · Doc Writer</title><style>{style}</style></head><body><header><a class='brand' href='/'>Doc Writer</a><nav><a href='/projects'>Projects</a><a href='/review-queue'>Review queue</a><a href='/trial/new'>New trial</a><a href='/system'>System status</a></nav></header><main>{body}</main></body></html>"""
         return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>{html.escape(title)} · Doc Writer</title>
 <style>:root{{color-scheme:light}}body{{font:16px/1.6 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:1180px;margin:0 auto;padding:0 1.25rem 4rem;color:#1f2933;background:#f6f7f9}}a{{color:#075985;text-decoration:none}}a:hover{{text-decoration:underline}}header{{padding:1.25rem 0 1rem;border-bottom:1px solid #d9e0e7;margin-bottom:2rem}}.brand{{font-size:1.35rem;font-weight:750;color:#18212b}}nav{{display:flex;flex-wrap:wrap;gap:1rem;margin-top:.7rem;align-items:center}}.health{{margin-left:auto;color:#52606d;font-size:.9rem}}main{{max-width:1040px;margin:0 auto}}section,form,.panel{{background:#fff;border:1px solid #d9e0e7;border-radius:10px;padding:1.25rem;margin:1rem 0;box-shadow:0 1px 2px #172b4d0d}}h1{{font-size:2rem;line-height:1.2;margin:0 0 .5rem}}h2{{font-size:1.25rem;line-height:1.3;margin:.1rem 0 .75rem}}h3{{font-size:1rem;margin:1.25rem 0 .5rem}}label{{display:block;font-weight:700;margin:.8rem 0 .25rem}}textarea,input,select{{width:100%;box-sizing:border-box;padding:.7rem;border:1px solid #aeb8c2;border-radius:6px;font:inherit;background:#fff}}textarea{{min-height:9rem}}input[type=checkbox]{{width:auto;margin-right:.4rem}}button,.button{{display:inline-block;padding:.65rem 1rem;border:0;border-radius:6px;background:#075985;color:white;font-weight:700;cursor:pointer;text-decoration:none}}button:hover,.button:hover{{background:#064a6b;text-decoration:none}}button.secondary,.button.secondary{{background:#e7eef3;color:#164e63}}button.danger{{background:#991b1b}}.muted{{color:#52606d}}.status{{font-weight:700}}.badge{{display:inline-block;border-radius:999px;padding:.2rem .65rem;font-size:.82rem;font-weight:750;white-space:nowrap;background:#e7eef3;color:#164e63}}.badge.review{{background:#fff1c7;color:#7a4d00}}.badge.accepted{{background:#dcfce7;color:#166534}}.badge.rejected{{background:#fee2e2;color:#991b1b}}.badge.revision{{background:#ffedd5;color:#9a3412}}.badge.failed{{background:#f3e8ff;color:#6b21a8}}.notice{{padding:.7rem 1rem;border-radius:6px;background:#ecfdf5;color:#166534;font-weight:700}}.error{{padding:.7rem 1rem;border-radius:6px;background:#fef2f2;color:#991b1b;font-weight:650}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem}}.trial-list{{display:grid;gap:.8rem}}.trial-card{{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1rem;align-items:center;background:#fff;border:1px solid #d9e0e7;border-radius:10px;padding:1rem 1.15rem}}.trial-card h3{{margin:0 0 .25rem}}.meta{{color:#52606d;font-size:.9rem}}.actions{{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}}table{{border-collapse:collapse;width:100%;font-size:.94rem}}td,th{{border-bottom:1px solid #d5dbe1;text-align:left;padding:.6rem;vertical-align:top}}th{{color:#52606d;font-size:.85rem;text-transform:uppercase;letter-spacing:.03em}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}}.prose{{font-family:Georgia,'Times New Roman',serif;font-size:1.12rem;line-height:1.75;white-space:pre-wrap}}.quiet{{background:#f8fafc;border-color:#e5e7eb}}.filters{{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}}.filters a{{padding:.35rem .7rem;border-radius:999px;background:#e7eef3}}.filters a.active{{background:#075985;color:#fff}}@media(max-width:700px){{.trial-card{{grid-template-columns:1fr}}.health{{margin-left:0;width:100%}}}}
-</style></head><body><header><a class='brand' href='/'>Doc Writer</a><nav><a href='/'>Review queue</a><a href='/trials'>All trials</a><a href='/trial/new'>New trial</a><a href='/system'>System status</a><span class='health'>Local review service · <a href='/system'>status</a></span></nav></header><main>{body}</main></body></html>"""
+</style></head><body><header><a class='brand' href='/'>Doc Writer</a><nav><a href='/projects'>Projects</a><a href='/review-queue'>Review queue</a><a href='/trial/new'>New trial</a><a href='/system'>System status</a></nav></header><main>{body}</main></body></html>"""
 
     def _save_version(self, db: sqlite3.Connection, trial: sqlite3.Row, action: str) -> None:
         snapshot = json.dumps({key: trial[key] for key in trial.keys()}, sort_keys=True)
@@ -315,22 +383,22 @@ class DocWriterApp:
                 attempt_id = f"generation-{secrets.token_hex(8)}"
                 request_json = serialized_json(request_payload_for(trial["source_text"]))
                 started_at = utc_now()
-                db.execute("INSERT INTO generation_attempts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id, trial_id, version["version_id"], trial["source_text"], trial["source_sha256"], PROMPT_VERSION, prompt_for(trial["source_text"]), sha256_text(prompt_for(trial["source_text"])), request_json, MODEL, MODEL_DIGEST, serialized_json(GENERATION_SETTINGS), started_at, "", "", "", "[]", "", "", "", "{}", self.config.version, "RUNNING", ""))
+                db.execute("INSERT INTO generation_attempts(attempt_id,trial_id,source_version_id,source_text,source_sha256,prompt_version,prompt_text,prompt_sha256,request_json,model_identifier,model_digest,generation_settings,started_at,completed_at,raw_ollama_response,response_sha256,integrity_findings,normalized_proposal,proposal_sha256,source_to_proposal_diff,telemetry,application_version,status,error,error_class) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id, trial_id, version["version_id"], trial["source_text"], trial["source_sha256"], PROMPT_VERSION, prompt_for(trial["source_text"]), sha256_text(prompt_for(trial["source_text"])), request_json, MODEL, MODEL_DIGEST, serialized_json(GENERATION_SETTINGS), started_at, "", "", "", "[]", "", "", "", "{}", self.config.version, "RUNNING", "", ""))
             try:
                 result = self.ollama_client.generate(trial["source_text"])
             except OllamaError as exc:
                 with self._db() as db:
-                    db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,telemetry=?,status=?,error=? WHERE attempt_id=?", (utc_now(), exc.raw_response, sha256_text(exc.raw_response) if exc.raw_response else "", serialized_json(exc.response_payload), "FAILED", str(exc), attempt_id))
+                    db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,telemetry=?,status=?,error_class=?,error=? WHERE attempt_id=?", (utc_now(), exc.raw_response, sha256_text(exc.raw_response) if exc.raw_response else "", serialized_json(exc.response_payload), "FAILED", exc.error_class, str(exc), attempt_id))
                 return attempt_id, "failed"
             with self._db() as db:
                 current = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
                 if current["source_sha256"] != trial["source_sha256"]:
-                    db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,telemetry=?,status=?,error=? WHERE attempt_id=?", (result.completed_at, result.raw_ollama_response, result.response_hash, serialized_json(result.telemetry), "STALE_SOURCE", "source changed during generation", attempt_id))
+                    db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,telemetry=?,status=?,error_class=?,error=? WHERE attempt_id=?", (result.completed_at, result.raw_ollama_response, result.response_hash, serialized_json(result.telemetry), "STALE_SOURCE", "UNKNOWN_FAILURE", "source changed during generation", attempt_id))
                     return attempt_id, "stale"
                 findings_json = json.dumps(result.integrity_findings, ensure_ascii=False, sort_keys=True)
                 lineage = json.loads(current["revision_lineage"] or "[]")
                 lineage.append(attempt_id)
-                db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,integrity_findings=?,normalized_proposal=?,proposal_sha256=?,source_to_proposal_diff=?,telemetry=?,status=? WHERE attempt_id=?", (result.completed_at, result.raw_ollama_response, result.response_hash, findings_json, result.proposal, result.proposal_hash, result.source_to_proposal_diff, serialized_json(result.telemetry), "COMPLETED", attempt_id))
+                db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,integrity_findings=?,normalized_proposal=?,proposal_sha256=?,source_to_proposal_diff=?,telemetry=?,status=?,error_class=?,error=? WHERE attempt_id=?", (result.completed_at, result.raw_ollama_response, result.response_hash, findings_json, result.proposal, result.proposal_hash, result.source_to_proposal_diff, serialized_json(result.telemetry), "COMPLETED", "", "", attempt_id))
                 db.execute("UPDATE trials SET updated_at=?,model_identifier=?,model_digest=?,generation_parameters=?,integrity_findings=?,raw_output=?,normalized_output=?,review_status='REVIEW_REQUIRED',revision_lineage=? WHERE trial_id=?", (result.completed_at, result.model_identifier, result.model_digest, serialized_json(GENERATION_SETTINGS), findings_json, result.raw_ollama_response, result.proposal, json.dumps(lineage), trial_id))
                 self._save_version(db, db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone(), "GENERATED")
             return attempt_id, "completed"
@@ -342,8 +410,12 @@ class DocWriterApp:
         label = status + (" · REVIEW_RATIONALE_MISSING" if rationale_missing else "")
         return f"<span class='badge {style}'>{html.escape(label)}</span>"
 
-    def _trial_rows(self, db: sqlite3.Connection, status_filter: str = "all", search: str = "") -> list[sqlite3.Row]:
+    def _trial_rows(self, db: sqlite3.Connection, status_filter: str = "all", search: str = "", project_id: str | None = None, active_only: bool = False) -> list[sqlite3.Row]:
         conditions, params = [], []
+        if project_id:
+            conditions.append("t.project_id=?"); params.append(project_id)
+        if active_only:
+            conditions.append("EXISTS (SELECT 1 FROM projects ap WHERE ap.project_id=t.project_id AND ap.status=?)"); params.append(PROJECT_ACTIVE)
         if status_filter in DECISIONS or status_filter == "REVIEW_REQUIRED":
             conditions.append("t.review_status=?"); params.append(status_filter)
         elif status_filter == "needs_review":
@@ -361,7 +433,9 @@ class DocWriterApp:
             EXISTS (SELECT 1 FROM review_events rn WHERE rn.trial_id=t.trial_id AND rn.event_type='REVIEW_NOTE' AND trim(COALESCE(rn.note_text,''))<>'') AS has_notes,
             EXISTS (SELECT 1 FROM review_events ps WHERE ps.trial_id=t.trial_id AND ps.event_type='REVIEW_NOTE' AND ps.private_steering=1) AS has_private,
             (SELECT decision FROM review_events de WHERE de.trial_id=t.trial_id AND de.event_type='DECISION' ORDER BY de.created_at DESC, de.event_id DESC LIMIT 1) AS latest_decision,
-            EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND gf.status='FAILED') AS has_failed
+            EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND gf.status='FAILED') AS has_failed,
+            (SELECT ga.status FROM generation_attempts ga WHERE ga.trial_id=t.trial_id ORDER BY ga.started_at DESC LIMIT 1) AS latest_attempt_state,
+            (SELECT ga.error_class FROM generation_attempts ga WHERE ga.trial_id=t.trial_id ORDER BY ga.started_at DESC LIMIT 1) AS latest_error_class
             FROM trials t{where} ORDER BY t.updated_at DESC, t.trial_id DESC""", params).fetchall()
 
     def _render_trial_card(self, row: sqlite3.Row) -> str:
@@ -372,7 +446,40 @@ class DocWriterApp:
         if row["has_private"]: flags.append("private steering")
         if row["has_failed"]: flags.append("generation failed")
         flag_text = " · ".join(flags) if flags else "no reviewer notes"
-        return f"<article class='trial-card'><div><h3>{html.escape(excerpt or 'Untitled trial')}</h3><div class='meta'><code>{html.escape(row['trial_id'])}</code> · created {html.escape(row['created_at'])} · updated {html.escape(row['updated_at'])}</div><p>{self._status_badge(row['review_status'], rationale_missing)} <span class='meta'>{html.escape(row['model_identifier'])} · {row['attempt_count']} generation attempt(s) · {html.escape(flag_text)}</span></p></div><div class='actions'><a class='button' href='/trial/{html.escape(row['trial_id'])}'>Open</a></div></article>"
+        attempt_state = row["latest_attempt_state"] or "REQUEST_NOT_STARTED"
+        if attempt_state == "COMPLETED" and not (row["normalized_output"] or "").strip(): attempt_state = "COMPLETED_WITHOUT_NORMALIZATION"
+        if row["latest_error_class"]: attempt_state += f" · {row['latest_error_class']}"
+        return f"<article class='trial-card'><div><h3>{html.escape(excerpt or 'Untitled trial')}</h3><div class='meta'><code>{html.escape(row['trial_id'])}</code> · created {html.escape(row['created_at'])} · updated {html.escape(row['updated_at'])}</div><p>{self._status_badge(row['review_status'], rationale_missing)} <span class='meta'>{html.escape(row['model_identifier'])} · {row['attempt_count']} generation attempt(s) · {html.escape(attempt_state)} · {html.escape(flag_text)}</span></p></div><div class='actions'><a class='button' href='/trial/{html.escape(row['trial_id'])}'>Open</a></div></article>"
+
+    def _render_projects(self, csrf: str) -> str:
+        with self._db() as db:
+            projects = db.execute("SELECT * FROM projects ORDER BY CASE WHEN status=? THEN 0 ELSE 1 END, CASE WHEN project_id=? THEN 0 ELSE 1 END, name, project_id", (PROJECT_ACTIVE, ALPHA_PROJECT_ID)).fetchall()
+            summaries = [(project, self._project_counts(db, project["project_id"]), db.execute("SELECT trial_id,updated_at FROM trials WHERE project_id=? ORDER BY updated_at DESC,trial_id DESC LIMIT 1", (project["project_id"],)).fetchone()) for project in projects]
+        cards = []
+        for project, counts, recent in summaries:
+            recent_text = f"{recent['trial_id']} · {recent['updated_at']}" if recent else "No trials yet"
+            cards.append(f"<article class='trial-card'><div><h2>{html.escape(project['name'])} <span class='badge'>{html.escape(project['status'])}</span></h2><p>{html.escape(project['purpose'])}</p><p class='meta'>{counts['total']} trials · {counts['needs_review']} needing review · {counts['revision_required']} revision required · {counts['accepted']} accepted · {counts['rejected']} rejected · {counts['incomplete']} failed/incomplete · recent: {html.escape(recent_text)}</p></div><div class='actions'><a class='button' href='/project/{html.escape(project['slug'])}'>Open</a></div></article>")
+        card_html = "".join(cards) or "<section class='quiet'><h2>No projects</h2></section>"
+        body = f"""<div class='actions'><div><h1>Projects</h1><p class='muted'>Writing work is organized by project, then trial, generation attempt, and review event.</p></div><a class='button' href='/project/new'>New project</a></div><div class='trial-list'>{card_html}</div>"""
+        return self._html("Projects", body, csrf)
+
+    def _render_project(self, csrf: str, project: sqlite3.Row, status_filter: str = "all", search: str = "") -> str:
+        with self._db() as db:
+            counts = self._project_counts(db, project["project_id"])
+            rows = self._trial_rows(db, status_filter, search, project["project_id"])
+        filters = [("all", "All"), ("needs_review", "Needs review"), ("REVISION_REQUIRED", "Revision required"), ("ACCEPTED", "Accepted"), ("REJECTED", "Rejected"), ("generation_failed", "Generation failed"), ("rationale_missing", "Rationale missing")]
+        links = "".join(f"<a class='{('active' if status_filter == key else '')}' href='/project/{html.escape(project['slug'])}{('?status=' + key if key != 'all' else '')}'>{label}</a>" for key, label in filters)
+        cards = "".join(self._render_trial_card(row) for row in rows) or "<section class='quiet'><h2>No trials found</h2><p class='muted'>This project has no trials matching the selected filter.</p></section>"
+        archived_actions = f"<form method='post' action='/project/{html.escape(project['project_id'])}/restore'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button type='submit'>Restore project</button></form>" if project["status"] == PROJECT_ARCHIVED else f"<form method='post' action='/project/{html.escape(project['project_id'])}/archive'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button type='submit'>Archive project</button></form>"
+        body = f"""<p class='meta'><a href='/projects'>Projects</a> → {html.escape(project['name'])}</p><div class='actions'><div><h1>{html.escape(project['name'])} <span class='badge'>{html.escape(project['status'])}</span></h1><p>{html.escape(project['purpose'])}</p></div><div class='actions'><a class='button' href='/trial/new?project={html.escape(project['project_id'])}'>New trial</a><a class='button secondary' href='/project/{html.escape(project['project_id'])}/edit'>Edit project</a>{archived_actions}</div></div><section><h2>Project activity</h2><p class='meta'>{counts['total']} total · {counts['needs_review']} needing review · {counts['revision_required']} revision required · {counts['accepted']} accepted · {counts['rejected']} rejected · {counts['incomplete']} failed/incomplete</p></section><form method='post' action='/project/{html.escape(project['slug'])}'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='trial-search'>Search this project</label><input id='trial-search' name='search' value='{html.escape(search)}' placeholder='Trial ID, source excerpt, model, or reviewer note'><button type='submit'>Search</button></form><div class='filters' aria-label='Trial filters'>{links}</div><p class='muted'>{len(rows)} trial(s)</p><div class='trial-list'>{cards}</div>"""
+        return self._html(project["name"], body, csrf)
+
+    def _render_project_form(self, csrf: str, project: sqlite3.Row | None = None) -> str:
+        value_name = html.escape((project["name"] if project else "") or "")
+        value_purpose = html.escape((project["purpose"] if project else "") or "")
+        action = f"/project/{project['project_id']}/edit" if project else "/project"
+        title = "Edit project" if project else "New project"
+        return self._html(title, f"<h1>{title}</h1><form method='post' action='{action}'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='project-name'>Project name</label><input id='project-name' name='name' maxlength='200' value='{value_name}' required><label for='project-purpose'>Purpose</label><textarea id='project-purpose' name='purpose' maxlength='{MAX_FIELD}' required>{value_purpose}</textarea><button type='submit'>Save project</button></form>", csrf)
 
     def _render_trials(self, csrf: str, status_filter: str = "all", search: str = "") -> str:
         with self._db() as db:
@@ -384,13 +491,13 @@ class DocWriterApp:
         return self._html("All trials", body, csrf)
 
     def _render_home(self, csrf: str) -> str:
+        return self._render_projects(csrf)
+
+    def _render_review_queue(self, csrf: str) -> str:
         with self._db() as db:
-            queue = self._trial_rows(db, "needs_review")[:8]
-            recent = self._trial_rows(db, "all")[:8]
-        queue_cards = "".join(self._render_trial_card(row) for row in queue) or "<section class='quiet'><h2>Queue clear</h2><p class='muted'>No trial currently needs review.</p></section>"
-        recent_cards = "".join(self._render_trial_card(row) for row in recent) or "<section class='quiet'><h2>No trials yet</h2><p class='muted'>Start with a new conversational trial.</p></section>"
-        body = f"""<div class='actions'><div><h1>Review queue</h1><p class='muted'>Read the source, compare the proposal, and leave a durable review record.</p></div><a class='button' href='/trial/new'>New conversational trial</a></div><section><h2>Trials needing review</h2><div class='trial-list'>{queue_cards}</div></section><section><h2>Recently updated</h2><div class='trial-list'>{recent_cards}</div></section><section class='quiet'><p><strong>Model observation:</strong> Mistral Nemo showed the strongest raw writing performance among tested candidates. Generated prose remains <code>REVIEW_REQUIRED</code> until an operator decision.</p><p><a href='/system'>System status</a> · <a href='/trials'>Browse all trials</a></p></section>"""
-        return self._html("Review queue", body, csrf)
+            queue = self._trial_rows(db, "needs_review", active_only=True)
+        cards = "".join(self._render_trial_card(row) for row in queue) or "<section class='quiet'><h2>Queue clear</h2><p class='muted'>No active trial currently needs review.</p></section>"
+        return self._html("Review queue", f"<div class='actions'><div><h1>Review queue</h1><p class='muted'>Open work across active projects.</p></div></div><div class='trial-list'>{cards}</div>", csrf)
 
     def _render_system(self, csrf: str) -> str:
         with self._db() as db:
@@ -400,15 +507,18 @@ class DocWriterApp:
         body = f"""<h1>System status</h1><p class='muted'>Operational details for the authenticated local review service.</p><div class='grid'><section><strong>Service</strong><p class='status'>healthy</p></section><section><strong>Storage</strong><p class='status'>{html.escape(storage)}</p></section><section><strong>Model execution</strong><p class='status'>enabled · local only</p></section><section><strong>Application version</strong><p>{html.escape('Doc Writer review application · ' + version[:12])}</p></section><section><strong>Canonical hostname</strong><p><code>{html.escape(self.config.canonical_host)}</code></p></section><section><strong>Trials retained</strong><p class='status'>{trial_count}</p></section></div><p><a href='/'>Return to review queue</a></p>"""
         return self._html("System status", body, csrf)
 
-    def _render_form(self, csrf: str, trial: sqlite3.Row | None = None) -> str:
+    def _render_form(self, csrf: str, trial: sqlite3.Row | None = None, project: sqlite3.Row | None = None, projects: list[sqlite3.Row] | None = None) -> str:
         def value(key: str, default: str = "") -> str:
             return html.escape((trial[key] if trial else default) or "")
         trial_id = trial["trial_id"] if trial else ""
         action = f"/trial/{trial_id}/save" if trial_id else "/trial"
         selected = trial["model_identifier"] if trial else "mistral-nemo:12b-instruct-2407-q4_K_M"
         options = "".join(f"<option {'selected' if model == selected else ''}>{html.escape(model)}</option>" for model in MODEL_DIGESTS)
-        body = f"""<h1>{'Edit trial' if trial else 'New conversational trial'}</h1><p class='muted'>This screen saves review material only. It never invokes a model.</p><form method='post' action='{action}'>
+        project_select = f"<p>Project: <strong>{html.escape(project['name'])}</strong></p><input type='hidden' name='project_id' value='{html.escape(project['project_id'])}'>" if project else "<label for='project_id'>Project</label><select id='project_id' name='project_id' required>" + "".join(f"<option value='{html.escape(item['project_id'])}'>{html.escape(item['name'])}</option>" for item in (projects or [])) + "</select>"
+        breadcrumb = f" → {html.escape(project['name'])}" if project else ""
+        body = f"""<p class='meta'><a href='/projects'>Projects</a>{breadcrumb}</p><h1>{'Edit trial' if trial else 'New conversational trial'}</h1><p class='muted'>This screen saves review material only. It never invokes a model.</p><form method='post' action='{action}'>
 <input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='source_text'>Source paragraph</label><textarea id='source_text' name='source_text' maxlength='{MAX_SOURCE}' required>{value('source_text')}</textarea>
+{project_select}
 <label for='model_identifier'>Model-selection metadata</label><select id='model_identifier' name='model_identifier'>{options}</select>
 <label for='generation_parameters'>Generation parameters (metadata only)</label><input id='generation_parameters' name='generation_parameters' maxlength='1000' value='{value('generation_parameters', '{"execution":"disabled"}')}' />
 <label for='integrity_findings'>Integrity findings</label><textarea id='integrity_findings' name='integrity_findings' maxlength='{MAX_NOTES}'>{value('integrity_findings')}</textarea>
@@ -417,7 +527,7 @@ class DocWriterApp:
 <label for='reviewer_notes'>Reviewer notes</label><textarea id='reviewer_notes' name='reviewer_notes' maxlength='{MAX_NOTES}'>{value('reviewer_notes')}</textarea><button type='submit'>Save draft</button></form>"""
         return self._html("New trial", body, csrf)
 
-    def _render_trial(self, trial: sqlite3.Row, versions: list[sqlite3.Row], attempts: list[sqlite3.Row], review_events: list[sqlite3.Row], csrf: str, review_error: str = "", review_notice: str = "") -> str:
+    def _render_trial(self, trial: sqlite3.Row, versions: list[sqlite3.Row], attempts: list[sqlite3.Row], review_events: list[sqlite3.Row], csrf: str, review_error: str = "", review_notice: str = "", project: sqlite3.Row | None = None) -> str:
         attempt = attempts[0] if attempts else None
         def block(label: str, text: str) -> str:
             return f"<section><h2>{html.escape(label)}</h2><pre>{html.escape(text or '—')}</pre></section>"
@@ -433,15 +543,23 @@ class DocWriterApp:
         diff_view = ""
         if attempt:
             if attempt["status"] == "FAILED":
-                attempt_view = "<section><h2>Generation attempt</h2><p class='status'>Generation failed closed; the existing draft was preserved. An explicit retry creates a new attempt.</p></section>"
+                error_class = attempt["error_class"] or "UNKNOWN_FAILURE"
+                detail = attempt["error"] or "No further error detail was recorded."
+                raw_view = f"<details><summary>Preserved raw Ollama response</summary><pre>{html.escape(attempt['raw_ollama_response'])}</pre></details>" if attempt["raw_ollama_response"] else "<p>No raw Ollama response was persisted.</p>"
+                attempt_view = f"<section><h2>Generation attempt</h2><p class='error'>FAILED · {html.escape(error_class)}</p><p>{html.escape(detail)}</p>{raw_view}<p>Generation failed closed; the existing draft was preserved. An explicit retry creates a new immutable attempt.</p></section>"
             elif attempt["status"] == "STALE_SOURCE":
                 attempt_view = "<section><h2>Generation attempt</h2><p class='status'>Source changed during generation; the result was not applied to this draft.</p></section>"
+            elif attempt["status"] == "RUNNING":
+                attempt_view = "<section><h2>Generation attempt</h2><p class='status'>RUNNING · bounded generation is still in progress.</p></section>"
             elif attempt["status"] == "COMPLETED":
                 diff_view = f"""<section><h2>Exact diff</h2><pre class='prose'>{html.escape(attempt['source_to_proposal_diff'] or '(no textual difference)')}</pre></section>"""
-                attempt_view = f"""<details class='panel'><summary><strong>Full provenance and raw model output</strong></summary><p>Attempt <code>{html.escape(attempt['attempt_id'])}</code>; prompt contract <code>{html.escape(attempt['prompt_version'])}</code>; prompt SHA-256 <code>{html.escape(attempt['prompt_sha256'])}</code>; response SHA-256 <code>{html.escape(attempt['response_sha256'])}</code>; proposal SHA-256 <code>{html.escape(attempt['proposal_sha256'])}</code>; source version <code>{attempt['source_version_id']}</code>.</p><details><summary>Raw Ollama response</summary><pre>{html.escape(attempt['raw_ollama_response'])}</pre></details><p>Telemetry: <code>{html.escape(attempt['telemetry'])}</code></p></details>"""
+                legacy_notice = "<p class='status'>COMPLETED_WITHOUT_NORMALIZATION · the attempt predates the normalized-output contract.</p>" if not (trial["normalized_output"] or "").strip() else ""
+                attempt_view = f"""<details class='panel'><summary><strong>Full provenance and raw model output</strong></summary>{legacy_notice}<p>Attempt <code>{html.escape(attempt['attempt_id'])}</code>; prompt contract <code>{html.escape(attempt['prompt_version'])}</code>; prompt SHA-256 <code>{html.escape(attempt['prompt_sha256'])}</code>; response SHA-256 <code>{html.escape(attempt['response_sha256'])}</code>; proposal SHA-256 <code>{html.escape(attempt['proposal_sha256'])}</code>; source version <code>{attempt['source_version_id']}</code>.</p><details><summary>Raw Ollama response</summary><pre>{html.escape(attempt['raw_ollama_response'])}</pre></details><p>Telemetry: <code>{html.escape(attempt['telemetry'])}</code></p></details>"""
         generation_history = "".join(f"<tr><td>{html.escape(item['started_at'])}</td><td>{html.escape(item['completed_at'] or 'running')}</td><td>{html.escape(item['status'])}</td><td>{html.escape(item['model_identifier'])}</td><td>{item['source_version_id']}</td><td>{html.escape(item['error'] or '—')}</td></tr>" for item in attempts) or "<tr><td colspan='6'>No generation attempts recorded.</td></tr>"
-        body = f"""<h1>Trial <code>{html.escape(trial['trial_id'])}</code></h1><p class='status'>Review status: {review_status}</p><p>Created {html.escape(trial['created_at'])}; updated {html.escape(trial['updated_at'])}; source SHA-256 <code>{html.escape(trial['source_sha256'])}</code></p><p>Model: <code>{html.escape(trial['model_identifier'])}</code><br>Digest: <code>{html.escape(trial['model_digest'])}</code></p>
-{generation}{block('Source paragraph', trial['source_text'])}<section><h2>Conversational proposal</h2><div class='prose'>{html.escape(trial['normalized_output'] or 'No normalized proposal recorded.')}</div></section>{diff_view}{block('Integrity findings', trial['integrity_findings'])}{review_form}{attempt_view}
+        no_attempt_view = "<section><h2>Generation attempt</h2><p class='error'>REQUEST_NOT_STARTED</p><p>This trial has no generation attempt. The source was saved, but no request was submitted to Ollama.</p></section>" if not attempt else ""
+        breadcrumb = f"<p class='meta'><a href='/projects'>Projects</a> → <a href='/project/{html.escape(project['slug'])}'>{html.escape(project['name'])}</a> → {html.escape(trial['trial_id'])}</p>" if project else f"<p class='meta'><a href='/projects'>Projects</a> → {html.escape(trial['trial_id'])}</p>"
+        body = f"""{breadcrumb}<h1>Trial <code>{html.escape(trial['trial_id'])}</code></h1><p class='status'>Review status: {review_status}</p><p>Created {html.escape(trial['created_at'])}; updated {html.escape(trial['updated_at'])}; source SHA-256 <code>{html.escape(trial['source_sha256'])}</code></p><p>Model: <code>{html.escape(trial['model_identifier'])}</code><br>Digest: <code>{html.escape(trial['model_digest'])}</code></p>
+{generation}{block('Source paragraph', trial['source_text'])}<section><h2>Conversational proposal</h2><div class='prose'>{html.escape(trial['normalized_output'] or 'No normalized proposal recorded.')}</div></section>{diff_view}{block('Integrity findings', trial['integrity_findings'])}{review_form}{no_attempt_view}{attempt_view}
 <section><h2>Decision</h2><form method='post' action='/trial/{html.escape(trial['trial_id'])}/decision'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='decision'>Decision</label><select id='decision' name='decision'>{''.join(f'<option>{decision}</option>' for decision in sorted(DECISIONS))}</select><label for='decision_reason'>Decision rationale (required for rejection or revision)</label><textarea id='decision_reason' name='decision_reason' maxlength='{MAX_NOTES}'></textarea><button type='submit'>Record decision</button></form></section><section><h2>Generation-attempt history</h2><table><tr><th>Started</th><th>Completed</th><th>Status</th><th>Model</th><th>Source version</th><th>Result</th></tr>{generation_history}</table></section><section><h2>Draft version history</h2><table><tr><th>Version</th><th>When</th><th>Action</th></tr>{history}</table></section><p><a href='/trial/{html.escape(trial['trial_id'])}/artifact'>View artifact/provenance</a> · <a href='/trial/{html.escape(trial['trial_id'])}/edit'>Edit</a></p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/delete'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button class='danger' type='submit'>Delete trial</button></form>"""
         return self._html("Trial", body, csrf)
 
@@ -454,8 +572,24 @@ class DocWriterApp:
         try:
             if method == "GET" and path == "/":
                 content = self._render_home(csrf)
+            elif method == "GET" and path == "/projects":
+                content = self._render_projects(csrf)
+            elif method == "GET" and path == "/review-queue":
+                content = self._render_review_queue(csrf)
             elif method == "GET" and path == "/system":
                 content = self._render_system(csrf)
+            elif method == "GET" and path == "/project/new":
+                content = self._render_project_form(csrf)
+            elif method == "GET" and path.startswith("/project/"):
+                parts = path.strip("/").split("/")
+                project_key = parts[1]
+                with self._db() as db:
+                    project = db.execute("SELECT * FROM projects WHERE project_id=? OR slug=?", (project_key, project_key)).fetchone()
+                    if not project: raise LookupError("project not found")
+                    if len(parts) == 3 and parts[2] == "edit": content = self._render_project_form(csrf, project)
+                    else:
+                        query = urllib.parse.parse_qs(environ.get("QUERY_STRING", ""))
+                        content = self._render_project(csrf, project, query.get("status", ["all"])[0], query.get("search", [""])[0][:MAX_NOTES])
             elif method == "GET" and path == "/trials":
                 query = urllib.parse.parse_qs(environ.get("QUERY_STRING", ""))
                 status_filter = query.get("status", ["all"])[0]
@@ -466,21 +600,41 @@ class DocWriterApp:
                     raise PermissionError("CSRF validation failed")
                 content = self._render_trials(csrf, "all", form.get("search", "").strip()[:MAX_NOTES])
             elif method == "GET" and path == "/trial/new":
-                content = self._render_form(csrf)
+                query = urllib.parse.parse_qs(environ.get("QUERY_STRING", ""))
+                requested_project = query.get("project", [""])[0]
+                with self._db() as db:
+                    project = self._project(db, requested_project) if requested_project else self._project(db, self._default_project_id(db))
+                    projects = self._active_projects(db)
+                    if not project or project["status"] != PROJECT_ACTIVE: raise ValueError("an active project is required")
+                    content = self._render_form(csrf, project=project, projects=projects)
+            elif method == "POST" and path == "/project":
+                form = self._parse_form(environ)
+                if not self._csrf_valid(environ, form): raise PermissionError("CSRF validation failed")
+                name, purpose = form.get("name", "").strip()[:200], form.get("purpose", "").strip()[:MAX_FIELD]
+                if not name or not purpose: raise ValueError("project name and purpose are required")
+                now, project_id = utc_now(), f"project-{secrets.token_hex(8)}"
+                slug = "-".join(name.lower().split())[:80]
+                with self._db() as db:
+                    if db.execute("SELECT 1 FROM projects WHERE slug=?", (slug,)).fetchone(): raise ValueError("project name is already in use")
+                    db.execute("INSERT INTO projects(project_id,slug,name,purpose,status,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,NULL)", (project_id, slug, name, purpose, PROJECT_ACTIVE, now, now))
+                start_response("303 See Other", [("Location", f"/project/{project_id}")]); return [b""]
             elif method == "POST" and path == "/trial":
                 form = self._parse_form(environ); source = form.get("source_text", ""); model = form.get("model_identifier", "")
                 if not self._csrf_valid(environ, form) or not source or len(source) > MAX_SOURCE or model not in MODEL_DIGESTS: raise ValueError("invalid draft or CSRF token")
                 now, trial_id = utc_now(), f"trial-{secrets.token_hex(8)}"
-                row = (trial_id, now, now, source, sha256_text(source), model, MODEL_DIGESTS[model], form.get("generation_parameters", "")[:1000], form.get("integrity_findings", "")[:MAX_NOTES], form.get("raw_output", "")[:MAX_FIELD], form.get("normalized_output", "")[:MAX_FIELD], "REVIEW_REQUIRED", form.get("reviewer_notes", "")[:MAX_NOTES], json.dumps([]))
                 with self._db() as db:
-                    db.execute("INSERT INTO trials VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", row); self._save_version(db, db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone(), "CREATED")
+                    project_id = form.get("project_id", "") or self._default_project_id(db)
+                    project = self._project(db, project_id)
+                    if not project or project["status"] != PROJECT_ACTIVE: raise ValueError("an active project is required")
+                    db.execute("INSERT INTO trials(trial_id,created_at,updated_at,source_text,source_sha256,model_identifier,model_digest,generation_parameters,integrity_findings,raw_output,normalized_output,review_status,reviewer_notes,revision_lineage,project_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (trial_id, now, now, source, sha256_text(source), model, MODEL_DIGESTS[model], form.get("generation_parameters", "")[:1000], form.get("integrity_findings", "")[:MAX_NOTES], form.get("raw_output", "")[:MAX_FIELD], form.get("normalized_output", "")[:MAX_FIELD], "REVIEW_REQUIRED", form.get("reviewer_notes", "")[:MAX_NOTES], json.dumps([]), project_id)); self._save_version(db, db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone(), "CREATED")
                 start_response("303 See Other", [("Location", f"/trial/{trial_id}")]); return [b""]
             elif method == "GET" and path.startswith("/trial/"):
                 parts, trial_id = path.strip("/").split("/"), path.strip("/").split("/")[1]
                 with self._db() as db:
                     trial = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
                     if not trial: raise LookupError("trial not found")
-                    if len(parts) == 3 and parts[2] == "edit": content = self._render_form(csrf, trial)
+                    project = self._project(db, trial["project_id"]) if trial["project_id"] else None
+                    if len(parts) == 3 and parts[2] == "edit": content = self._render_form(csrf, trial, project=project)
                     elif len(parts) == 3 and parts[2] == "artifact":
                         artifact = json.dumps({"trial_id": trial_id, "source_sha256": trial["source_sha256"], "model_identifier": trial["model_identifier"], "model_digest": trial["model_digest"], "generation_parameters": json.loads(trial["generation_parameters"] or "{}"), "review_status": trial["review_status"], "revision_lineage": json.loads(trial["revision_lineage"] or "[]")}, indent=2)
                         versions = db.execute("SELECT snapshot FROM trial_versions WHERE trial_id=? ORDER BY version_id", (trial_id,)).fetchall()
@@ -488,7 +642,29 @@ class DocWriterApp:
                         current = json.loads(versions[-1]["snapshot"]) if versions else {}
                         diff = "".join(difflib.unified_diff((previous.get("normalized_output", "") + "\n").splitlines(True), (current.get("normalized_output", "") + "\n").splitlines(True), fromfile="previous normalized proposal", tofile="current normalized proposal"))
                         content = self._html("Artifact", f"<h1>Artifact/provenance</h1><pre>{html.escape(artifact)}</pre><h2>Exact normalized-proposal diff</h2><pre>{html.escape(diff or '(no normalized proposal change)')}</pre>", csrf)
-                    else: content = self._render_trial(trial, db.execute("SELECT * FROM trial_versions WHERE trial_id=? ORDER BY version_id", (trial_id,)).fetchall(), db.execute("SELECT * FROM generation_attempts WHERE trial_id=? ORDER BY started_at DESC", (trial_id,)).fetchall(), self._review_events(db, trial_id), csrf, review_notice="Review note saved." if urllib.parse.parse_qs(environ.get("QUERY_STRING", "")).get("review_saved") == ["1"] else "")
+                    else: content = self._render_trial(trial, db.execute("SELECT * FROM trial_versions WHERE trial_id=? ORDER BY version_id", (trial_id,)).fetchall(), db.execute("SELECT * FROM generation_attempts WHERE trial_id=? ORDER BY started_at DESC", (trial_id,)).fetchall(), self._review_events(db, trial_id), csrf, review_notice="Review note saved." if urllib.parse.parse_qs(environ.get("QUERY_STRING", "")).get("review_saved") == ["1"] else "", project=project)
+            elif method == "POST" and path.startswith("/project/"):
+                parts, project_key, form = path.strip("/").split("/"), path.strip("/").split("/")[1], self._parse_form(environ)
+                if not self._csrf_valid(environ, form): raise PermissionError("CSRF validation failed")
+                with self._db() as db:
+                    project = db.execute("SELECT * FROM projects WHERE project_id=? OR slug=?", (project_key, project_key)).fetchone()
+                    if not project: raise LookupError("project not found")
+                    if len(parts) == 2:
+                        content = self._render_project(csrf, project, "all", form.get("search", "").strip()[:MAX_NOTES])
+                        start_response("200 OK", self._headers(csrf)); return [content.encode("utf-8")]
+                    action = parts[2]
+                    if action == "edit":
+                        name, purpose = form.get("name", "").strip()[:200], form.get("purpose", "").strip()[:MAX_FIELD]
+                        if not name or not purpose: raise ValueError("project name and purpose are required")
+                        db.execute("UPDATE projects SET name=?,purpose=?,updated_at=? WHERE project_id=?", (name, purpose, utc_now(), project["project_id"]))
+                        location = f"/project/{project['slug']}"
+                    elif action in {"archive", "restore"}:
+                        status = PROJECT_ARCHIVED if action == "archive" else PROJECT_ACTIVE
+                        archived_at = utc_now() if action == "archive" else None
+                        db.execute("UPDATE projects SET status=?,archived_at=?,updated_at=? WHERE project_id=?", (status, archived_at, utc_now(), project["project_id"]))
+                        location = f"/project/{project['slug']}"
+                    else: raise LookupError("project action not found")
+                start_response("303 See Other", [("Location", location)]); return [b""]
             elif method == "POST" and path.startswith("/trial/"):
                 parts, trial_id, form = path.strip("/").split("/"), path.strip("/").split("/")[1], self._parse_form(environ)
                 if not self._csrf_valid(environ, form): raise PermissionError("CSRF validation failed")

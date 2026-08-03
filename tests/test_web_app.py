@@ -27,7 +27,7 @@ def test_authentication_and_home(tmp_path):
     assert request(application, auth=False)["status"].startswith("401")
     response = request(application)
     assert response["status"].startswith("200")
-    assert "Review queue" in response["body"] and "All trials" in response["body"] and "System status" in response["body"]
+    assert "Projects" in response["body"] and "Review queue" in response["body"] and "System status" in response["body"]
 
 
 def test_draft_versions_decision_and_delete(tmp_path):
@@ -154,7 +154,7 @@ def test_existing_trial_detail_order_and_collapsed_provenance(tmp_path):
     application = app(tmp_path)
     trial_id = _trial_id(request(application, "/trial", "POST", {"source_text": "Source paragraph.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"}))
     with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
-        db.execute("insert into generation_attempts values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", ("generation-test", trial_id, 1, "Source paragraph.", "source-hash", "prompt-v1", "prompt", "prompt-hash", "{}", "mistral-nemo:12b-instruct-2407-q4_K_M", "sha256:test", "{}", "2026-08-03T00:00:00+00:00", "2026-08-03T00:00:01+00:00", "raw", "raw-hash", "[]", "Proposal.", "proposal-hash", "diff", "{}", "test-version", "COMPLETED", ""))
+        db.execute("insert into generation_attempts(attempt_id,trial_id,source_version_id,source_text,source_sha256,prompt_version,prompt_text,prompt_sha256,request_json,model_identifier,model_digest,generation_settings,started_at,completed_at,raw_ollama_response,response_sha256,integrity_findings,normalized_proposal,proposal_sha256,source_to_proposal_diff,telemetry,application_version,status,error,error_class) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", ("generation-test", trial_id, 1, "Source paragraph.", "source-hash", "prompt-v1", "prompt", "prompt-hash", "{}", "mistral-nemo:12b-instruct-2407-q4_K_M", "sha256:test", "{}", "2026-08-03T00:00:00+00:00", "2026-08-03T00:00:01+00:00", "raw", "raw-hash", "[]", "Proposal.", "proposal-hash", "diff", "{}", "test-version", "COMPLETED", "", ""))
         db.execute("update trials set normalized_output=? where trial_id=?", ("Proposal.", trial_id)); db.commit()
     body = request(application, f"/trial/{trial_id}")["body"]
     assert "Source paragraph" in body and "Conversational proposal" in body and "Exact diff" in body
@@ -168,3 +168,75 @@ def test_review_workspace_visual_identity_and_focus_styles(tmp_path):
     assert "--copper: #b76638" in body
     assert "outline: 3px solid #6db5d2" in body
     assert "Review queue" in body and "System status" in body
+
+
+def test_alpha_project_backfill_and_project_hierarchy(tmp_path):
+    application = app(tmp_path)
+    first = _trial_id(request(application, "/trial", "POST", {"source_text": "Retained historical trial.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"}))
+    second = _trial_id(request(application, "/trial", "POST", {"source_text": "Another retained trial.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"}))
+    with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
+        db.execute("update trials set project_id=NULL")
+        db.execute("delete from project_migration_events")
+        db.commit()
+    application = DocWriterApp(application.config)
+    with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
+        project = db.execute("select project_id,slug,name,status from projects where slug='alpha'").fetchone()
+        assert project == ("project-alpha", "alpha", "Alpha Trial", "ACTIVE")
+        assert db.execute("select count(*) from trials where project_id=?", (project[0],)).fetchone()[0] == 2
+        assert db.execute("select trial_count_assigned from project_migration_events where migration_name='projects-alpha-v1'").fetchone()[0] == 2
+    page = request(application, "/projects")["body"]
+    assert "Alpha Trial" in page and "2 trials" in page
+    detail = request(application, "/project/alpha")["body"]
+    assert first in detail and second in detail and "New trial" in detail
+    assert "Projects</a>" in request(application, f"/trial/{first}")["body"]
+
+
+def test_project_create_edit_archive_restore_and_no_orphan(tmp_path):
+    application = app(tmp_path)
+    created = request(application, "/project", "POST", {"name": "Second Project", "purpose": "A separate review workspace.", "csrf": "x"})
+    assert created["status"].startswith("303")
+    project_id = created["headers"][0][1].rsplit("/", 1)[-1]
+    assert "Second Project" in request(application, f"/project/{project_id}")["body"]
+    trial = request(application, "/trial", "POST", {"project_id": project_id, "source_text": "Assigned trial.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"})
+    trial_id = _trial_id(trial)
+    with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
+        assert db.execute("select project_id from trials where trial_id=?", (trial_id,)).fetchone()[0] == project_id
+    assert request(application, f"/project/{project_id}/archive", "POST", {"csrf": "x"})["status"].startswith("303")
+    assert request(application, f"/trial/new?project={project_id}")["status"].startswith("400")
+    assert request(application, f"/project/{project_id}/restore", "POST", {"csrf": "x"})["status"].startswith("303")
+    assert request(application, f"/project/{project_id}/edit", "POST", {"name": "Renamed Project", "purpose": "Edited purpose.", "csrf": "x"})["status"].startswith("303")
+    assert "Renamed Project" in request(application, f"/project/{project_id}")["body"]
+
+
+def test_project_scoped_and_global_review_queues_and_incomplete_state(tmp_path):
+    application = app(tmp_path)
+    trial_id = _trial_id(request(application, "/trial", "POST", {"source_text": "Unsumbitted source.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"}))
+    page = request(application, f"/trial/{trial_id}")["body"]
+    assert "REQUEST_NOT_STARTED" in page and "no generation attempt" in page
+    assert trial_id in request(application, "/review-queue")["body"]
+    assert trial_id in request(application, "/project/alpha?status=needs_review")["body"]
+    assert request(application, f"/trial/{trial_id}/generate", "POST", {"csrf": "wrong"})["status"].startswith("403")
+
+
+def test_failed_attempt_classification_and_raw_response_render(tmp_path):
+    application = app(tmp_path)
+    trial_id = _trial_id(request(application, "/trial", "POST", {"source_text": "A source.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"}))
+    from docwriter_web.generation import OllamaError
+    application.ollama_client = type("FailingClient", (), {"generate": lambda self, source: (_ for _ in ()).throw(OllamaError("Ollama HTTP status 500", '{"error":"safe"}', {"error": "safe"}, "OLLAMA_HTTP_ERROR"))})()
+    assert request(application, f"/trial/{trial_id}/generate", "POST", {"csrf": "x"})["status"].startswith("303")
+    body = request(application, f"/trial/{trial_id}")["body"]
+    assert "OLLAMA_HTTP_ERROR" in body and "Preserved raw Ollama response" in body and '{&quot;error&quot;:&quot;safe&quot;}' in body
+    with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
+        assert db.execute("select error_class,status from generation_attempts").fetchone() == ("OLLAMA_HTTP_ERROR", "FAILED")
+
+
+def test_stale_running_attempt_is_recovered_without_rewriting_history(tmp_path):
+    application = app(tmp_path)
+    trial_id = _trial_id(request(application, "/trial", "POST", {"source_text": "A retained source.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"}))
+    with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
+        db.execute("insert into generation_attempts(attempt_id,trial_id,source_version_id,source_text,source_sha256,prompt_version,prompt_text,prompt_sha256,request_json,model_identifier,model_digest,generation_settings,started_at,completed_at,raw_ollama_response,response_sha256,integrity_findings,normalized_proposal,proposal_sha256,source_to_proposal_diff,telemetry,application_version,status,error,error_class) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", ("generation-stale", trial_id, 1, "A retained source.", "hash", "prompt-v1", "prompt", "prompt-hash", "{}", "mistral-nemo:12b-instruct-2407-q4_K_M", "sha256:test", "{}", "2020-01-01T00:00:00+00:00", "", "preserved-raw", "raw-hash", "[]", "", "", "", "{}", "test", "RUNNING", "", ""))
+        db.commit()
+    restarted = DocWriterApp(application.config)
+    with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
+        assert db.execute("select status,error_class,raw_ollama_response from generation_attempts where attempt_id='generation-stale'").fetchone() == ("FAILED", "STUCK_RUNNING", "preserved-raw")
+    assert "STUCK_RUNNING" in request(restarted, f"/trial/{trial_id}")["body"]

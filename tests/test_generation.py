@@ -1,0 +1,152 @@
+import base64
+import io
+import json
+import sqlite3
+
+from docwriter_web import AppConfig, DocWriterApp
+from docwriter_web.generation import (
+    GENERATION_SETTINGS,
+    MODEL,
+    MODEL_DIGEST,
+    PROMPT_VERSION,
+    GenerationResult,
+    OllamaError,
+    exact_diff,
+    prompt_for,
+    serialized_json,
+    sha256_text,
+)
+
+
+class FakeHTTPResponse:
+    def __init__(self, payload): self.payload = json.dumps(payload).encode()
+    def __enter__(self): return self
+    def __exit__(self, *args): return False
+    def read(self, limit=-1): return self.payload[:limit]
+
+
+def request(app, path="/", method="GET", form=None, auth=True):
+    body = "" if form is None else "&".join(f"{k}={v}" for k, v in form.items())
+    environ = {"REQUEST_METHOD": method, "PATH_INFO": path, "CONTENT_LENGTH": str(len(body.encode())), "wsgi.input": io.BytesIO(body.encode()), "HTTP_COOKIE": "docwriter_csrf=x", "HTTP_AUTHORIZATION": "Basic " + base64.b64encode(b"operator:testing-password").decode() if auth else ""}
+    result = {}
+    def start(status, headers): result.update(status=status, headers=headers)
+    result["body"] = b"".join(app(environ, start)).decode()
+    return result
+
+
+def make_app(tmp_path):
+    password = tmp_path / "password"
+    password.write_text("testing-password\n")
+    return DocWriterApp(AppConfig(tmp_path, "operator", password, b"x" * 32))
+
+
+def make_trial(app):
+    response = request(app, "/trial", "POST", {"source_text": "The observed service remains local and review is unresolved.", "model_identifier": MODEL, "csrf": "x"})
+    return response["headers"][0][1].rsplit("/", 1)[-1]
+
+
+def result_for(source, proposal="The service remains local, and review is unresolved."):
+    raw = json.dumps({"integrity_findings": [{"category": "no material issue found", "detail": "No material issue found."}], "conversational_proposal": proposal}, separators=(",", ":"))
+    return GenerationResult(MODEL, MODEL_DIGEST, "{request}", prompt_for(source), sha256_text(prompt_for(source)), "2026-08-03T00:00:00+00:00", "2026-08-03T00:00:01+00:00", raw, {"eval_count": 12}, [{"category": "no material issue found", "detail": "No material issue found."}], proposal, exact_diff(source, proposal), sha256_text(raw), sha256_text(proposal), {"eval_count": 12, "wall_seconds": 1.0})
+
+
+class FakeClient:
+    def __init__(self, result=None, error=None):
+        self.result = result
+        self.error = error
+        self.calls = []
+
+    def generate(self, source):
+        self.calls.append(source)
+        if self.error:
+            raise self.error
+        return self.result
+
+
+def test_generation_requires_auth_and_csrf(tmp_path):
+    application = make_app(tmp_path)
+    assert request(application, "/trial/x/generate", "POST", {"csrf": "x"}, auth=False)["status"].startswith("401")
+    trial_id = make_trial(application)
+    assert request(application, f"/trial/{trial_id}/generate", "POST", {"csrf": "wrong"})["status"].startswith("403")
+
+
+def test_success_persists_fixed_settings_provenance_and_review_required(tmp_path):
+    application = make_app(tmp_path)
+    trial_id = make_trial(application)
+    source = "The observed service remains local and review is unresolved."
+    fake = FakeClient(result_for(source))
+    application.ollama_client = fake
+    response = request(application, f"/trial/{trial_id}/generate", "POST", {"csrf": "x", "model_identifier": "arbitrary"})
+    assert response["status"].startswith("303")
+    assert fake.calls == [source]
+    with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
+        trial = db.execute("select model_identifier,model_digest,generation_parameters,integrity_findings,normalized_output,review_status,revision_lineage from trials where trial_id=?", (trial_id,)).fetchone()
+        attempt = db.execute("select source_version_id,prompt_version,prompt_sha256,request_json,raw_ollama_response,source_to_proposal_diff,proposal_sha256,status from generation_attempts where trial_id=?", (trial_id,)).fetchone()
+    assert trial[0:2] == (MODEL, MODEL_DIGEST)
+    assert json.loads(trial[2]) == GENERATION_SETTINGS
+    assert json.loads(trial[3])[0]["category"] == "no material issue found"
+    assert trial[4] == "The service remains local, and review is unresolved."
+    assert trial[5] == "REVIEW_REQUIRED"
+    assert attempt[0] == 1 and attempt[1] == PROMPT_VERSION and attempt[2] == sha256_text(prompt_for(source))
+    assert attempt[4] and "source paragraph" in attempt[5] and attempt[6] == sha256_text(trial[4]) and attempt[7] == "COMPLETED"
+
+
+def test_malformed_response_fails_closed_and_retry_is_new_attempt(tmp_path):
+    application = make_app(tmp_path)
+    trial_id = make_trial(application)
+    failed = FakeClient(error=OllamaError("structured response fields are invalid", '{"bad":true}', {"response": '{"bad":true}'}))
+    application.ollama_client = failed
+    assert request(application, f"/trial/{trial_id}/generate", "POST", {"csrf": "x"})["status"].startswith("303")
+    with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
+        assert db.execute("select status,raw_ollama_response from generation_attempts").fetchone() == ("FAILED", '{"bad":true}')
+        assert db.execute("select normalized_output,review_status from trials where trial_id=?", (trial_id,)).fetchone() == ("", "REVIEW_REQUIRED")
+    source = "The observed service remains local and review is unresolved."
+    application.ollama_client = FakeClient(result_for(source))
+    assert request(application, f"/trial/{trial_id}/generate", "POST", {"csrf": "x"})["status"].startswith("303")
+    with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
+        attempts = db.execute("select status,raw_ollama_response from generation_attempts order by rowid").fetchall()
+    assert [row[0] for row in attempts] == ["FAILED", "COMPLETED"]
+    assert attempts[0][1] == '{"bad":true}'
+
+
+def test_ollama_failure_preserves_draft_and_duplicate_is_rejected(tmp_path):
+    application = make_app(tmp_path)
+    trial_id = make_trial(application)
+    application._generation_lock.acquire()
+    try:
+        assert request(application, f"/trial/{trial_id}/generate", "POST", {"csrf": "x"})["status"].startswith("409")
+    finally:
+        application._generation_lock.release()
+    application.ollama_client = FakeClient(error=OllamaError("local Ollama request failed"))
+    assert request(application, f"/trial/{trial_id}/generate", "POST", {"csrf": "x"})["status"].startswith("303")
+    with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
+        assert db.execute("select normalized_output,review_status from trials where trial_id=?", (trial_id,)).fetchone() == ("", "REVIEW_REQUIRED")
+
+
+def test_mocked_ollama_request_reconciles_digest_and_settings():
+    from docwriter_web.generation import OllamaClient
+    calls = []
+    raw = json.dumps({"integrity_findings": [], "conversational_proposal": "A concise proposal."})
+    def opener(request, timeout):
+        calls.append((request.full_url, json.loads(request.data.decode()) if request.data else None, timeout))
+        if request.full_url.endswith("/api/tags"):
+            return FakeHTTPResponse({"models": [{"name": MODEL, "digest": MODEL_DIGEST}]})
+        return FakeHTTPResponse({"response": raw, "eval_count": 4, "eval_duration": 12})
+    result = OllamaClient(opener=opener).generate("A source paragraph.")
+    assert result.model_digest == MODEL_DIGEST and result.proposal == "A concise proposal."
+    assert calls[0][0].endswith("/api/tags") and calls[1][0].endswith("/api/generate")
+    payload = calls[1][1]
+    assert payload["model"] == MODEL and payload["stream"] is False and payload["think"] is False
+    assert payload["options"] == {"num_ctx": 8192, "temperature": 0.2, "top_p": 0.9, "seed": 42}
+
+
+def test_mocked_ollama_digest_mismatch_fails_closed():
+    from docwriter_web.generation import OllamaClient
+    def opener(request, timeout):
+        return FakeHTTPResponse({"models": [{"name": MODEL, "digest": "sha256:wrong"}]})
+    try:
+        OllamaClient(opener=opener).generate("A source paragraph.")
+    except OllamaError as exc:
+        assert "digest" in str(exc)
+    else:
+        raise AssertionError("digest mismatch did not fail closed")

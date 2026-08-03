@@ -11,11 +11,26 @@ import json
 import os
 import secrets
 import sqlite3
+import threading
 import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+
+from .generation import (
+    GENERATION_SETTINGS,
+    MODEL,
+    MODEL_DIGEST,
+    PROMPT_VERSION,
+    OllamaClient,
+    OllamaError,
+    prompt_for,
+    request_payload_for,
+    serialized_json,
+    sha256_text,
+    utc_now,
+)
 
 MAX_SOURCE = 12000
 MAX_FIELD = 12000
@@ -35,7 +50,8 @@ class AppConfig:
     operator_password_file: Path
     session_secret: bytes
     canonical_host: str = "docwriter.home.arpa"
-    version: str = "prepared"
+    version: str = "generation-v1"
+    ollama_url: str = "http://127.0.0.1:11434"
 
     @property
     def state_dir(self) -> Path:
@@ -55,7 +71,7 @@ class AppConfig:
         secret = secret_file.read_bytes().strip()
         if len(secret) < 32:
             raise RuntimeError("session secret is too short")
-        return cls(runtime, os.environ.get("DOCWRITER_OPERATOR_USER", "operator"), password_file, secret)
+        return cls(runtime, os.environ.get("DOCWRITER_OPERATOR_USER", "operator"), password_file, secret, os.environ.get("DOCWRITER_APP_VERSION", "generation-v1"), os.environ.get("DOCWRITER_OLLAMA_URL", "http://127.0.0.1:11434"))
 
 
 def utc_now() -> str:
@@ -69,6 +85,9 @@ def sha256_text(value: str) -> str:
 class DocWriterApp:
     def __init__(self, config: AppConfig):
         self.config = config
+        self.ollama_client = OllamaClient(config.ollama_url)
+        self._generation_lock = threading.Lock()
+        self._generating: set[str] = set()
         self._initialize()
 
     def _initialize(self) -> None:
@@ -88,6 +107,18 @@ class DocWriterApp:
                 CREATE TABLE IF NOT EXISTS trial_versions (
                     version_id INTEGER PRIMARY KEY AUTOINCREMENT, trial_id TEXT NOT NULL REFERENCES trials(trial_id),
                     recorded_at TEXT NOT NULL, action TEXT NOT NULL, snapshot TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS generation_attempts (
+                    attempt_id TEXT PRIMARY KEY, trial_id TEXT NOT NULL REFERENCES trials(trial_id),
+                    source_version_id INTEGER NOT NULL, source_text TEXT NOT NULL, source_sha256 TEXT NOT NULL,
+                    prompt_version TEXT NOT NULL, prompt_text TEXT NOT NULL, prompt_sha256 TEXT NOT NULL,
+                    request_json TEXT NOT NULL, model_identifier TEXT NOT NULL, model_digest TEXT NOT NULL,
+                    generation_settings TEXT NOT NULL, started_at TEXT NOT NULL, completed_at TEXT NOT NULL,
+                    raw_ollama_response TEXT NOT NULL, response_sha256 TEXT NOT NULL,
+                    integrity_findings TEXT NOT NULL, normalized_proposal TEXT NOT NULL,
+                    proposal_sha256 TEXT NOT NULL, source_to_proposal_diff TEXT NOT NULL,
+                    telemetry TEXT NOT NULL, application_version TEXT NOT NULL,
+                    status TEXT NOT NULL, error TEXT NOT NULL
                 );
             """)
 
@@ -151,6 +182,45 @@ class DocWriterApp:
         snapshot = json.dumps({key: trial[key] for key in trial.keys()}, sort_keys=True)
         db.execute("INSERT INTO trial_versions(trial_id, recorded_at, action, snapshot) VALUES(?,?,?,?)", (trial["trial_id"], utc_now(), action, snapshot))
 
+    def _latest_attempt(self, db: sqlite3.Connection, trial_id: str) -> sqlite3.Row | None:
+        return db.execute("SELECT * FROM generation_attempts WHERE trial_id=? ORDER BY started_at DESC LIMIT 1", (trial_id,)).fetchone()
+
+    def _generate_trial(self, trial_id: str) -> tuple[str, str]:
+        if not self._generation_lock.acquire(blocking=False):
+            raise RuntimeError("another generation is already running")
+        try:
+            with self._db() as db:
+                trial = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
+                if not trial:
+                    raise LookupError("trial not found")
+                version = db.execute("SELECT * FROM trial_versions WHERE trial_id=? ORDER BY version_id DESC LIMIT 1", (trial_id,)).fetchone()
+                if not version:
+                    raise ValueError("source version is unavailable")
+                attempt_id = f"generation-{secrets.token_hex(8)}"
+                request_json = serialized_json(request_payload_for(trial["source_text"]))
+                started_at = utc_now()
+                db.execute("INSERT INTO generation_attempts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id, trial_id, version["version_id"], trial["source_text"], trial["source_sha256"], PROMPT_VERSION, prompt_for(trial["source_text"]), sha256_text(prompt_for(trial["source_text"])), request_json, MODEL, MODEL_DIGEST, serialized_json(GENERATION_SETTINGS), started_at, "", "", "", "[]", "", "", "", "{}", self.config.version, "RUNNING", ""))
+            try:
+                result = self.ollama_client.generate(trial["source_text"])
+            except OllamaError as exc:
+                with self._db() as db:
+                    db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,telemetry=?,status=?,error=? WHERE attempt_id=?", (utc_now(), exc.raw_response, sha256_text(exc.raw_response) if exc.raw_response else "", serialized_json(exc.response_payload), "FAILED", str(exc), attempt_id))
+                return attempt_id, "failed"
+            with self._db() as db:
+                current = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
+                if current["source_sha256"] != trial["source_sha256"]:
+                    db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,telemetry=?,status=?,error=? WHERE attempt_id=?", (result.completed_at, result.raw_ollama_response, result.response_hash, serialized_json(result.telemetry), "STALE_SOURCE", "source changed during generation", attempt_id))
+                    return attempt_id, "stale"
+                findings_json = json.dumps(result.integrity_findings, ensure_ascii=False, sort_keys=True)
+                lineage = json.loads(current["revision_lineage"] or "[]")
+                lineage.append(attempt_id)
+                db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,integrity_findings=?,normalized_proposal=?,proposal_sha256=?,source_to_proposal_diff=?,telemetry=?,status=? WHERE attempt_id=?", (result.completed_at, result.raw_ollama_response, result.response_hash, findings_json, result.proposal, result.proposal_hash, result.source_to_proposal_diff, serialized_json(result.telemetry), "COMPLETED", attempt_id))
+                db.execute("UPDATE trials SET updated_at=?,model_identifier=?,model_digest=?,generation_parameters=?,integrity_findings=?,raw_output=?,normalized_output=?,review_status='REVIEW_REQUIRED',revision_lineage=? WHERE trial_id=?", (result.completed_at, result.model_identifier, result.model_digest, serialized_json(GENERATION_SETTINGS), findings_json, result.raw_ollama_response, result.proposal, json.dumps(lineage), trial_id))
+                self._save_version(db, db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone(), "GENERATED")
+            return attempt_id, "completed"
+        finally:
+            self._generation_lock.release()
+
     def _render_home(self, csrf: str) -> str:
         with self._db() as db:
             count = db.execute("SELECT count(*) FROM trials WHERE review_status NOT IN ('ACCEPTED','REJECTED')").fetchone()[0]
@@ -177,11 +247,21 @@ class DocWriterApp:
 <label for='reviewer_notes'>Reviewer notes</label><textarea id='reviewer_notes' name='reviewer_notes' maxlength='{MAX_NOTES}'>{value('reviewer_notes')}</textarea><button type='submit'>Save draft</button></form>"""
         return self._html("New trial", body, csrf)
 
-    def _render_trial(self, trial: sqlite3.Row, versions: list[sqlite3.Row], csrf: str) -> str:
+    def _render_trial(self, trial: sqlite3.Row, versions: list[sqlite3.Row], attempt: sqlite3.Row | None, csrf: str) -> str:
         def block(label: str, text: str) -> str:
             return f"<section><h2>{html.escape(label)}</h2><pre>{html.escape(text or '—')}</pre></section>"
         history = "".join(f"<tr><td>{v['version_id']}</td><td>{html.escape(v['recorded_at'])}</td><td>{html.escape(v['action'])}</td></tr>" for v in versions)
+        generation = f"""<section><h2>Generate conversational proposal</h2><p>Server-owned model: <code>{MODEL}</code><br>Model status: installed digest reconciled before execution<br>Settings: context 8192, temperature 0.2, top-p 0.9, seed 42, streaming disabled, thinking disabled</p><p class='muted'>Execution uses local Ollama only. The result remains <code>REVIEW_REQUIRED</code> and is never accepted automatically.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/generate' onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Generating…';"><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button type='submit'>Generate conversational proposal</button></form></section>"""
+        attempt_view = ""
+        if attempt:
+            if attempt["status"] == "FAILED":
+                attempt_view = "<section><h2>Generation attempt</h2><p class='status'>Generation failed closed; the existing draft was preserved. An explicit retry creates a new attempt.</p></section>"
+            elif attempt["status"] == "STALE_SOURCE":
+                attempt_view = "<section><h2>Generation attempt</h2><p class='status'>Source changed during generation; the result was not applied to this draft.</p></section>"
+            elif attempt["status"] == "COMPLETED":
+                attempt_view = f"""<section><h2>Generation provenance</h2><p>Attempt <code>{html.escape(attempt['attempt_id'])}</code>; prompt contract <code>{html.escape(attempt['prompt_version'])}</code>; prompt SHA-256 <code>{html.escape(attempt['prompt_sha256'])}</code>; response SHA-256 <code>{html.escape(attempt['response_sha256'])}</code>; proposal SHA-256 <code>{html.escape(attempt['proposal_sha256'])}</code>; source version <code>{attempt['source_version_id']}</code>.</p><details><summary>Raw Ollama response</summary><pre>{html.escape(attempt['raw_ollama_response'])}</pre></details><h3>Exact source-to-proposal diff</h3><pre>{html.escape(attempt['source_to_proposal_diff'] or '(no textual difference)')}</pre><p>Telemetry: <code>{html.escape(attempt['telemetry'])}</code></p></section>"""
         body = f"""<h1>Trial <code>{html.escape(trial['trial_id'])}</code></h1><p class='status'>Review status: {html.escape(trial['review_status'])}</p><p>Created {html.escape(trial['created_at'])}; updated {html.escape(trial['updated_at'])}; source SHA-256 <code>{html.escape(trial['source_sha256'])}</code></p><p>Model: <code>{html.escape(trial['model_identifier'])}</code><br>Digest: <code>{html.escape(trial['model_digest'])}</code></p>
+{generation}{attempt_view}
 {block('Source paragraph', trial['source_text'])}{block('Integrity findings', trial['integrity_findings'])}{block('Raw model output', trial['raw_output'])}{block('Normalized proposal', trial['normalized_output'])}{block('Reviewer notes', trial['reviewer_notes'])}
 <section><h2>Decision</h2><form method='post' action='/trial/{html.escape(trial['trial_id'])}/decision'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><select name='decision'>{''.join(f'<option>{decision}</option>' for decision in sorted(DECISIONS))}</select><button type='submit'>Record decision</button></form></section><section><h2>Version history</h2><table><tr><th>Version</th><th>When</th><th>Action</th></tr>{history}</table></section><p><a href='/trial/{html.escape(trial['trial_id'])}/artifact'>View artifact/provenance</a> · <a href='/trial/{html.escape(trial['trial_id'])}/edit'>Edit</a></p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/delete'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button class='danger' type='submit'>Delete trial</button></form>"""
         return self._html("Trial", body, csrf)
@@ -218,10 +298,13 @@ class DocWriterApp:
                         current = json.loads(versions[-1]["snapshot"]) if versions else {}
                         diff = "".join(difflib.unified_diff((previous.get("normalized_output", "") + "\n").splitlines(True), (current.get("normalized_output", "") + "\n").splitlines(True), fromfile="previous normalized proposal", tofile="current normalized proposal"))
                         content = self._html("Artifact", f"<h1>Artifact/provenance</h1><pre>{html.escape(artifact)}</pre><h2>Exact normalized-proposal diff</h2><pre>{html.escape(diff or '(no normalized proposal change)')}</pre>", csrf)
-                    else: content = self._render_trial(trial, db.execute("SELECT * FROM trial_versions WHERE trial_id=? ORDER BY version_id", (trial_id,)).fetchall(), csrf)
+                    else: content = self._render_trial(trial, db.execute("SELECT * FROM trial_versions WHERE trial_id=? ORDER BY version_id", (trial_id,)).fetchall(), self._latest_attempt(db, trial_id), csrf)
             elif method == "POST" and path.startswith("/trial/"):
                 parts, trial_id, form = path.strip("/").split("/"), path.strip("/").split("/")[1], self._parse_form(environ)
                 if not self._csrf_valid(environ, form): raise PermissionError("CSRF validation failed")
+                if len(parts) == 3 and parts[2] == "generate":
+                    self._generate_trial(trial_id)
+                    start_response("303 See Other", [("Location", f"/trial/{trial_id}")]); return [b""]
                 with self._db() as db:
                     trial = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
                     if not trial: raise LookupError("trial not found")
@@ -240,6 +323,8 @@ class DocWriterApp:
                 start_response("404 Not Found", self._headers()); return [b"Not found\n"]
         except PermissionError as exc:
             start_response("403 Forbidden", self._headers()); return [str(exc).encode()]
+        except RuntimeError as exc:
+            start_response("409 Conflict", self._headers()); return [str(exc).encode()]
         except (LookupError, ValueError) as exc:
             start_response("400 Bad Request", self._headers()); return [str(exc).encode()]
         start_response("200 OK", self._headers(csrf)); return [content.encode("utf-8")]

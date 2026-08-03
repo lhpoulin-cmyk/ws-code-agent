@@ -10,6 +10,7 @@ from docwriter_web.generation import (
     MODEL_DIGEST,
     PROMPT_VERSION,
     GenerationResult,
+    OllamaClient,
     OllamaError,
     exact_diff,
     prompt_for,
@@ -134,10 +135,24 @@ def test_mocked_ollama_request_reconciles_digest_and_settings():
         return FakeHTTPResponse({"response": raw, "eval_count": 4, "eval_duration": 12})
     result = OllamaClient(opener=opener).generate("A source paragraph.")
     assert result.model_digest == MODEL_DIGEST and result.proposal == "A concise proposal."
+
+
     assert calls[0][0].endswith("/api/tags") and calls[1][0].endswith("/api/generate")
     payload = calls[1][1]
     assert payload["model"] == MODEL and payload["stream"] is False and payload["think"] is False
     assert payload["options"] == {"num_ctx": 8192, "temperature": 0.2, "top_p": 0.9, "seed": 42}
+
+
+def test_mocked_ollama_request_normalizes_unprefixed_digest():
+    calls = []
+    raw = json.dumps({"integrity_findings": [], "conversational_proposal": "A concise proposal."})
+    def opener(request, timeout):
+        calls.append(request.full_url)
+        if request.full_url.endswith("/api/tags"):
+            return FakeHTTPResponse({"models": [{"name": MODEL, "digest": MODEL_DIGEST.removeprefix("sha256:")}]})
+        return FakeHTTPResponse({"response": raw})
+    result = OllamaClient(opener=opener).generate("Source paragraph.")
+    assert result.model_digest == MODEL_DIGEST
 
 
 def test_mocked_ollama_digest_mismatch_fails_closed():

@@ -138,7 +138,7 @@ class OllamaClient:
             if item.get("name") == model or item.get("model") == model:
                 digest = item.get("digest")
                 if isinstance(digest, str):
-                    return digest
+                    return digest if digest.startswith("sha256:") else "sha256:" + digest
         raise OllamaError("configured model is not installed locally")
 
     def generate(self, source: str) -> GenerationResult:

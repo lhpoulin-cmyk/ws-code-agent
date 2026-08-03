@@ -220,8 +220,8 @@ class DocWriterApp:
 
     def _html(self, title: str, body: str, csrf: str) -> str:
         return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>{html.escape(title)} · Doc Writer</title>
-<style>body{{font:16px system-ui,sans-serif;max-width:980px;margin:2rem auto;padding:0 1rem;color:#18212b;background:#f7f8fa}}a{{color:#075985}}nav{{display:flex;gap:1rem;margin-bottom:2rem}}section,form{{background:#fff;border:1px solid #d5dbe1;border-radius:8px;padding:1rem;margin:1rem 0}}label{{display:block;font-weight:650;margin:.8rem 0 .25rem}}textarea,input,select{{width:100%;box-sizing:border-box;padding:.65rem;border:1px solid #aeb8c2;border-radius:5px;font:inherit}}textarea{{min-height:9rem}}button{{padding:.6rem 1rem;border:0;border-radius:5px;background:#075985;color:white;font-weight:650;cursor:pointer}}button.danger{{background:#991b1b}}.muted{{color:#52606d}}.status{{font-weight:700}}code{{background:#eef2f6;padding:.1rem .3rem;border-radius:3px;word-break:break-word}}table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid #d5dbe1;text-align:left;padding:.5rem}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}</style></head><body>
-<nav><a href='/'>Doc Writer</a><a href='/trial/new'>New conversational trial</a></nav>{body}</body></html>"""
+<style>:root{{color-scheme:light}}body{{font:16px/1.6 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:1180px;margin:0 auto;padding:0 1.25rem 4rem;color:#1f2933;background:#f6f7f9}}a{{color:#075985;text-decoration:none}}a:hover{{text-decoration:underline}}header{{padding:1.25rem 0 1rem;border-bottom:1px solid #d9e0e7;margin-bottom:2rem}}.brand{{font-size:1.35rem;font-weight:750;color:#18212b}}nav{{display:flex;flex-wrap:wrap;gap:1rem;margin-top:.7rem;align-items:center}}.health{{margin-left:auto;color:#52606d;font-size:.9rem}}main{{max-width:1040px;margin:0 auto}}section,form,.panel{{background:#fff;border:1px solid #d9e0e7;border-radius:10px;padding:1.25rem;margin:1rem 0;box-shadow:0 1px 2px #172b4d0d}}h1{{font-size:2rem;line-height:1.2;margin:0 0 .5rem}}h2{{font-size:1.25rem;line-height:1.3;margin:.1rem 0 .75rem}}h3{{font-size:1rem;margin:1.25rem 0 .5rem}}label{{display:block;font-weight:700;margin:.8rem 0 .25rem}}textarea,input,select{{width:100%;box-sizing:border-box;padding:.7rem;border:1px solid #aeb8c2;border-radius:6px;font:inherit;background:#fff}}textarea{{min-height:9rem}}input[type=checkbox]{{width:auto;margin-right:.4rem}}button,.button{{display:inline-block;padding:.65rem 1rem;border:0;border-radius:6px;background:#075985;color:white;font-weight:700;cursor:pointer;text-decoration:none}}button:hover,.button:hover{{background:#064a6b;text-decoration:none}}button.secondary,.button.secondary{{background:#e7eef3;color:#164e63}}button.danger{{background:#991b1b}}.muted{{color:#52606d}}.status{{font-weight:700}}.badge{{display:inline-block;border-radius:999px;padding:.2rem .65rem;font-size:.82rem;font-weight:750;white-space:nowrap;background:#e7eef3;color:#164e63}}.badge.review{{background:#fff1c7;color:#7a4d00}}.badge.accepted{{background:#dcfce7;color:#166534}}.badge.rejected{{background:#fee2e2;color:#991b1b}}.badge.revision{{background:#ffedd5;color:#9a3412}}.badge.failed{{background:#f3e8ff;color:#6b21a8}}.notice{{padding:.7rem 1rem;border-radius:6px;background:#ecfdf5;color:#166534;font-weight:700}}.error{{padding:.7rem 1rem;border-radius:6px;background:#fef2f2;color:#991b1b;font-weight:650}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem}}.trial-list{{display:grid;gap:.8rem}}.trial-card{{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1rem;align-items:center;background:#fff;border:1px solid #d9e0e7;border-radius:10px;padding:1rem 1.15rem}}.trial-card h3{{margin:0 0 .25rem}}.meta{{color:#52606d;font-size:.9rem}}.actions{{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}}table{{border-collapse:collapse;width:100%;font-size:.94rem}}td,th{{border-bottom:1px solid #d5dbe1;text-align:left;padding:.6rem;vertical-align:top}}th{{color:#52606d;font-size:.85rem;text-transform:uppercase;letter-spacing:.03em}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}}.prose{{font-family:Georgia,'Times New Roman',serif;font-size:1.12rem;line-height:1.75;white-space:pre-wrap}}.quiet{{background:#f8fafc;border-color:#e5e7eb}}.filters{{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}}.filters a{{padding:.35rem .7rem;border-radius:999px;background:#e7eef3}}.filters a.active{{background:#075985;color:#fff}}@media(max-width:700px){{.trial-card{{grid-template-columns:1fr}}.health{{margin-left:0;width:100%}}}}
+</style></head><body><header><a class='brand' href='/'>Doc Writer</a><nav><a href='/'>Review queue</a><a href='/trials'>All trials</a><a href='/trial/new'>New trial</a><a href='/system'>System status</a><span class='health'>Local review service · <a href='/system'>status</a></span></nav></header><main>{body}</main></body></html>"""
 
     def _save_version(self, db: sqlite3.Connection, trial: sqlite3.Row, action: str) -> None:
         snapshot = json.dumps({key: trial[key] for key in trial.keys()}, sort_keys=True)
@@ -266,14 +266,68 @@ class DocWriterApp:
         finally:
             self._generation_lock.release()
 
+    def _status_badge(self, status: str, rationale_missing: bool = False) -> str:
+        style = {"ACCEPTED": "accepted", "REJECTED": "rejected", "REVISION_REQUIRED": "revision", "REVIEW_REQUIRED": "review"}.get(status, "")
+        label = status + (" · REVIEW_RATIONALE_MISSING" if rationale_missing else "")
+        return f"<span class='badge {style}'>{html.escape(label)}</span>"
+
+    def _trial_rows(self, db: sqlite3.Connection, status_filter: str = "all", search: str = "") -> list[sqlite3.Row]:
+        conditions, params = [], []
+        if status_filter in DECISIONS or status_filter == "REVIEW_REQUIRED":
+            conditions.append("t.review_status=?"); params.append(status_filter)
+        elif status_filter == "needs_review":
+            conditions.append("(t.review_status IN ('REVIEW_REQUIRED','REVISION_REQUIRED') OR (t.review_status IN ('REJECTED','REVISION_REQUIRED') AND NOT EXISTS (SELECT 1 FROM review_events rn WHERE rn.trial_id=t.trial_id AND rn.event_type='REVIEW_NOTE' AND trim(COALESCE(rn.note_text,''))<>'')))")
+        elif status_filter == "generation_failed":
+            conditions.append("EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND gf.status='FAILED')")
+        elif status_filter == "rationale_missing":
+            conditions.append("t.review_status IN ('REJECTED','REVISION_REQUIRED') AND NOT EXISTS (SELECT 1 FROM review_events rn WHERE rn.trial_id=t.trial_id AND rn.event_type='REVIEW_NOTE' AND trim(COALESCE(rn.note_text,''))<>'')")
+        if search:
+            term = f"%{search}%"
+            conditions.append("(t.trial_id LIKE ? OR t.source_text LIKE ? OR t.model_identifier LIKE ? OR EXISTS (SELECT 1 FROM review_events rs WHERE rs.trial_id=t.trial_id AND rs.event_type='REVIEW_NOTE' AND rs.private_steering=0 AND rs.note_text LIKE ?))")
+            params.extend([term, term, term, term])
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        return db.execute(f"""SELECT t.*, (SELECT count(*) FROM generation_attempts ga WHERE ga.trial_id=t.trial_id) AS attempt_count,
+            EXISTS (SELECT 1 FROM review_events rn WHERE rn.trial_id=t.trial_id AND rn.event_type='REVIEW_NOTE' AND trim(COALESCE(rn.note_text,''))<>'') AS has_notes,
+            EXISTS (SELECT 1 FROM review_events ps WHERE ps.trial_id=t.trial_id AND ps.event_type='REVIEW_NOTE' AND ps.private_steering=1) AS has_private,
+            (SELECT decision FROM review_events de WHERE de.trial_id=t.trial_id AND de.event_type='DECISION' ORDER BY de.created_at DESC, de.event_id DESC LIMIT 1) AS latest_decision,
+            EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND gf.status='FAILED') AS has_failed
+            FROM trials t{where} ORDER BY t.updated_at DESC, t.trial_id DESC""", params).fetchall()
+
+    def _render_trial_card(self, row: sqlite3.Row) -> str:
+        rationale_missing = row["review_status"] in {"REJECTED", "REVISION_REQUIRED"} and not row["has_notes"]
+        excerpt = " ".join((row["source_text"] or "").split())[:180]
+        flags = []
+        if row["has_notes"]: flags.append("notes")
+        if row["has_private"]: flags.append("private steering")
+        if row["has_failed"]: flags.append("generation failed")
+        flag_text = " · ".join(flags) if flags else "no reviewer notes"
+        return f"<article class='trial-card'><div><h3>{html.escape(excerpt or 'Untitled trial')}</h3><div class='meta'><code>{html.escape(row['trial_id'])}</code> · created {html.escape(row['created_at'])} · updated {html.escape(row['updated_at'])}</div><p>{self._status_badge(row['review_status'], rationale_missing)} <span class='meta'>{html.escape(row['model_identifier'])} · {row['attempt_count']} generation attempt(s) · {html.escape(flag_text)}</span></p></div><div class='actions'><a class='button' href='/trial/{html.escape(row['trial_id'])}'>Open</a></div></article>"
+
+    def _render_trials(self, csrf: str, status_filter: str = "all", search: str = "") -> str:
+        with self._db() as db:
+            rows = self._trial_rows(db, status_filter, search)
+        filters = [("all", "All"), ("needs_review", "Needs review"), ("REVISION_REQUIRED", "Revision required"), ("ACCEPTED", "Accepted"), ("REJECTED", "Rejected"), ("generation_failed", "Generation failed"), ("rationale_missing", "Rationale missing")]
+        filter_links = "".join(f"<a class='{('active' if status_filter == key else '')}' href='/trials{('?status=' + key if key != 'all' else '')}'>{label}</a>" for key, label in filters)
+        cards = "".join(self._render_trial_card(row) for row in rows) or "<section class='quiet'><h2>No trials found</h2><p class='muted'>Try another filter or search, or create a new conversational trial.</p></section>"
+        body = f"""<div class='actions'><div><h1>All trials</h1><p class='muted'>Every non-deleted writing review, including closed and failed attempts.</p></div><a class='button' href='/trial/new'>New conversational trial</a></div><form method='post' action='/trials'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='trial-search'>Search trials</label><input id='trial-search' name='search' value='{html.escape(search)}' placeholder='Trial ID, source excerpt, model, or reviewer note'><button type='submit'>Search</button></form><div class='filters' aria-label='Trial filters'>{filter_links}</div><p class='muted'>{len(rows)} trial(s)</p><div class='trial-list'>{cards}</div>"""
+        return self._html("All trials", body, csrf)
+
     def _render_home(self, csrf: str) -> str:
         with self._db() as db:
-            count = db.execute("SELECT count(*) FROM trials WHERE review_status NOT IN ('ACCEPTED','REJECTED')").fetchone()[0]
+            queue = self._trial_rows(db, "needs_review")[:8]
+            recent = self._trial_rows(db, "all")[:8]
+        queue_cards = "".join(self._render_trial_card(row) for row in queue) or "<section class='quiet'><h2>Queue clear</h2><p class='muted'>No trial currently needs review.</p></section>"
+        recent_cards = "".join(self._render_trial_card(row) for row in recent) or "<section class='quiet'><h2>No trials yet</h2><p class='muted'>Start with a new conversational trial.</p></section>"
+        body = f"""<div class='actions'><div><h1>Review queue</h1><p class='muted'>Read the source, compare the proposal, and leave a durable review record.</p></div><a class='button' href='/trial/new'>New conversational trial</a></div><section><h2>Trials needing review</h2><div class='trial-list'>{queue_cards}</div></section><section><h2>Recently updated</h2><div class='trial-list'>{recent_cards}</div></section><section class='quiet'><p><strong>Model observation:</strong> Mistral Nemo showed the strongest raw writing performance among tested candidates. Generated prose remains <code>REVIEW_REQUIRED</code> until an operator decision.</p><p><a href='/system'>System status</a> · <a href='/trials'>Browse all trials</a></p></section>"""
+        return self._html("Review queue", body, csrf)
+
+    def _render_system(self, csrf: str) -> str:
+        with self._db() as db:
+            trial_count = db.execute("SELECT count(*) FROM trials").fetchone()[0]
         storage = "healthy" if self.config.runtime_root.is_dir() and os.access(self.config.state_dir, os.W_OK) else "unavailable"
-        body = f"""<h1>Doc Writer</h1><p class='muted'>Authenticated local review surface. Model execution is enabled for server-owned observation-period generation.</p>
-<div class='grid'><section><strong>Service health</strong><p class='status'>healthy</p></section><section><strong>Storage health</strong><p class='status'>{html.escape(storage)}</p></section><section><strong>Application version</strong><p><code>{html.escape(self.config.version)}</code></p></section><section><strong>Canonical hostname</strong><p><code>{html.escape(self.config.canonical_host)}</code></p></section><section><strong>Model execution</strong><p class='status'>enabled</p></section><section><strong>Open review trials</strong><p class='status'>{count}</p></section></div>
-<section><p>Benchmark observation: strongest raw writing performance among tested candidates: Mistral Nemo.</p><p>Generated prose remains <code>REVIEW_REQUIRED</code>. Frozen benchmark evidence is read-only.</p></section>"""
-        return self._html("Home", body, csrf)
+        version = self.config.version if self.config.version else "unversioned"
+        body = f"""<h1>System status</h1><p class='muted'>Operational details for the authenticated local review service.</p><div class='grid'><section><strong>Service</strong><p class='status'>healthy</p></section><section><strong>Storage</strong><p class='status'>{html.escape(storage)}</p></section><section><strong>Model execution</strong><p class='status'>enabled · local only</p></section><section><strong>Application version</strong><p>{html.escape('Doc Writer review application · ' + version[:12])}</p></section><section><strong>Canonical hostname</strong><p><code>{html.escape(self.config.canonical_host)}</code></p></section><section><strong>Trials retained</strong><p class='status'>{trial_count}</p></section></div><p><a href='/'>Return to review queue</a></p>"""
+        return self._html("System status", body, csrf)
 
     def _render_form(self, csrf: str, trial: sqlite3.Row | None = None) -> str:
         def value(key: str, default: str = "") -> str:
@@ -292,7 +346,8 @@ class DocWriterApp:
 <label for='reviewer_notes'>Reviewer notes</label><textarea id='reviewer_notes' name='reviewer_notes' maxlength='{MAX_NOTES}'>{value('reviewer_notes')}</textarea><button type='submit'>Save draft</button></form>"""
         return self._html("New trial", body, csrf)
 
-    def _render_trial(self, trial: sqlite3.Row, versions: list[sqlite3.Row], attempt: sqlite3.Row | None, review_events: list[sqlite3.Row], csrf: str, review_error: str = "", review_notice: str = "") -> str:
+    def _render_trial(self, trial: sqlite3.Row, versions: list[sqlite3.Row], attempts: list[sqlite3.Row], review_events: list[sqlite3.Row], csrf: str, review_error: str = "", review_notice: str = "") -> str:
+        attempt = attempts[0] if attempts else None
         def block(label: str, text: str) -> str:
             return f"<section><h2>{html.escape(label)}</h2><pre>{html.escape(text or '—')}</pre></section>"
         history = "".join(f"<tr><td>{v['version_id']}</td><td>{html.escape(v['recorded_at'])}</td><td>{html.escape(v['action'])}</td></tr>" for v in versions)
@@ -304,17 +359,19 @@ class DocWriterApp:
         review_form = f"""<section><h2>Operator review record</h2>{review_error_html}<p>Review notes are durable review material, not publishable document prose. Private steering is stored and displayed separately.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/review'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='review_note'>Current reviewer note / rationale</label><textarea id='review_note' name='note_text' maxlength='{MAX_NOTES}' aria-describedby='review-help'>{html.escape(current_note)}</textarea><p id='review-help' class='muted'>Describe what sounded generic, what did not sound like the operator, exact rejected passages, and preferred replacement wording.</p><label for='related_passage'>Exact phrase or passage, if applicable</label><textarea id='related_passage' name='related_passage' maxlength='{MAX_NOTES}'></textarea><label><input type='checkbox' name='private_steering' value='1'> Private operator aside / steering note (never publishable prose)</label><button type='submit'>Save review note</button></form><h3>Review history</h3><table><tr><th>Timestamp</th><th>Reviewer</th><th>Event</th><th>Decision</th><th>Note</th><th>Visibility</th></tr>{review_history or '<tr><td colspan="6">No review events recorded.</td></tr>'}</table></section>"""
         generation = f"""<section><h2>Generate conversational proposal</h2><p>Server-owned model: <code>{MODEL}</code><br>Model status: installed digest reconciled before execution<br>Settings: context 8192, temperature 0.2, top-p 0.9, seed 42, streaming disabled, thinking disabled</p><p class='muted'>Execution uses local Ollama only. The result remains <code>REVIEW_REQUIRED</code> and is never accepted automatically.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/generate' onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Generating…';"><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button type='submit'>Generate conversational proposal</button></form></section>"""
         attempt_view = ""
+        diff_view = ""
         if attempt:
             if attempt["status"] == "FAILED":
                 attempt_view = "<section><h2>Generation attempt</h2><p class='status'>Generation failed closed; the existing draft was preserved. An explicit retry creates a new attempt.</p></section>"
             elif attempt["status"] == "STALE_SOURCE":
                 attempt_view = "<section><h2>Generation attempt</h2><p class='status'>Source changed during generation; the result was not applied to this draft.</p></section>"
             elif attempt["status"] == "COMPLETED":
-                attempt_view = f"""<section><h2>Generation provenance</h2><p>Attempt <code>{html.escape(attempt['attempt_id'])}</code>; prompt contract <code>{html.escape(attempt['prompt_version'])}</code>; prompt SHA-256 <code>{html.escape(attempt['prompt_sha256'])}</code>; response SHA-256 <code>{html.escape(attempt['response_sha256'])}</code>; proposal SHA-256 <code>{html.escape(attempt['proposal_sha256'])}</code>; source version <code>{attempt['source_version_id']}</code>.</p><details><summary>Raw Ollama response</summary><pre>{html.escape(attempt['raw_ollama_response'])}</pre></details><h3>Exact source-to-proposal diff</h3><pre>{html.escape(attempt['source_to_proposal_diff'] or '(no textual difference)')}</pre><p>Telemetry: <code>{html.escape(attempt['telemetry'])}</code></p></section>"""
+                diff_view = f"""<section><h2>Exact diff</h2><pre class='prose'>{html.escape(attempt['source_to_proposal_diff'] or '(no textual difference)')}</pre></section>"""
+                attempt_view = f"""<details class='panel'><summary><strong>Full provenance and raw model output</strong></summary><p>Attempt <code>{html.escape(attempt['attempt_id'])}</code>; prompt contract <code>{html.escape(attempt['prompt_version'])}</code>; prompt SHA-256 <code>{html.escape(attempt['prompt_sha256'])}</code>; response SHA-256 <code>{html.escape(attempt['response_sha256'])}</code>; proposal SHA-256 <code>{html.escape(attempt['proposal_sha256'])}</code>; source version <code>{attempt['source_version_id']}</code>.</p><details><summary>Raw Ollama response</summary><pre>{html.escape(attempt['raw_ollama_response'])}</pre></details><p>Telemetry: <code>{html.escape(attempt['telemetry'])}</code></p></details>"""
+        generation_history = "".join(f"<tr><td>{html.escape(item['started_at'])}</td><td>{html.escape(item['completed_at'] or 'running')}</td><td>{html.escape(item['status'])}</td><td>{html.escape(item['model_identifier'])}</td><td>{item['source_version_id']}</td><td>{html.escape(item['error'] or '—')}</td></tr>" for item in attempts) or "<tr><td colspan='6'>No generation attempts recorded.</td></tr>"
         body = f"""<h1>Trial <code>{html.escape(trial['trial_id'])}</code></h1><p class='status'>Review status: {review_status}</p><p>Created {html.escape(trial['created_at'])}; updated {html.escape(trial['updated_at'])}; source SHA-256 <code>{html.escape(trial['source_sha256'])}</code></p><p>Model: <code>{html.escape(trial['model_identifier'])}</code><br>Digest: <code>{html.escape(trial['model_digest'])}</code></p>
-{generation}{attempt_view}
-{block('Source paragraph', trial['source_text'])}{block('Integrity findings', trial['integrity_findings'])}{block('Raw model output', trial['raw_output'])}{block('Normalized proposal', trial['normalized_output'])}{block('Reviewer notes', trial['reviewer_notes'])}
-<section><h2>Decision</h2><form method='post' action='/trial/{html.escape(trial['trial_id'])}/decision'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='decision'>Decision</label><select id='decision' name='decision'>{''.join(f'<option>{decision}</option>' for decision in sorted(DECISIONS))}</select><label for='decision_reason'>Decision rationale (required for rejection or revision)</label><textarea id='decision_reason' name='decision_reason' maxlength='{MAX_NOTES}'></textarea><button type='submit'>Record decision</button></form></section>{review_form}<section><h2>Draft version history</h2><table><tr><th>Version</th><th>When</th><th>Action</th></tr>{history}</table></section><p><a href='/trial/{html.escape(trial['trial_id'])}/artifact'>View artifact/provenance</a> · <a href='/trial/{html.escape(trial['trial_id'])}/edit'>Edit</a></p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/delete'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button class='danger' type='submit'>Delete trial</button></form>"""
+{generation}{block('Source paragraph', trial['source_text'])}<section><h2>Conversational proposal</h2><div class='prose'>{html.escape(trial['normalized_output'] or 'No normalized proposal recorded.')}</div></section>{diff_view}{block('Integrity findings', trial['integrity_findings'])}{review_form}{attempt_view}
+<section><h2>Decision</h2><form method='post' action='/trial/{html.escape(trial['trial_id'])}/decision'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='decision'>Decision</label><select id='decision' name='decision'>{''.join(f'<option>{decision}</option>' for decision in sorted(DECISIONS))}</select><label for='decision_reason'>Decision rationale (required for rejection or revision)</label><textarea id='decision_reason' name='decision_reason' maxlength='{MAX_NOTES}'></textarea><button type='submit'>Record decision</button></form></section><section><h2>Generation-attempt history</h2><table><tr><th>Started</th><th>Completed</th><th>Status</th><th>Model</th><th>Source version</th><th>Result</th></tr>{generation_history}</table></section><section><h2>Draft version history</h2><table><tr><th>Version</th><th>When</th><th>Action</th></tr>{history}</table></section><p><a href='/trial/{html.escape(trial['trial_id'])}/artifact'>View artifact/provenance</a> · <a href='/trial/{html.escape(trial['trial_id'])}/edit'>Edit</a></p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/delete'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button class='danger' type='submit'>Delete trial</button></form>"""
         return self._html("Trial", body, csrf)
 
     def __call__(self, environ: dict, start_response: Callable):
@@ -326,6 +383,17 @@ class DocWriterApp:
         try:
             if method == "GET" and path == "/":
                 content = self._render_home(csrf)
+            elif method == "GET" and path == "/system":
+                content = self._render_system(csrf)
+            elif method == "GET" and path == "/trials":
+                query = urllib.parse.parse_qs(environ.get("QUERY_STRING", ""))
+                status_filter = query.get("status", ["all"])[0]
+                content = self._render_trials(csrf, status_filter if status_filter else "all")
+            elif method == "POST" and path == "/trials":
+                form = self._parse_form(environ)
+                if not self._csrf_valid(environ, form):
+                    raise PermissionError("CSRF validation failed")
+                content = self._render_trials(csrf, "all", form.get("search", "").strip()[:MAX_NOTES])
             elif method == "GET" and path == "/trial/new":
                 content = self._render_form(csrf)
             elif method == "POST" and path == "/trial":
@@ -349,7 +417,7 @@ class DocWriterApp:
                         current = json.loads(versions[-1]["snapshot"]) if versions else {}
                         diff = "".join(difflib.unified_diff((previous.get("normalized_output", "") + "\n").splitlines(True), (current.get("normalized_output", "") + "\n").splitlines(True), fromfile="previous normalized proposal", tofile="current normalized proposal"))
                         content = self._html("Artifact", f"<h1>Artifact/provenance</h1><pre>{html.escape(artifact)}</pre><h2>Exact normalized-proposal diff</h2><pre>{html.escape(diff or '(no normalized proposal change)')}</pre>", csrf)
-                    else: content = self._render_trial(trial, db.execute("SELECT * FROM trial_versions WHERE trial_id=? ORDER BY version_id", (trial_id,)).fetchall(), self._latest_attempt(db, trial_id), self._review_events(db, trial_id), csrf, review_notice="Review note saved." if urllib.parse.parse_qs(environ.get("QUERY_STRING", "")).get("review_saved") == ["1"] else "")
+                    else: content = self._render_trial(trial, db.execute("SELECT * FROM trial_versions WHERE trial_id=? ORDER BY version_id", (trial_id,)).fetchall(), db.execute("SELECT * FROM generation_attempts WHERE trial_id=? ORDER BY started_at DESC", (trial_id,)).fetchall(), self._review_events(db, trial_id), csrf, review_notice="Review note saved." if urllib.parse.parse_qs(environ.get("QUERY_STRING", "")).get("review_saved") == ["1"] else "")
             elif method == "POST" and path.startswith("/trial/"):
                 parts, trial_id, form = path.strip("/").split("/"), path.strip("/").split("/")[1], self._parse_form(environ)
                 if not self._csrf_valid(environ, form): raise PermissionError("CSRF validation failed")

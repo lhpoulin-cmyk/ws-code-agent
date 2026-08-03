@@ -7,8 +7,9 @@ from docwriter_web import AppConfig, DocWriterApp
 
 
 def request(app, path="/", method="GET", form=None, auth=True):
+    path, _, query = path.partition("?")
     body = "" if form is None else "&".join(f"{k}={v}" for k, v in form.items())
-    environ = {"REQUEST_METHOD": method, "PATH_INFO": path, "CONTENT_LENGTH": str(len(body.encode())), "wsgi.input": io.BytesIO(body.encode()), "HTTP_COOKIE": "docwriter_csrf=x", "HTTP_AUTHORIZATION": "Basic " + base64.b64encode(b"operator:testing-password").decode() if auth else ""}
+    environ = {"REQUEST_METHOD": method, "PATH_INFO": path, "QUERY_STRING": query, "CONTENT_LENGTH": str(len(body.encode())), "wsgi.input": io.BytesIO(body.encode()), "HTTP_COOKIE": "docwriter_csrf=x", "HTTP_AUTHORIZATION": "Basic " + base64.b64encode(b"operator:testing-password").decode() if auth else ""}
     result = {}
     def start(status, headers): result.update(status=status, headers=headers)
     result["body"] = b"".join(app(environ, start)).decode()
@@ -26,7 +27,7 @@ def test_authentication_and_home(tmp_path):
     assert request(application, auth=False)["status"].startswith("401")
     response = request(application)
     assert response["status"].startswith("200")
-    assert "Model execution</strong><p class='status'>enabled" in response["body"]
+    assert "Review queue" in response["body"] and "All trials" in response["body"] and "System status" in response["body"]
 
 
 def test_draft_versions_decision_and_delete(tmp_path):
@@ -109,3 +110,40 @@ def test_note_revisions_are_immutable_and_lineage_unchanged(tmp_path):
 def test_no_model_execution_route(tmp_path):
     response = request(app(tmp_path), "/api/generate", "POST", {"source_text": "never execute", "csrf": "x"})
     assert response["status"].startswith("404")
+
+
+def test_all_trials_listing_filters_search_and_deleted_exclusion(tmp_path):
+    application = app(tmp_path)
+    accepted = _trial_id(request(application, "/trial", "POST", {"source_text": "Accepted writing sample.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"}))
+    rejected = _trial_id(request(application, "/trial", "POST", {"source_text": "Rejected writing sample.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"}))
+    request(application, f"/trial/{accepted}/decision", "POST", {"decision": "ACCEPTED", "csrf": "x"})
+    request(application, f"/trial/{rejected}/decision", "POST", {"decision": "REJECTED", "decision_reason": "Not direct enough.", "csrf": "x"})
+    deleted = _trial_id(request(application, "/trial", "POST", {"source_text": "Deleted writing sample.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"}))
+    request(application, f"/trial/{deleted}/delete", "POST", {"csrf": "x"})
+    all_page = request(application, "/trials")["body"]
+    assert accepted in all_page and rejected in all_page and deleted not in all_page
+    assert "ACCEPTED" in request(application, "/trials?status=ACCEPTED")["body"]
+    rejected_page = request(application, "/trials?status=REJECTED")["body"]
+    assert rejected in rejected_page and accepted not in rejected_page
+    search_page = request(application, "/trials", "POST", {"search": rejected, "csrf": "x"})["body"]
+    assert rejected in search_page and accepted not in search_page
+
+
+def test_system_status_is_dedicated_and_human_readable(tmp_path):
+    response = request(app(tmp_path), "/system")
+    assert "System status" in response["body"]
+    assert "Doc Writer review application" in response["body"]
+    assert "docwriter.home.arpa" in response["body"]
+    assert "127.0.0.1:11434" not in response["body"]
+
+
+def test_existing_trial_detail_order_and_collapsed_provenance(tmp_path):
+    application = app(tmp_path)
+    trial_id = _trial_id(request(application, "/trial", "POST", {"source_text": "Source paragraph.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"}))
+    with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
+        db.execute("insert into generation_attempts values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", ("generation-test", trial_id, 1, "Source paragraph.", "source-hash", "prompt-v1", "prompt", "prompt-hash", "{}", "mistral-nemo:12b-instruct-2407-q4_K_M", "sha256:test", "{}", "2026-08-03T00:00:00+00:00", "2026-08-03T00:00:01+00:00", "raw", "raw-hash", "[]", "Proposal.", "proposal-hash", "diff", "{}", "test-version", "COMPLETED", ""))
+        db.execute("update trials set normalized_output=? where trial_id=?", ("Proposal.", trial_id)); db.commit()
+    body = request(application, f"/trial/{trial_id}")["body"]
+    assert "Source paragraph" in body and "Conversational proposal" in body and "Exact diff" in body
+    assert "<details class='panel'><summary><strong>Full provenance" in body
+    assert body.index("Source paragraph") < body.index("Conversational proposal") < body.index("Exact diff")

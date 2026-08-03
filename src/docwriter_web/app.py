@@ -71,7 +71,7 @@ class AppConfig:
         secret = secret_file.read_bytes().strip()
         if len(secret) < 32:
             raise RuntimeError("session secret is too short")
-        return cls(runtime, os.environ.get("DOCWRITER_OPERATOR_USER", "operator"), password_file, secret, os.environ.get("DOCWRITER_APP_VERSION", "generation-v1"), os.environ.get("DOCWRITER_OLLAMA_URL", "http://127.0.0.1:11434"))
+        return cls(runtime, os.environ.get("DOCWRITER_OPERATOR_USER", "operator"), password_file, secret, canonical_host=os.environ.get("DOCWRITER_CANONICAL_HOST", "docwriter.home.arpa"), version=os.environ.get("DOCWRITER_APP_VERSION", "generation-v1"), ollama_url=os.environ.get("DOCWRITER_OLLAMA_URL", "http://127.0.0.1:11434"))
 
 
 def utc_now() -> str:

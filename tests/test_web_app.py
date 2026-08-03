@@ -137,6 +137,19 @@ def test_system_status_is_dedicated_and_human_readable(tmp_path):
     assert "127.0.0.1:11434" not in response["body"]
 
 
+def test_environment_configuration_keeps_host_version_and_ollama_distinct(tmp_path, monkeypatch):
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "session-secret").write_bytes(b"x" * 32)
+    (tmp_path / "config" / "operator-password").write_text("testing-password\n")
+    monkeypatch.setenv("DOCWRITER_RUNTIME_ROOT", str(tmp_path))
+    monkeypatch.setenv("DOCWRITER_APP_VERSION", "ba30eb0")
+    monkeypatch.setenv("DOCWRITER_OLLAMA_URL", "http://127.0.0.1:11434")
+    config = AppConfig.from_environment()
+    assert config.canonical_host == "docwriter.home.arpa"
+    assert config.version == "ba30eb0"
+    assert config.ollama_url == "http://127.0.0.1:11434"
+
+
 def test_existing_trial_detail_order_and_collapsed_provenance(tmp_path):
     application = app(tmp_path)
     trial_id = _trial_id(request(application, "/trial", "POST", {"source_text": "Source paragraph.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"}))

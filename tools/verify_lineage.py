@@ -201,9 +201,10 @@ def verify(db: sqlite3.Connection) -> int:
                 return fail(f"reconciliation={reconciliation['reconciliation_id']} replacement_state")
             if reconciliation["original_contract_version"] != "audience-adaptation-v1" or reconciliation["replacement_contract_version"] != "audience-adaptation-v2":
                 return fail(f"reconciliation={reconciliation['reconciliation_id']} contract_direction")
-            accepted = db.execute("SELECT accepted_audience_version_id FROM accepted_audience_versions WHERE generation_attempt_id=?", (reconciliation["replacement_attempt_id"],)).fetchone()
-            if accepted and reconciliation["profile_id"] == "audience-technical-peer" and accepted["accepted_audience_version_id"] != "audience-version-56c7d5c89c92e637":
-                return fail(f"reconciliation={reconciliation['reconciliation_id']} accepted_version_binding")
+            accepted = db.execute("SELECT accepted_audience_version_id,adaptation_id,trial_id,baseline_id,profile_id,generation_attempt_id FROM accepted_audience_versions WHERE generation_attempt_id=?", (reconciliation["replacement_attempt_id"],)).fetchall()
+            for version in accepted:
+                if (version["adaptation_id"], version["trial_id"], version["baseline_id"], version["profile_id"], version["generation_attempt_id"]) != (reconciliation["adaptation_id"], reconciliation["trial_id"], reconciliation["baseline_id"], reconciliation["profile_id"], reconciliation["replacement_attempt_id"]):
+                    return fail(f"reconciliation={reconciliation['reconciliation_id']} accepted_version_binding")
     print(f"OK attempts={len(attempts)} attempt_events={sum(map(len, events_by_attempt.values()))} review_events={len(review_ids)} streams={len(streams)}")
     return 0
 

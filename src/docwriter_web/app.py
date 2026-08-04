@@ -539,9 +539,9 @@ class DocWriterApp:
         if status_filter in DECISIONS or status_filter == "REVIEW_REQUIRED":
             conditions.append("t.review_status=?"); params.append(status_filter)
         elif status_filter == "needs_review":
-            conditions.append("(NOT EXISTS (SELECT 1 FROM accepted_baselines ab WHERE ab.trial_id=t.trial_id AND ab.generation_attempt_id=(SELECT rt.generation_attempt_id FROM review_events rt WHERE rt.trial_id=t.trial_id AND rt.event_type='REVIEW_TARGET_SELECTED' ORDER BY rt.created_at DESC,rt.event_id DESC LIMIT 1)) AND (t.review_status IN ('REVIEW_REQUIRED','REVISION_REQUIRED') OR (t.review_status IN ('REJECTED','REVISION_REQUIRED') AND NOT EXISTS (SELECT 1 FROM review_events rn WHERE rn.trial_id=t.trial_id AND rn.event_type='REVIEW_NOTE' AND trim(COALESCE(rn.note_text,''))<>'')) OR EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND COALESCE(gf.canonical_failure_class,'') IN ('INTERRUPTED','REQUEST_TIMEOUT','OLLAMA_UNAVAILABLE','OLLAMA_HTTP_ERROR','EMPTY_RESPONSE','MALFORMED_JSON','RESPONSE_SCHEMA_INVALID','PROPOSAL_FIELD_MISSING','TASK_ADHERENCE_FAILED','NORMALIZATION_FAILURE','PERSISTENCE_FAILURE','RENDER_FAILURE','STALE_SOURCE')) OR (EXISTS (SELECT 1 FROM review_events te WHERE te.trial_id=t.trial_id AND te.stage='TONE' AND te.decision='TONE_ACCEPTED') AND NOT EXISTS (SELECT 1 FROM accepted_baselines ab WHERE ab.trial_id=t.trial_id))))")
+            conditions.append("(NOT EXISTS (SELECT 1 FROM accepted_baselines ab WHERE ab.trial_id=t.trial_id AND ab.generation_attempt_id=(SELECT rt.generation_attempt_id FROM review_events rt WHERE rt.trial_id=t.trial_id AND rt.event_type='REVIEW_TARGET_SELECTED' ORDER BY rt.created_at DESC,rt.event_id DESC LIMIT 1)) AND (t.review_status IN ('REVIEW_REQUIRED','REVISION_REQUIRED') OR (t.review_status IN ('REJECTED','REVISION_REQUIRED') AND NOT EXISTS (SELECT 1 FROM review_events rn WHERE rn.trial_id=t.trial_id AND rn.event_type='REVIEW_NOTE' AND trim(COALESCE(rn.note_text,''))<>'')) OR EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND COALESCE(gf.canonical_failure_class,'') IN ('INTERRUPTED','REQUEST_TIMEOUT','OLLAMA_UNAVAILABLE','OLLAMA_HTTP_ERROR','EMPTY_RESPONSE','MALFORMED_JSON','RESPONSE_SCHEMA_INVALID','PROPOSAL_FIELD_MISSING','TASK_ADHERENCE_FAILED','NORMALIZATION_FAILURE','PERSISTENCE_FAILURE','RENDER_FAILURE','STALE_SOURCE') AND NOT EXISTS (SELECT 1 FROM generation_attempt_reconciliations gr WHERE gr.original_attempt_id=gf.attempt_id)) OR (EXISTS (SELECT 1 FROM review_events te WHERE te.trial_id=t.trial_id AND te.stage='TONE' AND te.decision='TONE_ACCEPTED') AND NOT EXISTS (SELECT 1 FROM accepted_baselines ab WHERE ab.trial_id=t.trial_id))))")
         elif status_filter == "generation_failed":
-            conditions.append("EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND COALESCE(gf.canonical_failure_class,'') IN ('INTERRUPTED','REQUEST_TIMEOUT','OLLAMA_UNAVAILABLE','OLLAMA_HTTP_ERROR','EMPTY_RESPONSE','MALFORMED_JSON','RESPONSE_SCHEMA_INVALID','PROPOSAL_FIELD_MISSING','TASK_ADHERENCE_FAILED','NORMALIZATION_FAILURE','PERSISTENCE_FAILURE','RENDER_FAILURE','STALE_SOURCE'))")
+            conditions.append("EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND COALESCE(gf.canonical_failure_class,'') IN ('INTERRUPTED','REQUEST_TIMEOUT','OLLAMA_UNAVAILABLE','OLLAMA_HTTP_ERROR','EMPTY_RESPONSE','MALFORMED_JSON','RESPONSE_SCHEMA_INVALID','PROPOSAL_FIELD_MISSING','TASK_ADHERENCE_FAILED','NORMALIZATION_FAILURE','PERSISTENCE_FAILURE','RENDER_FAILURE','STALE_SOURCE') AND NOT EXISTS (SELECT 1 FROM generation_attempt_reconciliations gr WHERE gr.original_attempt_id=gf.attempt_id))")
         elif status_filter == "rationale_missing":
             conditions.append("t.review_status IN ('REJECTED','REVISION_REQUIRED') AND NOT EXISTS (SELECT 1 FROM review_events rn WHERE rn.trial_id=t.trial_id AND rn.event_type='REVIEW_NOTE' AND trim(COALESCE(rn.note_text,''))<>'')")
         if search:
@@ -553,7 +553,7 @@ class DocWriterApp:
             EXISTS (SELECT 1 FROM review_events rn WHERE rn.trial_id=t.trial_id AND rn.event_type='REVIEW_NOTE' AND trim(COALESCE(rn.note_text,''))<>'') AS has_notes,
             EXISTS (SELECT 1 FROM review_events ps WHERE ps.trial_id=t.trial_id AND ps.event_type='REVIEW_NOTE' AND ps.private_steering=1) AS has_private,
             (SELECT decision FROM review_events de JOIN review_event_chain dc ON dc.event_id=de.event_id WHERE dc.authoritative=1 AND de.trial_id=t.trial_id AND de.event_type='DECISION' ORDER BY de.created_at DESC, de.event_id DESC LIMIT 1) AS latest_decision,
-            EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND COALESCE(gf.canonical_failure_class,'') IN ('INTERRUPTED','REQUEST_TIMEOUT','OLLAMA_UNAVAILABLE','OLLAMA_HTTP_ERROR','EMPTY_RESPONSE','MALFORMED_JSON','RESPONSE_SCHEMA_INVALID','PROPOSAL_FIELD_MISSING','TASK_ADHERENCE_FAILED','NORMALIZATION_FAILURE','PERSISTENCE_FAILURE','RENDER_FAILURE','STALE_SOURCE')) AS has_failed,
+            EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND COALESCE(gf.canonical_failure_class,'') IN ('INTERRUPTED','REQUEST_TIMEOUT','OLLAMA_UNAVAILABLE','OLLAMA_HTTP_ERROR','EMPTY_RESPONSE','MALFORMED_JSON','RESPONSE_SCHEMA_INVALID','PROPOSAL_FIELD_MISSING','TASK_ADHERENCE_FAILED','NORMALIZATION_FAILURE','PERSISTENCE_FAILURE','RENDER_FAILURE','STALE_SOURCE') AND NOT EXISTS (SELECT 1 FROM generation_attempt_reconciliations gr WHERE gr.original_attempt_id=gf.attempt_id)) AS has_failed,
             (SELECT ga.status FROM generation_attempts ga WHERE ga.trial_id=t.trial_id ORDER BY ga.started_at DESC LIMIT 1) AS latest_attempt_state,
             (SELECT ga.error_class FROM generation_attempts ga WHERE ga.trial_id=t.trial_id ORDER BY ga.started_at DESC LIMIT 1) AS latest_error_class,
             (SELECT ga.canonical_failure_class FROM generation_attempts ga WHERE ga.trial_id=t.trial_id ORDER BY ga.started_at DESC LIMIT 1) AS latest_failure_state,
@@ -747,12 +747,39 @@ class DocWriterApp:
         body = f"<p class='meta'><a href='/project/{html.escape(project['slug'])}/trial/{html.escape(trial['trial_id'])}'>Return to trial</a></p><h1>{html.escape(adaptation['name'])} audience adaptation</h1><p>{html.escape(adaptation['purpose'])}</p><p>Baseline <code>{html.escape(adaptation['baseline_id'])}</code> · state <code>{html.escape(state)}</code></p><section><h2>Audience version</h2><pre>{html.escape(proposal)}</pre><p>Output SHA-256: <code>{html.escape(latest['proposal_sha256']) if latest else 'not generated'}</code></p>{forms}</section><section><h2>Accepted-version history</h2><ul>{history or '<li>No accepted audience version.</li>'}</ul></section><details><summary>Provenance</summary><p>Adaptation <code>{html.escape(adaptation['adaptation_id'])}</code> · profile contract <code>{html.escape(adaptation['profile_contract_sha256'])}</code> · baseline SHA-256 <code>{html.escape(adaptation['baseline_sha256'])}</code></p></details>"
         return self._html("Audience adaptation", body, csrf)
 
-    def _render_attempt_fallback(self, trial: sqlite3.Row, attempt: sqlite3.Row, csrf: str, project: sqlite3.Row | None) -> str:
+    def _render_reconciliation_comparison(self, reconciliation: sqlite3.Row, original: sqlite3.Row, replacement: sqlite3.Row, csrf: str, project: sqlite3.Row | None) -> str:
+        def cell(value: object) -> str:
+            return html.escape(str(value or "—"))
+        rows = []
+        fields = (
+            ("Attempt", "attempt_id"), ("Terminal state", "status"), ("Contract version", "prompt_version"),
+            ("Prompt SHA-256", "prompt_sha256"), ("Schema version", "schema_version"), ("Schema SHA-256", "schema_hash"),
+            ("Adapter", "adapter_id"), ("Adapter version", "adapter_version"), ("Serializer version", "request_serializer_version"),
+            ("Model", "model_identifier"), ("Model digest", "model_digest"), ("Started", "started_at"), ("Completed", "completed_at"),
+            ("Validation outcome", "safe_error_detail"),
+        )
+        for label, key in fields:
+            rows.append(f"<tr><th>{html.escape(label)}</th><td>{cell(original[key])}</td><td>{cell(replacement[key])}</td></tr>")
+        reason = "The original RESPONSE_SCHEMA_INVALID attempt remains preserved. The linked v2 attempt is the corrected operational successor."
+        body = f"""<p class='meta'><a href='/project/{cell(project['slug']) if project else ''}/trial/{cell(reconciliation['trial_id'])}'>Return to trial</a></p>
+<h1>Audience provenance comparison</h1><p>{html.escape(reason)}</p>
+<p>Profile <code>{cell(reconciliation['profile_id'])}</code> · adaptation <code>{cell(reconciliation['adaptation_id'])}</code> · baseline <code>{cell(reconciliation['baseline_id'])}</code></p>
+<table><tr><th>Evidence</th><th>Original v1</th><th>Corrected v2</th></tr>{''.join(rows)}</table>
+<p>Reconciliation <code>{cell(reconciliation['reconciliation_id'])}</code> · defect <code>{cell(reconciliation['defect_class'])}</code> · recorded <code>{cell(reconciliation['created_at'])}</code></p>
+<p><a class='button secondary' href='/trial/{cell(reconciliation['trial_id'])}/attempt/{cell(original['attempt_id'])}'>View original v1 evidence</a> <a class='button' href='/trial/{cell(reconciliation['trial_id'])}/attempt/{cell(replacement['attempt_id'])}'>View corrected v2 attempt</a></p>"""
+        return self._html("Audience provenance comparison", body, csrf)
+
+    def _render_attempt_fallback(self, trial: sqlite3.Row, attempt: sqlite3.Row, csrf: str, project: sqlite3.Row | None, reconciliation: sqlite3.Row | None = None) -> str:
         state = canonical_state(attempt["status"], attempt["error_class"], attempt["canonical_failure_class"])
         detail = attempt["safe_error_detail"] or attempt["error"] or "The attempt state is recorded in the preserved lifecycle evidence."
         retry = "A new attempt is not started automatically." if state in ATTENTION_STATES else "This completed result remains available for review."
+        notice = ""
+        if reconciliation and attempt["attempt_id"] == reconciliation["original_attempt_id"]:
+            notice = f"<section class='status'><h2>Historical corrected failure</h2><p>This attempt used audience contract v1, which had a known response-format mismatch. The original response and failure remain preserved. A corrected v2 attempt is available.</p><p><a class='button' href='/trial/{html.escape(trial['trial_id'])}/attempt/{html.escape(reconciliation['replacement_attempt_id'])}'>View corrected v2 attempt</a> <a class='button secondary' href='/trial/{html.escape(trial['trial_id'])}/audience-reconciliation/{html.escape(reconciliation['reconciliation_id'])}'>Compare v1 and v2 provenance</a></p></section>"
+        elif reconciliation and attempt["attempt_id"] == reconciliation["replacement_attempt_id"]:
+            notice = f"<section class='status'><p>This attempt is the corrected operational successor to a preserved audience-contract v1 failure.</p><p><a class='button secondary' href='/trial/{html.escape(trial['trial_id'])}/attempt/{html.escape(reconciliation['original_attempt_id'])}'>View original v1 evidence</a> <a class='button secondary' href='/trial/{html.escape(trial['trial_id'])}/audience-reconciliation/{html.escape(reconciliation['reconciliation_id'])}'>Compare v1 and v2 provenance</a></p></section>"
         body = f"""<p class='meta'><a href='/project/{html.escape(project['slug']) if project else ''}/trial/{html.escape(trial['trial_id'])}'>Return to trial</a></p>
-<h1>Preserved generation attempt</h1>
+<h1>Preserved generation attempt</h1>{notice}
 <section><h2>{html.escape(state)}</h2><p>{html.escape(detail)}</p><p>{html.escape(retry)}</p><p>Attempt <code>{html.escape(attempt['attempt_id'])}</code>; last state change <code>{html.escape(attempt['last_state_at'] or attempt['completed_at'] or attempt['started_at'])}</code>.</p></section>
 <details><summary>Technical details</summary><p>Model <code>{html.escape(attempt['model_identifier'])}</code> · digest <code>{html.escape(attempt['model_digest'])}</code><br>Prompt <code>{html.escape(attempt['prompt_version'])}</code><br>Failure class <code>{html.escape(state)}</code> · classifier <code>{html.escape(attempt['classifier_version'])}</code><br>Response SHA-256 <code>{html.escape(attempt['response_sha256'])}</code></p></details>
 <p><a class='button' href='/project/{html.escape(project['slug']) if project else ''}/trial/{html.escape(trial['trial_id'])}#generation-attempts'>View provenance and attempt history</a></p>"""
@@ -989,10 +1016,18 @@ class DocWriterApp:
                     trial = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
                     if not trial: raise NotFoundError("trial not found")
                     project = self._project(db, trial["project_id"]) if trial["project_id"] else None
-                    if len(parts) == 4 and parts[2] == "attempt":
+                    if len(parts) == 4 and parts[2] == "audience-reconciliation":
+                        reconciliation = db.execute("SELECT * FROM generation_attempt_reconciliations WHERE trial_id=? AND reconciliation_id=?", (trial_id, parts[3])).fetchone()
+                        if not reconciliation: raise NotFoundError("reconciliation not found")
+                        original = db.execute("SELECT * FROM generation_attempts WHERE attempt_id=?", (reconciliation["original_attempt_id"],)).fetchone()
+                        replacement = db.execute("SELECT * FROM generation_attempts WHERE attempt_id=?", (reconciliation["replacement_attempt_id"],)).fetchone()
+                        if not original or not replacement: raise NotFoundError("reconciliation evidence unavailable")
+                        content = self._render_reconciliation_comparison(reconciliation, original, replacement, csrf, project)
+                    elif len(parts) == 4 and parts[2] == "attempt":
                         attempt = db.execute("SELECT * FROM generation_attempts WHERE trial_id=? AND attempt_id=?", (trial_id, parts[3])).fetchone()
                         if not attempt: raise NotFoundError("attempt not found")
-                        content = self._render_attempt_fallback(trial, attempt, csrf, project)
+                        reconciliation = db.execute("SELECT * FROM generation_attempt_reconciliations WHERE original_attempt_id=? OR replacement_attempt_id=?", (parts[3], parts[3])).fetchone()
+                        content = self._render_attempt_fallback(trial, attempt, csrf, project, reconciliation)
                     elif len(parts) == 4 and parts[2] == "baseline":
                         baseline = db.execute("SELECT * FROM accepted_baselines WHERE trial_id=? AND baseline_id=?", (trial_id, parts[3])).fetchone()
                         if not baseline: raise NotFoundError("baseline not found")

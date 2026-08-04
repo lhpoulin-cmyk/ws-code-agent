@@ -123,6 +123,29 @@ def guidance_for(
     error_class = _value(attempt, "error_class", "") or ""
     failure_state = canonical_state(attempt_status, error_class, _value(attempt, "canonical_failure_class", "") or "")
     technical = f"{error_class or attempt_status} · {_value(attempt, 'attempt_id', 'unknown')}"
+    reconciliation_id = _value(attempt, "reconciliation_id")
+    replacement_attempt_id = _value(attempt, "replacement_attempt_id")
+    if _value(attempt, "kind", "CONVERSATIONAL") == "AUDIENCE" and reconciliation_id and replacement_attempt_id:
+        return Guidance(
+            "AUDIENCE_FAILURE_RECONCILED", "neutral",
+            "This attempt used audience contract v1, which had a known response-format mismatch.",
+            "The original response and failure remain preserved. A corrected v2 attempt is available.",
+            "The original request, response, and provenance remain inspectable.",
+            "The corrected attempt is operationally linked without rewriting or replaying this failure.",
+            "View corrected v2 attempt", f"/trial/{trial_id}/attempt/{replacement_attempt_id}",
+            "Compare v1 and v2 provenance", f"/trial/{trial_id}/audience-reconciliation/{reconciliation_id}",
+            "generation-attempts", technical,
+        )
+    if _value(attempt, "kind", "CONVERSATIONAL") == "AUDIENCE" and _value(attempt, "original_attempt_id"):
+        return Guidance(
+            "AUDIENCE_CORRECTED_SUCCESSOR", "neutral",
+            "This attempt is the corrected operational successor to a preserved audience-contract v1 failure.",
+            "The earlier failure remains available as historical evidence.",
+            "This v2 result has its own immutable request and review provenance.",
+            "The replacement is not a replay or a rewrite of the original attempt.",
+            "View original v1 evidence", f"/trial/{trial_id}/attempt/{_value(attempt, 'original_attempt_id')}",
+            target_section_id="generation-attempts", technical_details=technical,
+        )
     if _value(attempt, "kind", "CONVERSATIONAL") == "AUDIENCE" and failure_state == "RESPONSE_SCHEMA_INVALID":
         return Guidance(
             "AUDIENCE_RESPONSE_SCHEMA_INVALID", "attention",

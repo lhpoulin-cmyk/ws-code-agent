@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import contextvars
 import difflib
 import hashlib
 import hmac
@@ -40,6 +41,11 @@ from .failure_taxonomy import CLASSIFIER_VERSION, canonical_state, classify_erro
 from .editorial_state import EditorialState, derive_editorial_state
 from .baselines import eligibility as baseline_eligibility, current_baseline
 from .audience import AUDIENCE_VERSION, derived_state as audience_state, profile_contract, sha256_text as audience_sha256, audience_schema
+from .system_status import collect as collect_system_status
+from .ui_state import DEVELOPER, NORMAL, mode_cookie, mode_from_cookie
+
+
+_CURRENT_MODE: contextvars.ContextVar[str] = contextvars.ContextVar("docwriter_mode", default=NORMAL)
 
 MAX_SOURCE = 12000
 MAX_FIELD = 12000
@@ -280,14 +286,18 @@ class DocWriterApp:
 
     def _project_counts(self, db: sqlite3.Connection, project_id: str) -> dict[str, int]:
         row = db.execute("""SELECT count(*) total,
+            sum(CASE WHEN lifecycle_state='ACTIVE' THEN 1 ELSE 0 END) active,
+            sum(CASE WHEN lifecycle_state='ARCHIVED' THEN 1 ELSE 0 END) archived,
             sum(CASE WHEN review_status IN ('REVIEW_REQUIRED','REVISION_REQUIRED') THEN 1 ELSE 0 END) needs_review,
             sum(CASE WHEN review_status='REVISION_REQUIRED' THEN 1 ELSE 0 END) revision_required,
             sum(CASE WHEN review_status='ACCEPTED' THEN 1 ELSE 0 END) accepted,
             sum(CASE WHEN review_status='REJECTED' THEN 1 ELSE 0 END) rejected,
             sum(CASE WHEN NOT EXISTS (SELECT 1 FROM generation_attempts ga WHERE ga.trial_id=trials.trial_id)
-                      OR EXISTS (SELECT 1 FROM generation_attempts ga WHERE ga.trial_id=trials.trial_id AND ga.status IN ('FAILED','RUNNING')) THEN 1 ELSE 0 END) incomplete
-            FROM trials WHERE project_id=?""", (project_id,)).fetchone()
-        return {key: int(row[key] or 0) for key in ("total", "needs_review", "revision_required", "accepted", "rejected", "incomplete")}
+                      OR EXISTS (SELECT 1 FROM generation_attempts ga WHERE ga.trial_id=trials.trial_id AND ga.status IN ('FAILED','RUNNING')) THEN 1 ELSE 0 END) incomplete,
+            (SELECT count(*) FROM accepted_baselines ab JOIN trials bt ON bt.trial_id=ab.trial_id WHERE bt.project_id=?) accepted_baselines,
+            (SELECT count(*) FROM accepted_audience_versions av JOIN trials at ON at.trial_id=av.trial_id WHERE at.project_id=?) accepted_audience_versions
+            FROM trials WHERE project_id=?""", (project_id, project_id, project_id)).fetchone()
+        return {key: int(row[key] or 0) for key in ("total", "active", "archived", "needs_review", "revision_required", "accepted", "rejected", "incomplete", "accepted_baselines", "accepted_audience_versions")}
 
     def _insert_review_event(self, db: sqlite3.Connection, trial_id: str, event_type: str, decision: str | None, note_text: str, private_steering: bool, related_passage: str, reviewer_identity: str, generation_attempt_id: str | None = None, created_at: str | None = None) -> str:
         prior = db.execute("SELECT event_id FROM review_events WHERE trial_id=? ORDER BY created_at DESC, event_id DESC LIMIT 1", (trial_id,)).fetchone()
@@ -361,10 +371,12 @@ class DocWriterApp:
         body = environ["wsgi.input"].read(size).decode("utf-8")
         return {key: ",".join(values) if key == "finding_codes" else values[-1] for key, values in urllib.parse.parse_qs(body, keep_blank_values=True).items()}
 
-    def _headers(self, csrf: str | None = None) -> list[tuple[str, str]]:
+    def _headers(self, csrf: str | None = None, mode: str | None = None) -> list[tuple[str, str]]:
         headers = [("Content-Type", "text/html; charset=utf-8"), ("Cache-Control", "no-store")]
         if csrf:
             headers.append(("Set-Cookie", f"docwriter_csrf={csrf}; Path=/; Secure; HttpOnly; SameSite=Strict"))
+        if mode:
+            headers.append(("Set-Cookie", mode_cookie(mode, self.config.session_secret)))
         return headers
 
     def _csrf_token(self, environ: dict) -> str:
@@ -457,7 +469,12 @@ class DocWriterApp:
         code { padding: .1rem .3rem; border-radius: 4px; background: #e8eef0; color: var(--blue-deep); font-size: .9em; }
         @media (max-width: 700px) { main { padding-top: 1.5rem; } .trial-card { grid-template-columns: 1fr; } .health { width: 100%; margin-left: 0; } }
         """
-        return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>{html.escape(title)} · Doc Writer</title><style>{style}</style></head><body><header><a class='brand' href='/'>Doc Writer</a><nav><a href='/projects'>Projects</a><a href='/review-queue'>Review queue</a><a href='/trial/new'>New trial</a><a href='/system'>System status</a></nav></header><main>{body}</main></body></html>"""
+        current_mode = _CURRENT_MODE.get()
+        mode_label = "Developer" if current_mode == DEVELOPER else "Normal"
+        alternate_mode = NORMAL if current_mode == DEVELOPER else DEVELOPER
+        alternate_label = "Normal" if current_mode == DEVELOPER else "Developer"
+        mode_control = f"<form class='mode-form' method='post' action='/mode'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><input type='hidden' name='mode' value='{alternate_mode}'><button class='mode-button' type='submit' aria-label='Switch to {alternate_label} Mode'>{alternate_label}</button></form>"
+        return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><link rel='stylesheet' href='/static/docwriter.css'><script defer src='/static/docwriter.js'></script><title>{html.escape(title)} · Doc Writer</title><style>{style}</style></head><body class='mode-{current_mode}'><a class='skip-link' href='#content'>Skip to content</a><header><div class='nav-shell'><a class='brand' href='/'>Doc Writer <span class='brand-mark'>/ review surface</span></a><nav aria-label='Primary'><a href='/projects'>Projects</a><a href='/review-queue'>Review queue</a><a href='/trial/new'>New trial</a><a href='/system'>System status</a><span class='mode-indicator'>{mode_label} Mode</span>{mode_control}</nav></div></header><main id='content'>{body}</main></body></html>"""
         return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>{html.escape(title)} · Doc Writer</title>
 <style>:root{{color-scheme:light}}body{{font:16px/1.6 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:1180px;margin:0 auto;padding:0 1.25rem 4rem;color:#1f2933;background:#f6f7f9}}a{{color:#075985;text-decoration:none}}a:hover{{text-decoration:underline}}header{{padding:1.25rem 0 1rem;border-bottom:1px solid #d9e0e7;margin-bottom:2rem}}.brand{{font-size:1.35rem;font-weight:750;color:#18212b}}nav{{display:flex;flex-wrap:wrap;gap:1rem;margin-top:.7rem;align-items:center}}.health{{margin-left:auto;color:#52606d;font-size:.9rem}}main{{max-width:1040px;margin:0 auto}}section,form,.panel{{background:#fff;border:1px solid #d9e0e7;border-radius:10px;padding:1.25rem;margin:1rem 0;box-shadow:0 1px 2px #172b4d0d}}h1{{font-size:2rem;line-height:1.2;margin:0 0 .5rem}}h2{{font-size:1.25rem;line-height:1.3;margin:.1rem 0 .75rem}}h3{{font-size:1rem;margin:1.25rem 0 .5rem}}label{{display:block;font-weight:700;margin:.8rem 0 .25rem}}textarea,input,select{{width:100%;box-sizing:border-box;padding:.7rem;border:1px solid #aeb8c2;border-radius:6px;font:inherit;background:#fff}}textarea{{min-height:9rem}}input[type=checkbox]{{width:auto;margin-right:.4rem}}button,.button{{display:inline-block;padding:.65rem 1rem;border:0;border-radius:6px;background:#075985;color:white;font-weight:700;cursor:pointer;text-decoration:none}}button:hover,.button:hover{{background:#064a6b;text-decoration:none}}button.secondary,.button.secondary{{background:#e7eef3;color:#164e63}}button.danger{{background:#991b1b}}.muted{{color:#52606d}}.status{{font-weight:700}}.badge{{display:inline-block;border-radius:999px;padding:.2rem .65rem;font-size:.82rem;font-weight:750;white-space:nowrap;background:#e7eef3;color:#164e63}}.badge.review{{background:#fff1c7;color:#7a4d00}}.badge.accepted{{background:#dcfce7;color:#166534}}.badge.rejected{{background:#fee2e2;color:#991b1b}}.badge.revision{{background:#ffedd5;color:#9a3412}}.badge.failed{{background:#f3e8ff;color:#6b21a8}}.notice{{padding:.7rem 1rem;border-radius:6px;background:#ecfdf5;color:#166534;font-weight:700}}.error{{padding:.7rem 1rem;border-radius:6px;background:#fef2f2;color:#991b1b;font-weight:650}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem}}.trial-list{{display:grid;gap:.8rem}}.trial-card{{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1rem;align-items:center;background:#fff;border:1px solid #d9e0e7;border-radius:10px;padding:1rem 1.15rem}}.trial-card h3{{margin:0 0 .25rem}}.meta{{color:#52606d;font-size:.9rem}}.actions{{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}}table{{border-collapse:collapse;width:100%;font-size:.94rem}}td,th{{border-bottom:1px solid #d5dbe1;text-align:left;padding:.6rem;vertical-align:top}}th{{color:#52606d;font-size:.85rem;text-transform:uppercase;letter-spacing:.03em}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}}.prose{{font-family:Georgia,'Times New Roman',serif;font-size:1.12rem;line-height:1.75;white-space:pre-wrap}}.quiet{{background:#f8fafc;border-color:#e5e7eb}}.filters{{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}}.filters a{{padding:.35rem .7rem;border-radius:999px;background:#e7eef3}}.filters a.active{{background:#075985;color:#fff}}@media(max-width:700px){{.trial-card{{grid-template-columns:1fr}}.health{{margin-left:0;width:100%}}}}
 </style></head><body><header><a class='brand' href='/'>Doc Writer</a><nav><a href='/projects'>Projects</a><a href='/review-queue'>Review queue</a><a href='/trial/new'>New trial</a><a href='/system'>System status</a></nav></header><main>{body}</main></body></html>"""
@@ -792,7 +809,7 @@ class DocWriterApp:
         cards = []
         for project, counts, recent in summaries:
             recent_text = f"{recent['trial_id']} · {recent['updated_at']}" if recent else "No trials yet"
-            cards.append(f"<article class='trial-card'><div><h2>{html.escape(project['name'])} <span class='badge'>{html.escape(project['status'])}</span></h2><p>{html.escape(project['purpose'])}</p><p class='meta'>{counts['total']} trials · {counts['needs_review']} needing review · {counts['revision_required']} revision required · {counts['accepted']} accepted · {counts['rejected']} rejected · {counts['incomplete']} failed/incomplete · recent: {html.escape(recent_text)}</p></div><div class='actions'><a class='button' href='/project/{html.escape(project['slug'])}'>Open</a></div></article>")
+            cards.append(f"<article class='trial-card'><div><p class='section-kicker'>Project workspace</p><h2>{html.escape(project['name'])} <span class='badge'>{html.escape(project['status'])}</span></h2><p>{html.escape(project['purpose'])}</p><p class='meta'>{counts['total']} trials · {counts['active']} active · {counts['needs_review']} need attention · {counts['accepted_baselines']} accepted baseline(s) · {counts['accepted_audience_versions']} accepted audience version(s) · {counts['archived']} archived</p><p class='meta'>Last activity: {html.escape(recent_text)}</p></div><div class='actions'><a class='button' href='/project/{html.escape(project['slug'])}'>Open project</a></div></article>")
         card_html = "".join(cards) or "<section class='quiet'><h2>No projects</h2></section>"
         body = f"""<div class='actions'><div><h1>Projects</h1><p class='muted'>Writing work is organized by project, then trial, generation attempt, and review event.</p></div><a class='button' href='/project/new'>New project</a></div><div class='trial-list'>{card_html}</div>"""
         return self._html("Projects", body, csrf)
@@ -810,7 +827,7 @@ class DocWriterApp:
             latest_attempt = {"status": latest["latest_attempt_state"], "error_class": latest["latest_error_class"], "attempt_id": latest["trial_id"], "normalized_proposal": latest["normalized_output"]}
             resume = self._guidance_panel(guidance_for(latest, [latest_attempt] if latest["latest_attempt_state"] else [], [{"event_type": "REVIEW_NOTE", "note_text": "saved"}] if latest["has_notes"] else [], project_slug=project["slug"]))
         archived_actions = f"<form method='post' action='/project/{html.escape(project['project_id'])}/restore'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button type='submit'>Restore project</button></form>" if project["status"] == PROJECT_ARCHIVED else f"<form method='post' action='/project/{html.escape(project['project_id'])}/archive'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button type='submit'>Archive project</button></form>"
-        body = f"""<p class='meta'><a href='/projects'>Projects</a> → {html.escape(project['name'])}</p><div class='actions'><div><h1>{html.escape(project['name'])} <span class='badge'>{html.escape(project['status'])}</span></h1><p>{html.escape(project['purpose'])}</p></div><div class='actions'><a class='button' href='/trial/new?project={html.escape(project['project_id'])}'>New trial</a><a class='button secondary' href='/project/{html.escape(project['project_id'])}/edit'>Edit project</a>{archived_actions}</div></div>{resume}<section><h2>Project activity</h2><p class='meta'>{counts['total']} total · {counts['needs_review']} needing review · {counts['revision_required']} revision required · {counts['accepted']} accepted · {counts['rejected']} rejected · {counts['incomplete']} failed/incomplete</p></section><form method='post' action='/project/{html.escape(project['slug'])}'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='trial-search'>Search this project</label><input id='trial-search' name='search' value='{html.escape(search)}' placeholder='Trial ID, source excerpt, model, or reviewer note'><button type='submit'>Search</button></form><div class='filters' aria-label='Trial filters'>{links}</div><p class='muted'>{len(rows)} trial(s)</p><div class='trial-list'>{cards}</div>"""
+        body = f"""<p class='meta'><a href='/projects'>Projects</a> → {html.escape(project['name'])}</p><div class='actions'><div><p class='section-kicker'>Writing project</p><h1>{html.escape(project['name'])} <span class='badge'>{html.escape(project['status'])}</span></h1><p>{html.escape(project['purpose'])}</p></div><div class='actions'><a class='button' href='/trial/new?project={html.escape(project['project_id'])}'>New trial</a><a class='button secondary' href='/project/{html.escape(project['project_id'])}/edit'>Edit project</a>{archived_actions}</div></div>{resume}<section><h2>Project activity</h2><p class='meta'>{counts['active']} active · {counts['archived']} archived · {counts['needs_review']} need attention · {counts['accepted_baselines']} accepted baseline(s) · {counts['accepted_audience_versions']} accepted audience version(s)</p></section><section><h2>Archived history</h2><p>Archived trials, corrected failures, and accepted work remain available in project history.</p><a class='button secondary' href='/project/{html.escape(project['slug'])}?status=all'>Browse project history</a></section><form method='post' action='/project/{html.escape(project['slug'])}'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='trial-search'>Search this project</label><input id='trial-search' name='search' value='{html.escape(search)}' placeholder='Trial ID, source excerpt, model, or reviewer note'><button type='submit'>Search</button></form><div class='filters' aria-label='Trial filters'>{links}</div><p class='muted'>{len(rows)} trial(s)</p><div class='trial-list'>{cards}</div>"""
         return self._html(project["name"], body, csrf)
 
     def _render_project_form(self, csrf: str, project: sqlite3.Row | None = None) -> str:
@@ -838,12 +855,20 @@ class DocWriterApp:
         cards = "".join(self._render_trial_card(row) for row in queue) or "<section class='quiet'><h2>Nothing currently needs review in this scope.</h2><p>Accepted, rejected, archived, and completed work remains available in project history.</p><div class='actions'><a class='button' href='/projects'>View project history</a></div></section>"
         return self._html("Review queue", f"<div class='actions'><div><h1>Review queue</h1><p class='muted'>Open work across active projects.</p></div></div><div class='trial-list'>{cards}</div>", csrf)
 
+    def _render_status_probe(self, probe) -> str:
+        details = "".join(f"<dt>{html.escape(str(key))}</dt><dd class='machine'>{html.escape(json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value))}</dd>" for key, value in probe.details.items())
+        detail_block = f"<details class='developer-only'><summary>Evidence details</summary><dl>{details}</dl></details>"
+        visible_value = "local model service" if probe.probe_id == "ollama" and _CURRENT_MODE.get() == NORMAL else probe.value
+        return f"<section class='status-panel status-{html.escape(probe.state.lower())}'><div class='actions'><div><h2>{html.escape(probe.probe_id)}</h2><p class='status-value'>{html.escape(probe.state)} · {html.escape(visible_value)}</p></div><span class='badge'>{html.escape(probe.timestamp)}</span></div><p>{html.escape(probe.detail)}</p><p class='status-source'>Source: {html.escape(probe.source)}</p>{detail_block}</section>"
+
     def _render_system(self, csrf: str) -> str:
+        probes = collect_system_status(self.config, self.contract_bundle, self.adapter_profiles)
         with self._db() as db:
-            trial_count = db.execute("SELECT count(*) FROM trials").fetchone()[0]
-        storage = "healthy" if self.config.runtime_root.is_dir() and os.access(self.config.state_dir, os.W_OK) else "unavailable"
-        version = self.config.version if self.config.version else "unversioned"
-        body = f"""<h1>System status</h1><p class='muted'>Operational details for the authenticated local review service.</p><div class='grid'><section><strong>Service</strong><p class='status'>healthy</p></section><section><strong>Storage</strong><p class='status'>{html.escape(storage)}</p></section><section><strong>Model execution</strong><p class='status'>enabled · local only</p></section><section><strong>Application version</strong><p>{html.escape('Doc Writer review application · ' + version[:12])}</p></section><section><strong>Canonical hostname</strong><p><code>{html.escape(self.config.canonical_host)}</code></p></section><section><strong>Trials retained</strong><p class='status'>{trial_count}</p></section></div><p><a href='/'>Return to review queue</a></p>"""
+            failures = db.execute("SELECT attempt_id,trial_id,profile_id,canonical_failure_class,started_at FROM generation_attempts WHERE canonical_failure_class NOT IN ('','COMPLETED') ORDER BY started_at DESC LIMIT 8").fetchall()
+        panels = "".join(self._render_status_probe(probe) for probe in probes.values())
+        failure_rows = "".join(f"<tr><td><code>{html.escape(row['attempt_id'])}</code></td><td><code>{html.escape(row['trial_id'])}</code></td><td>{html.escape(row['profile_id'] or '—')}</td><td>{html.escape(row['canonical_failure_class'])}</td><td>{html.escape(row['started_at'])}</td><td><a href='/trial/{html.escape(row['trial_id'])}/attempt/{html.escape(row['attempt_id'])}'>Open evidence</a></td></tr>" for row in failures) or "<tr><td colspan='6'>No classified failures recorded.</td></tr>"
+        refresh = f"<form method='post' action='/system/refresh'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button class='secondary' type='submit'>Refresh status</button></form>"
+        body = f"""<p class='meta'><a href='/projects'>Projects</a> → System status</p><div class='actions'><div><h1>System status</h1><p class='muted'>Doc Writer review application · read-only evidence for the local writing service. Writing work remains in Projects and the review queue.</p></div>{refresh}</div><section class='workspace-intro'><p class='section-kicker'>Developer evidence</p><p>Each panel names its source and probe time. A missing host-level interface is reported as UNKNOWN rather than inferred.</p></section><div class='grid'>{panels}</div><section><h2>Recent classified failures</h2><p class='muted'>Structural evidence only. Reconciled historical failures remain available without appearing as unresolved active work.</p><table><tr><th>Attempt</th><th>Trial</th><th>Profile</th><th>Class</th><th>Time</th><th></th></tr>{failure_rows}</table></section>"""
         return self._html("System status", body, csrf)
 
     def _render_form(self, csrf: str, trial: sqlite3.Row | None = None, project: sqlite3.Row | None = None, projects: list[sqlite3.Row] | None = None) -> str:
@@ -923,8 +948,26 @@ class DocWriterApp:
             return [b"Authentication required\n"]
         method, path = environ.get("REQUEST_METHOD", "GET"), environ.get("PATH_INFO", "/")
         csrf = self._csrf_token(environ) or secrets.token_urlsafe(24)
+        _CURRENT_MODE.set(mode_from_cookie(environ.get("HTTP_COOKIE", ""), self.config.session_secret))
         try:
-            if method == "GET" and path == "/":
+            if method == "GET" and path in {"/static/docwriter.css", "/static/docwriter.js"}:
+                asset = self.config.runtime_root.parent.parent / "opt" / "ws-doc-writer" / "src" / "docwriter_web" / path.rsplit("/", 1)[-1]
+                local_asset = Path(__file__).parent / "static" / path.rsplit("/", 1)[-1]
+                asset = local_asset if local_asset.is_file() else asset
+                content_type = "text/css; charset=utf-8" if path.endswith(".css") else "text/javascript; charset=utf-8"
+                start_response("200 OK", [("Content-Type", content_type), ("Cache-Control", "no-store")])
+                return [asset.read_bytes()]
+            elif method == "POST" and path == "/mode":
+                form = self._parse_form(environ)
+                if not self._csrf_valid(environ, form):
+                    raise PermissionError("CSRF validation failed")
+                selected = form.get("mode", NORMAL)
+                if selected not in {NORMAL, DEVELOPER}:
+                    raise ValueError("unknown presentation mode")
+                _CURRENT_MODE.set(selected)
+                start_response("303 See Other", self._headers(mode=selected) + [("Location", "/projects")])
+                return [b""]
+            elif method == "GET" and path == "/":
                 content = self._render_home(csrf)
             elif method == "GET" and path == "/projects":
                 content = self._render_projects(csrf)
@@ -932,6 +975,13 @@ class DocWriterApp:
                 content = self._render_review_queue(csrf)
             elif method == "GET" and path == "/system":
                 content = self._render_system(csrf)
+            elif method == "POST" and path == "/system/refresh":
+                form = self._parse_form(environ)
+                if not self._csrf_valid(environ, form):
+                    raise PermissionError("CSRF validation failed")
+                collect_system_status(self.config, self.contract_bundle, self.adapter_profiles, refresh=True)
+                start_response("303 See Other", [("Location", "/system")])
+                return [b""]
             elif method == "GET" and path == "/project/new":
                 content = self._render_project_form(csrf)
             elif method == "GET" and path.startswith("/project/") and len(path.strip("/").split("/")) == 4 and path.strip("/").split("/")[2] == "trial":

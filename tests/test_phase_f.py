@@ -62,3 +62,31 @@ def test_audience_review_acceptance_is_profile_scoped(tmp_path):
     with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
         assert db.execute("select count(*) from accepted_audience_versions").fetchone()[0] == 1
         assert db.execute("select count(*) from accepted_audience_versions where profile_id='audience-executive'").fetchone()[0] == 0
+
+
+def test_audience_attempt_is_durable_before_model_call(tmp_path):
+    app, trial_id = staged_app(tmp_path)
+    assert request(app, f"/trial/{trial_id}/baseline/accept", "POST", {"confirm_baseline": "1", "csrf": "x"})["status"].startswith("303")
+    class Client:
+        def __init__(self): self.calls = []
+        def generate_audience(self, *args, **kwargs):
+            with app._db() as db:
+                self.calls.append([tuple(row) for row in db.execute("select status from generation_attempts where kind='AUDIENCE'").fetchall()])
+            return result_for("The observed service remains local and review is unresolved.", "The service remains local for technical peers.")
+    client = Client(); app.ollama_client = client
+    attempt_id, state = app._generate_audience(trial_id, "technical-peer")
+    assert state == "COMPLETED" and client.calls == [[("RUNNING",)]]
+    with app._db() as db:
+        events = [row[0:2] for row in db.execute("select from_status,to_status from generation_attempt_events where attempt_id=? order by sequence_number", (attempt_id,))]
+    assert events == [(None, "QUEUED"), ("QUEUED", "RUNNING"), ("RUNNING", "COMPLETED")]
+
+
+def test_archived_audience_generation_is_local_and_humane(tmp_path):
+    app, trial_id = staged_app(tmp_path)
+    assert request(app, f"/trial/{trial_id}/baseline/accept", "POST", {"confirm_baseline": "1", "csrf": "x"})["status"].startswith("303")
+    assert request(app, f"/trial/{trial_id}/audience/technical-peer/create", "POST", {"csrf": "x"})["status"].startswith("303")
+    assert request(app, f"/trial/{trial_id}/archive", "POST", {"csrf": "x"})["status"].startswith("303")
+    response = request(app, f"/trial/{trial_id}/audience/technical-peer/generate", "POST", {"csrf": "x"})
+    assert response["status"].startswith("400") and "did not start a new audience attempt" in response["body"]
+    with app._db() as db:
+        assert db.execute("select count(*) from generation_attempts where kind='AUDIENCE'").fetchone()[0] == 0

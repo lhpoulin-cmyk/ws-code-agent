@@ -30,6 +30,7 @@ def canonical_state(status, error_class="", explicit=""):
 TERMINAL = TERMINAL_STATES
 ALLOWED = {
     (None, "REQUEST_NOT_STARTED"),
+    (None, "QUEUED"),
     ("REQUEST_NOT_STARTED", "QUEUED"),
     (None, "RUNNING"),
     (None, "COMPLETED"),

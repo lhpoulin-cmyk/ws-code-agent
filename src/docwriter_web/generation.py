@@ -304,13 +304,17 @@ class OllamaClient:
         telemetry["wall_seconds"] = round(time.monotonic() - started_monotonic, 6)
         return GenerationResult(profile.model_identifier, digest, request_json, v2_system_prompt(bundle, profile), bundle.composed_hash, started_at, completed_at, raw_http, response_payload, findings, proposal, exact_diff(source, proposal), sha256_text(raw_http), sha256_text(proposal), telemetry, "chat", "/api/chat", profile.adapter_id, profile.profile_version, profile.request_serializer_version, ("system", "user"), bundle.contract_hashes, bundle.composed_hash, bundle.version, bundle.schema_hash, serialized_json(bundle.schema), adherence)
 
-    def generate_audience(self, baseline: str, source: str, integrity: str, audience_contract: str, profile_contract_text: str, voice_contract: str, profile: AdapterProfile) -> GenerationResult:
-        digest = self.installed_digest(profile.model_identifier)
-        if digest != profile.expected_digest: raise OllamaError("installed model digest does not match the configured adapter profile")
+    def prepare_audience_request(self, baseline: str, source: str, integrity: str, audience_contract: str, profile_contract_text: str, voice_contract: str, profile: AdapterProfile) -> tuple[dict[str, Any], str, str]:
         system = "\n\n".join(("You are a document editor adapting an accepted conversational baseline for a named audience. Preserve facts, authority, uncertainty, status, identifiers, unresolved issues, and human meaning. Do not address the author, add facts, decisions, recommendations, or certainty. Return exactly the required JSON object and no commentary.", audience_contract, profile_contract_text, voice_contract, "Return schema audience-adaptation-v1."))
         user = f"TASK: ADAPT_ACCEPTED_BASELINE\n\nBASELINE_BEGIN\n{baseline}\nBASELINE_END\n\nORIGINAL_SOURCE_BEGIN\n{source}\nORIGINAL_SOURCE_END\n\nACCEPTED_INTEGRITY_EVIDENCE_BEGIN\n{integrity}\nACCEPTED_INTEGRITY_EVIDENCE_END\n"
         payload = {"model": profile.model_identifier, "messages":[{"role":"system","content":system},{"role":"user","content":user}],"stream":False,"format":audience_schema(),"think":False,"options":{"num_ctx":8192,"temperature":0.2,"top_p":0.9,"seed":42}}
-        request_json = serialized_json(payload); started_at=utc_now(); started=time.monotonic(); response_payload, raw_http=self._request_raw("/api/chat",payload,classify_response_errors=True); completed_at=utc_now()
+        return payload, system, serialized_json(payload)
+
+    def generate_audience(self, baseline: str, source: str, integrity: str, audience_contract: str, profile_contract_text: str, voice_contract: str, profile: AdapterProfile) -> GenerationResult:
+        digest = self.installed_digest(profile.model_identifier)
+        if digest != profile.expected_digest: raise OllamaError("installed model digest does not match the configured adapter profile")
+        payload, system, request_json = self.prepare_audience_request(baseline, source, integrity, audience_contract, profile_contract_text, voice_contract, profile)
+        started_at=utc_now(); started=time.monotonic(); response_payload, raw_http=self._request_raw("/api/chat",payload,classify_response_errors=True); completed_at=utc_now()
         message=response_payload.get("message"); raw=message.get("content") if isinstance(message,dict) else None
         if not isinstance(raw,str) or not raw.strip(): raise OllamaError("local Ollama chat response has no structured response text",raw_http,response_payload,"EMPTY_RESPONSE")
         try: findings, proposal=parse_audience_response(raw)

@@ -44,6 +44,8 @@ MIGRATION_NAMES = (
     "audience-review-events-v1",
     "accepted-audience-versions-v1",
     "audience-version-immutability-v1",
+    "audience-request-conflicts-v1",
+    "audience-attempt-before-request-v1",
 )
 
 
@@ -561,6 +563,56 @@ def _audience_version_immutability(db: sqlite3.Connection, commit: str) -> None:
     db.executescript("CREATE TRIGGER IF NOT EXISTS accepted_audience_versions_no_update BEFORE UPDATE ON accepted_audience_versions BEGIN SELECT RAISE(ABORT,'accepted audience versions are immutable'); END; CREATE TRIGGER IF NOT EXISTS accepted_audience_versions_no_delete BEFORE DELETE ON accepted_audience_versions BEGIN SELECT RAISE(ABORT,'accepted audience versions are immutable'); END;")
     _ledger(db, name, commit, before, before_hash)
 
+def _audience_request_conflicts(db: sqlite3.Connection, commit: str) -> None:
+    name = "audience-request-conflicts-v1"
+    if _migration_applied(db, name): return
+    before, before_hash = _counts(db), _database_hash(db)
+    db.execute("""CREATE TABLE IF NOT EXISTS audience_request_conflicts (
+      conflict_id TEXT PRIMARY KEY, adaptation_id TEXT REFERENCES audience_adaptations(adaptation_id),
+      baseline_id TEXT REFERENCES accepted_baselines(baseline_id), profile_id TEXT REFERENCES audience_profiles(profile_id),
+      request_timestamp TEXT NOT NULL, route TEXT NOT NULL, issuer TEXT NOT NULL, response_status INTEGER NOT NULL,
+      safe_response_detail TEXT NOT NULL, ollama_reached INTEGER NOT NULL, model_execution INTEGER NOT NULL,
+      classification TEXT NOT NULL, recovery_disposition TEXT NOT NULL, created_at TEXT NOT NULL
+    )""")
+    db.execute("""INSERT OR IGNORE INTO audience_request_conflicts
+      SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM audience_adaptations WHERE adaptation_id=?)""", (
+        "conflict-20260803-technical-peer", "adaptation-79d01e5fba83fa84", "baseline-42aca28fe9c5ed88",
+        "audience-technical-peer", "2026-08-03T23:47:00-04:00",
+        "/trial/trial-08ef25706ca0155b/audience/technical-peer/generate", "DOC_WRITER_APPLICATION", 409,
+        "Application returned 409 after Ollama returned 200; exact response body was not retained (37-byte HTTP body).",
+        1, 1, "PRE_PERSISTENCE_FAILURE", "Preserved as sanitized forensic evidence; no attempt row was fabricated.", _now(), "adaptation-79d01e5fba83fa84"))
+    _ledger(db, name, commit, before, before_hash)
+
+def _audience_attempt_before_request(db: sqlite3.Connection, commit: str) -> None:
+    name = "audience-attempt-before-request-v1"
+    if _migration_applied(db, name): return
+    before, before_hash = _counts(db), _database_hash(db)
+    db.execute("DROP TRIGGER IF EXISTS generation_attempts_safe_update")
+    db.executescript("""
+    CREATE TRIGGER generation_attempts_safe_update
+    BEFORE UPDATE ON generation_attempts
+    WHEN OLD.status NOT IN ('RUNNING','QUEUED')
+      OR NEW.status NOT IN ('RUNNING','COMPLETED','INTERRUPTED','REQUEST_TIMEOUT','OLLAMA_UNAVAILABLE','OLLAMA_HTTP_ERROR','EMPTY_RESPONSE','MALFORMED_JSON','RESPONSE_SCHEMA_INVALID','PROPOSAL_FIELD_MISSING','TASK_ADHERENCE_FAILED','NORMALIZATION_FAILURE','PERSISTENCE_FAILURE','RENDER_FAILURE','STALE_SOURCE')
+      OR OLD.attempt_id<>NEW.attempt_id OR OLD.trial_id<>NEW.trial_id
+      OR OLD.source_version_id<>NEW.source_version_id OR OLD.source_text<>NEW.source_text
+      OR OLD.source_sha256<>NEW.source_sha256 OR OLD.prompt_version<>NEW.prompt_version
+      OR OLD.prompt_text<>NEW.prompt_text OR OLD.prompt_sha256<>NEW.prompt_sha256
+      OR OLD.request_json<>NEW.request_json OR OLD.model_identifier<>NEW.model_identifier
+      OR OLD.model_digest<>NEW.model_digest OR OLD.generation_settings<>NEW.generation_settings
+      OR OLD.started_at<>NEW.started_at OR OLD.application_version<>NEW.application_version
+      OR OLD.transport_type<>NEW.transport_type OR OLD.transport_endpoint<>NEW.transport_endpoint
+      OR OLD.adapter_id<>NEW.adapter_id OR OLD.adapter_version<>NEW.adapter_version
+      OR OLD.request_serializer_version<>NEW.request_serializer_version OR OLD.message_roles<>NEW.message_roles
+      OR OLD.canonical_contract_hashes<>NEW.canonical_contract_hashes OR OLD.composed_contract_hash<>NEW.composed_contract_hash
+      OR OLD.schema_version<>NEW.schema_version OR OLD.schema_hash<>NEW.schema_hash OR OLD.response_schema<>NEW.response_schema
+      OR (OLD.task_adherence_result<>NEW.task_adherence_result AND NOT (NEW.task_adherence_result IN ('passed','failed') AND OLD.status IN ('RUNNING','QUEUED')))
+      OR (OLD.classifier_version<>NEW.classifier_version AND OLD.classifier_version<>'')
+      OR OLD.recovery_spool_ref<>NEW.recovery_spool_ref OR COALESCE(OLD.worker_pid,0)<>COALESCE(NEW.worker_pid,0)
+      OR OLD.worker_start_identity<>NEW.worker_start_identity
+    BEGIN SELECT RAISE(ABORT, 'generation attempt provenance or lifecycle is immutable'); END;
+    """)
+    _ledger(db, name, commit, before, before_hash)
+
 
 def apply_migrations(db: sqlite3.Connection, application_commit: str) -> None:
     db.execute("PRAGMA foreign_keys=ON")
@@ -590,3 +642,5 @@ def apply_migrations(db: sqlite3.Connection, application_commit: str) -> None:
     _audience_review_events(db, application_commit)
     _accepted_audience_versions(db, application_commit)
     _audience_version_immutability(db, application_commit)
+    _audience_request_conflicts(db, application_commit)
+    _audience_attempt_before_request(db, application_commit)

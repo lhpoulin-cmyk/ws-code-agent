@@ -1,7 +1,7 @@
 import sqlite3
 import pytest
 
-from docwriter_web.audience import derived_state, profile_contract
+from docwriter_web.audience import AUDIENCE_VERSION, audience_schema, derived_state, parse_audience_response, profile_contract
 from test_generation import make_app
 from test_phase_e import staged_app
 from test_generation import request, result_for
@@ -23,6 +23,19 @@ def test_audience_states_are_independent():
 
 def test_unknown_profile_contract_fails_closed():
     with pytest.raises(ValueError): profile_contract("unknown")
+
+
+def test_audience_v2_contract_is_explicit_and_preserves_integrity_semantics():
+    assert AUDIENCE_VERSION == "audience-adaptation-v2"
+    schema = audience_schema()
+    finding = {"category": "no_material_issue_found", "detail": "No new material integrity issue was identified."}
+    raw = __import__("json").dumps({"integrity_findings": [finding], "audience_adaptation": "The service remains local."})
+    assert parse_audience_response(raw)[0] == [finding]
+    with pytest.raises(ValueError, match="sole concise"):
+        parse_audience_response(__import__("json").dumps({"integrity_findings": [finding, {"category": "ambiguity", "detail": "One issue remains."}], "audience_adaptation": "The service remains local."}))
+    with pytest.raises(ValueError, match="integrity finding"):
+        parse_audience_response(__import__("json").dumps({"integrity_findings": [{"category": "no material issue found", "detail": "No issue."}], "audience_adaptation": "The service remains local."}))
+    assert schema["properties"]["integrity_findings"]["items"]["required"] == ["category", "detail"]
 
 
 def test_adaptation_requires_and_binds_accepted_baseline(tmp_path):

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
-AUDIENCE_VERSION = "audience-adaptation-v1"
+AUDIENCE_VERSION = "audience-adaptation-v2"
 PROFILES = {slug: ROOT / f"prompts/audiences/{slug}.md" for slug in ("technical-peer", "executive", "public")}
 CATEGORIES = {"confirmed_conflict", "apparent_conflict_requiring_authority_review", "unsupported_claim", "ambiguity", "no_material_issue_found"}
 
@@ -17,7 +17,7 @@ def profile_contract(slug: str) -> tuple[str, str]:
     if not path or not path.is_file(): raise ValueError("unknown audience profile")
     raw = path.read_bytes(); return raw.decode(), sha256_bytes(raw)
 def audience_schema() -> dict[str, Any]:
-    return {"type":"object","additionalProperties":False,"required":["integrity_findings","audience_adaptation"],"properties":{"integrity_findings":{"type":"array"},"audience_adaptation":{"type":"string","minLength":1}}}
+    return {"type":"object","additionalProperties":False,"required":["integrity_findings","audience_adaptation"],"properties":{"integrity_findings":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"object","additionalProperties":False,"required":["category","detail"],"properties":{"category":{"type":"string","enum":sorted(CATEGORIES)},"detail":{"type":"string","minLength":1,"maxLength":4000}}}},"audience_adaptation":{"type":"string","minLength":1}}}
 def parse_audience_response(raw: str) -> tuple[list[dict[str, str]], str]:
     value = json.loads(raw)
     if not isinstance(value, dict) or set(value) != {"integrity_findings", "audience_adaptation"}: raise ValueError("audience response schema is invalid")
@@ -25,8 +25,12 @@ def parse_audience_response(raw: str) -> tuple[list[dict[str, str]], str]:
     if not isinstance(text, str) or not text.strip(): raise ValueError("audience adaptation is missing")
     findings = value["integrity_findings"]
     if not isinstance(findings, list): raise ValueError("audience integrity findings are invalid")
+    if not findings: raise ValueError("audience integrity findings must contain exactly one no_material_issue_found finding or substantive findings")
+    no_issue = [finding for finding in findings if isinstance(finding, dict) and finding.get("category") == "no_material_issue_found"]
+    if no_issue and (len(findings) != 1 or not isinstance(no_issue[0].get("detail"), str) or not no_issue[0]["detail"].strip() or len(no_issue[0]["detail"]) > 4000):
+        raise ValueError("no_material_issue_found must be the sole concise non-blocking finding")
     for finding in findings:
-        if not isinstance(finding, dict) or set(finding) != {"category", "detail"} or finding["category"] not in CATEGORIES: raise ValueError("audience integrity finding is invalid")
+        if not isinstance(finding, dict) or set(finding) != {"category", "detail"} or finding["category"] not in CATEGORIES or not isinstance(finding["detail"], str) or not finding["detail"].strip() or len(finding["detail"]) > 4000: raise ValueError("audience integrity finding is invalid")
     return findings, text.strip()
 def derived_state(adaptation: Any, attempts: list[Any], events: list[Any], accepted: list[Any] = ()) -> str:
     if not attempts: return "AUDIENCE_GENERATION_REQUIRED"

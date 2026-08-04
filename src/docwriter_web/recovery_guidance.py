@@ -123,6 +123,15 @@ def guidance_for(
     error_class = _value(attempt, "error_class", "") or ""
     failure_state = canonical_state(attempt_status, error_class, _value(attempt, "canonical_failure_class", "") or "")
     technical = f"{error_class or attempt_status} · {_value(attempt, 'attempt_id', 'unknown')}"
+    if _value(attempt, "kind", "CONVERSATIONAL") == "AUDIENCE" and failure_state == "RESPONSE_SCHEMA_INVALID":
+        return Guidance(
+            "AUDIENCE_RESPONSE_SCHEMA_INVALID", "attention",
+            "The model returned an audience version, but one integrity finding did not match the required review format.",
+            "The original response and full attempt history are preserved.",
+            "The baseline, request, response, and provenance remain available for inspection.",
+            "The audience response must use the shared integrity categories and finding structure before it can enter review.",
+            "View preserved response", f"{base}#generation-attempts", "Create new attempt", f"{base}#generation-attempts", "generation-attempts", technical,
+        )
     if failure_state == "QUEUED":
         return Guidance("QUEUED", "next", "This generation request is queued for execution.", "Your source version and request details are preserved.", "The queued request remains attached to this trial.", "The writer must begin this request before a result can be reviewed.", "View attempt status", f"{base}#generation-attempts", target_section_id="generation-attempts", technical_details=technical)
     if attempt_status == "RUNNING":

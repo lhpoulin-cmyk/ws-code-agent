@@ -33,6 +33,10 @@ from .generation import (
     sha256_text,
     utc_now,
     request_payload_v2,
+    request_payload_with_setup,
+    setup_response_schema,
+    setup_schema_hash,
+    CONVERSATIONAL_V3_VERSION,
 )
 from .migrations import apply_migrations
 from .recovery_guidance import Guidance, guidance_for
@@ -43,6 +47,7 @@ from .baselines import eligibility as baseline_eligibility, current_baseline
 from .audience import AUDIENCE_VERSION, derived_state as audience_state, profile_contract, sha256_text as audience_sha256, audience_schema
 from .system_status import collect as collect_system_status
 from .ui_state import DEVELOPER, NORMAL, mode_cookie, mode_from_cookie
+from .writing_setup import WritingSetup, from_form as setup_from_form, from_row as setup_from_row, serialize as serialize_setup, sha256_serialized
 
 
 _CURRENT_MODE: contextvars.ContextVar[str] = contextvars.ContextVar("docwriter_mode", default=NORMAL)
@@ -479,14 +484,29 @@ class DocWriterApp:
 <style>:root{{color-scheme:light}}body{{font:16px/1.6 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:1180px;margin:0 auto;padding:0 1.25rem 4rem;color:#1f2933;background:#f6f7f9}}a{{color:#075985;text-decoration:none}}a:hover{{text-decoration:underline}}header{{padding:1.25rem 0 1rem;border-bottom:1px solid #d9e0e7;margin-bottom:2rem}}.brand{{font-size:1.35rem;font-weight:750;color:#18212b}}nav{{display:flex;flex-wrap:wrap;gap:1rem;margin-top:.7rem;align-items:center}}.health{{margin-left:auto;color:#52606d;font-size:.9rem}}main{{max-width:1040px;margin:0 auto}}section,form,.panel{{background:#fff;border:1px solid #d9e0e7;border-radius:10px;padding:1.25rem;margin:1rem 0;box-shadow:0 1px 2px #172b4d0d}}h1{{font-size:2rem;line-height:1.2;margin:0 0 .5rem}}h2{{font-size:1.25rem;line-height:1.3;margin:.1rem 0 .75rem}}h3{{font-size:1rem;margin:1.25rem 0 .5rem}}label{{display:block;font-weight:700;margin:.8rem 0 .25rem}}textarea,input,select{{width:100%;box-sizing:border-box;padding:.7rem;border:1px solid #aeb8c2;border-radius:6px;font:inherit;background:#fff}}textarea{{min-height:9rem}}input[type=checkbox]{{width:auto;margin-right:.4rem}}button,.button{{display:inline-block;padding:.65rem 1rem;border:0;border-radius:6px;background:#075985;color:white;font-weight:700;cursor:pointer;text-decoration:none}}button:hover,.button:hover{{background:#064a6b;text-decoration:none}}button.secondary,.button.secondary{{background:#e7eef3;color:#164e63}}button.danger{{background:#991b1b}}.muted{{color:#52606d}}.status{{font-weight:700}}.badge{{display:inline-block;border-radius:999px;padding:.2rem .65rem;font-size:.82rem;font-weight:750;white-space:nowrap;background:#e7eef3;color:#164e63}}.badge.review{{background:#fff1c7;color:#7a4d00}}.badge.accepted{{background:#dcfce7;color:#166534}}.badge.rejected{{background:#fee2e2;color:#991b1b}}.badge.revision{{background:#ffedd5;color:#9a3412}}.badge.failed{{background:#f3e8ff;color:#6b21a8}}.notice{{padding:.7rem 1rem;border-radius:6px;background:#ecfdf5;color:#166534;font-weight:700}}.error{{padding:.7rem 1rem;border-radius:6px;background:#fef2f2;color:#991b1b;font-weight:650}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem}}.trial-list{{display:grid;gap:.8rem}}.trial-card{{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1rem;align-items:center;background:#fff;border:1px solid #d9e0e7;border-radius:10px;padding:1rem 1.15rem}}.trial-card h3{{margin:0 0 .25rem}}.meta{{color:#52606d;font-size:.9rem}}.actions{{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}}table{{border-collapse:collapse;width:100%;font-size:.94rem}}td,th{{border-bottom:1px solid #d5dbe1;text-align:left;padding:.6rem;vertical-align:top}}th{{color:#52606d;font-size:.85rem;text-transform:uppercase;letter-spacing:.03em}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}}.prose{{font-family:Georgia,'Times New Roman',serif;font-size:1.12rem;line-height:1.75;white-space:pre-wrap}}.quiet{{background:#f8fafc;border-color:#e5e7eb}}.filters{{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}}.filters a{{padding:.35rem .7rem;border-radius:999px;background:#e7eef3}}.filters a.active{{background:#075985;color:#fff}}@media(max-width:700px){{.trial-card{{grid-template-columns:1fr}}.health{{margin-left:0;width:100%}}}}
 </style></head><body><header><a class='brand' href='/'>Doc Writer</a><nav><a href='/projects'>Projects</a><a href='/review-queue'>Review queue</a><a href='/trial/new'>New trial</a><a href='/system'>System status</a></nav></header><main>{body}</main></body></html>"""
 
-    def _save_version(self, db: sqlite3.Connection, trial: sqlite3.Row, action: str) -> None:
+    def _save_version(self, db: sqlite3.Connection, trial: sqlite3.Row, action: str) -> int:
         snapshot = json.dumps({key: trial[key] for key in trial.keys()}, sort_keys=True)
-        db.execute("INSERT INTO trial_versions(trial_id, recorded_at, action, snapshot) VALUES(?,?,?,?)", (trial["trial_id"], utc_now(), action, snapshot))
+        cursor = db.execute("INSERT INTO trial_versions(trial_id, recorded_at, action, snapshot) VALUES(?,?,?,?)", (trial["trial_id"], utc_now(), action, snapshot))
+        return int(cursor.lastrowid)
+
+    def _create_writing_setup(self, db: sqlite3.Connection, trial_id: str, source_version_id: int, setup: WritingSetup, created_by: str, supersedes: str | None = None) -> str:
+        serialized = serialize_setup(setup)
+        setup_hash = sha256_serialized(serialized)
+        setup_id = f"setup-{secrets.token_hex(8)}"
+        db.execute("INSERT INTO writing_setup_versions(setup_version_id,trial_id,source_version_id,primary_audience,tone,purpose,preservation_instructions,clarification_policy,serialized_setup,setup_sha256,created_at,created_by,supersedes_setup_version_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", (setup_id, trial_id, source_version_id, setup.primary_audience, setup.tone, setup.purpose, setup.preservation_instructions, setup.clarification_policy, serialized, setup_hash, utc_now(), created_by, supersedes))
+        db.execute("UPDATE trial_versions SET writing_setup_version_id=? WHERE version_id=?", (setup_id, source_version_id))
+        return setup_id
+
+    def _latest_setup(self, db: sqlite3.Connection, trial_id: str) -> sqlite3.Row | None:
+        return db.execute("SELECT * FROM writing_setup_versions WHERE trial_id=? ORDER BY source_version_id DESC, setup_version_id DESC LIMIT 1", (trial_id,)).fetchone()
+
+    def _open_clarification(self, db: sqlite3.Connection, trial_id: str) -> sqlite3.Row | None:
+        return db.execute("SELECT q.* FROM clarification_questions q LEFT JOIN clarification_answers a ON a.question_id=q.question_id WHERE q.trial_id=? AND a.answer_id IS NULL ORDER BY q.created_at DESC LIMIT 1", (trial_id,)).fetchone()
 
     def _latest_attempt(self, db: sqlite3.Connection, trial_id: str) -> sqlite3.Row | None:
         return db.execute("SELECT * FROM generation_attempts WHERE trial_id=? ORDER BY started_at DESC LIMIT 1", (trial_id,)).fetchone()
 
-    def _generate_trial(self, trial_id: str, requested_model: str | None = None) -> tuple[str, str]:
+    def _generate_trial(self, trial_id: str, requested_model: str | None = None, clarification_question_id: str | None = None, clarification_answer_id: str | None = None) -> tuple[str, str]:
         if not self._generation_lock.acquire(blocking=False):
             raise RuntimeError("another generation is already running")
         try:
@@ -497,18 +517,38 @@ class DocWriterApp:
                 version = db.execute("SELECT * FROM trial_versions WHERE trial_id=? ORDER BY version_id DESC LIMIT 1", (trial_id,)).fetchone()
                 if not version:
                     raise ValueError("source version is unavailable")
+                setup_row = db.execute("SELECT * FROM writing_setup_versions WHERE source_version_id=?", (version["version_id"],)).fetchone()
+                setup = setup_from_row(setup_row) if setup_row else None
+                answer_row = None
+                if setup:
+                    open_question = self._open_clarification(db, trial_id)
+                    if clarification_question_id:
+                        question = db.execute("SELECT * FROM clarification_questions WHERE question_id=? AND trial_id=?", (clarification_question_id, trial_id)).fetchone()
+                        if not question:
+                            raise ValueError("the clarification question is not part of this trial")
+                        answer_row = db.execute("SELECT * FROM clarification_answers WHERE answer_id=? AND question_id=?", (clarification_answer_id or "", clarification_question_id)).fetchone()
+                        if not answer_row:
+                            raise ValueError("a durable clarification answer is required before resuming")
+                    elif open_question:
+                        raise ValueError("A focused clarification question is still open. Answer it before generating a proposal.")
                 attempt_id = f"generation-{secrets.token_hex(8)}"
                 selected_model = requested_model or trial["model_identifier"]
                 profile = next((item for item in self.adapter_profiles.values() if item.model_identifier == selected_model), None)
                 if profile is None:
                     raise ValueError("the selected model has no protected Phase B adapter profile")
-                v2_request = request_payload_v2(self.contract_bundle, profile, trial["source_text"])
+                v2_request = request_payload_with_setup(self.contract_bundle, profile, trial["source_text"], setup, answer_row["answer_text"] if answer_row else "") if setup else request_payload_v2(self.contract_bundle, profile, trial["source_text"])
                 request_json = serialized_json(v2_request)
+                setup_serialized = serialize_setup(setup) if setup else ""
+                setup_hash = sha256_serialized(setup_serialized) if setup else ""
                 started_at = utc_now()
-                db.execute("INSERT INTO generation_attempts(attempt_id,trial_id,source_version_id,source_text,source_sha256,prompt_version,prompt_text,prompt_sha256,request_json,model_identifier,model_digest,generation_settings,started_at,completed_at,raw_ollama_response,response_sha256,integrity_findings,normalized_proposal,proposal_sha256,source_to_proposal_diff,telemetry,application_version,status,error,error_class,transport_type,transport_endpoint,adapter_id,adapter_version,request_serializer_version,message_roles,canonical_contract_hashes,composed_contract_hash,schema_version,schema_hash,response_schema,task_adherence_result,canonical_failure_class,classifier_version,last_state_at,worker_pid,worker_start_identity) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id, trial_id, version["version_id"], trial["source_text"], trial["source_sha256"], self.contract_bundle.version, self.contract_bundle.composed_text, self.contract_bundle.composed_hash, request_json, profile.model_identifier, profile.expected_digest, serialized_json(profile.generation_settings), started_at, "", "", "", "[]", "", "", "", "{}", self.config.version, "RUNNING", "", "", profile.transport, "/api/chat", profile.adapter_id, profile.profile_version, profile.request_serializer_version, serialized_json(profile.supported_message_roles), serialized_json(self.contract_bundle.contract_hashes), self.contract_bundle.composed_hash, self.contract_bundle.version, self.contract_bundle.schema_hash, serialized_json(self.contract_bundle.schema), "not_run", "RUNNING", CLASSIFIER_VERSION, started_at, os.getpid(), process_start_identity(os.getpid())))
+                attempt_columns = ("attempt_id", "trial_id", "source_version_id", "source_text", "source_sha256", "prompt_version", "prompt_text", "prompt_sha256", "request_json", "model_identifier", "model_digest", "generation_settings", "started_at", "completed_at", "raw_ollama_response", "response_sha256", "integrity_findings", "normalized_proposal", "proposal_sha256", "source_to_proposal_diff", "telemetry", "application_version", "status", "error", "error_class", "transport_type", "transport_endpoint", "adapter_id", "adapter_version", "request_serializer_version", "message_roles", "canonical_contract_hashes", "composed_contract_hash", "schema_version", "schema_hash", "response_schema", "task_adherence_result", "canonical_failure_class", "classifier_version", "last_state_at", "worker_pid", "worker_start_identity", "writing_setup_version_id", "writing_setup_sha256", "serialized_writing_setup", "primary_audience", "tone", "purpose", "preservation_instructions", "clarification_policy", "clarification_question_id", "clarification_answer_id", "result_kind")
+                attempt_values = (attempt_id, trial_id, version["version_id"], trial["source_text"], trial["source_sha256"], CONVERSATIONAL_V3_VERSION if setup else self.contract_bundle.version, self.contract_bundle.composed_text, self.contract_bundle.composed_hash, request_json, profile.model_identifier, profile.expected_digest, serialized_json(profile.generation_settings), started_at, "", "", "", "[]", "", "", "", "{}", self.config.version, "RUNNING", "", "", profile.transport, "/api/chat", profile.adapter_id, profile.profile_version, profile.request_serializer_version, serialized_json(profile.supported_message_roles), serialized_json(self.contract_bundle.contract_hashes), self.contract_bundle.composed_hash, CONVERSATIONAL_V3_VERSION if setup else self.contract_bundle.version, setup_schema_hash() if setup else self.contract_bundle.schema_hash, serialized_json(setup_response_schema()) if setup else serialized_json(self.contract_bundle.schema), "not_run", "RUNNING", CLASSIFIER_VERSION, started_at, os.getpid(), process_start_identity(os.getpid()), setup_row["setup_version_id"] if setup_row else None, setup_hash, setup_serialized, setup.primary_audience if setup else "", setup.tone if setup else "", setup.purpose if setup else "", setup.preservation_instructions if setup else "", setup.clarification_policy if setup else "", clarification_question_id, clarification_answer_id, "PROPOSAL")
+                db.execute(f"INSERT INTO generation_attempts({','.join(attempt_columns)}) VALUES({','.join('?' for _ in attempt_columns)})", attempt_values)
                 self._record_attempt_event(db, attempt_id, None, "RUNNING")
             try:
-                if hasattr(self.ollama_client, "generate_v2"):
+                if setup and hasattr(self.ollama_client, "generate_with_setup"):
+                    result = self.ollama_client.generate_with_setup(trial["source_text"], setup, self.contract_bundle, profile, answer_row["answer_text"] if answer_row else "")
+                elif hasattr(self.ollama_client, "generate_v2"):
                     result = self.ollama_client.generate_v2(trial["source_text"], self.contract_bundle, profile)
                 else:
                     result = self.ollama_client.generate(trial["source_text"])
@@ -526,6 +566,12 @@ class DocWriterApp:
                     self._record_attempt_event(db, attempt_id, "RUNNING", "STALE_SOURCE", "STALE_SOURCE")
                     return attempt_id, "stale_source"
                 findings_json = json.dumps(result.integrity_findings, ensure_ascii=False, sort_keys=True)
+                if getattr(result, "result_kind", "PROPOSAL") == "CLARIFICATION_REQUIRED":
+                    question_id = f"clarification-{secrets.token_hex(8)}"
+                    db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,integrity_findings=?,status=?,error_class=?,error=?,canonical_failure_class=?,classifier_version=?,safe_error_detail=?,last_state_at=?,task_adherence_result=?,result_kind=? WHERE attempt_id=?", (result.completed_at, result.raw_ollama_response, result.response_hash, findings_json, "COMPLETED", "", "", "COMPLETED", CLASSIFIER_VERSION, "A focused clarification is required before a proposal can be generated.", result.completed_at, "not_run", "CLARIFICATION_REQUIRED", attempt_id))
+                    db.execute("INSERT INTO clarification_questions(question_id,trial_id,source_version_id,setup_version_id,originating_attempt_id,question_text,question_sha256,created_at,created_by) VALUES(?,?,?,?,?,?,?,?,?)", (question_id, trial_id, version["version_id"], setup_row["setup_version_id"], attempt_id, result.clarification_question, sha256_text(result.clarification_question), result.completed_at, "model"))
+                    self._record_attempt_event(db, attempt_id, "RUNNING", "COMPLETED")
+                    return attempt_id, "clarification_required"
                 lineage = json.loads(current["revision_lineage"] or "[]")
                 lineage.append(attempt_id)
                 db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,integrity_findings=?,normalized_proposal=?,proposal_sha256=?,source_to_proposal_diff=?,telemetry=?,status=?,error_class=?,error=?,canonical_failure_class=?,classifier_version=?,safe_error_detail=?,last_state_at=?,task_adherence_result=? WHERE attempt_id=?", (result.completed_at, result.raw_ollama_response, result.response_hash, findings_json, result.proposal, result.proposal_hash, result.source_to_proposal_diff, serialized_json(result.telemetry), "COMPLETED", "", "", "COMPLETED", CLASSIFIER_VERSION, "", result.completed_at, result.task_adherence_result, attempt_id))
@@ -873,23 +919,23 @@ class DocWriterApp:
         return self._html("System status", body, csrf)
 
     def _render_form(self, csrf: str, trial: sqlite3.Row | None = None, project: sqlite3.Row | None = None, projects: list[sqlite3.Row] | None = None) -> str:
+        setup_row = None
+        if trial:
+            with self._db() as db:
+                setup_row = self._latest_setup(db, trial["trial_id"])
         def value(key: str, default: str = "") -> str:
-            return html.escape((trial[key] if trial else default) or "")
+            raw = setup_row[key] if setup_row and key in setup_row.keys() else (trial[key] if trial and key in trial.keys() else default)
+            return html.escape((raw or default) or "")
         trial_id = trial["trial_id"] if trial else ""
         action = f"/trial/{trial_id}/save" if trial_id else "/trial"
-        selected = trial["model_identifier"] if trial else "mistral-nemo:12b-instruct-2407-q4_K_M"
-        options = "".join(f"<option {'selected' if model == selected else ''}>{html.escape(model)}</option>" for model in MODEL_DIGESTS)
         project_select = f"<p>Project: <strong>{html.escape(project['name'])}</strong></p><input type='hidden' name='project_id' value='{html.escape(project['project_id'])}'>" if project else "<label for='project_id'>Project</label><select id='project_id' name='project_id' required>" + "".join(f"<option value='{html.escape(item['project_id'])}'>{html.escape(item['name'])}</option>" for item in (projects or [])) + "</select>"
         breadcrumb = f" → {html.escape(project['name'])}" if project else ""
         body = f"""<p class='meta'><a href='/projects'>Projects</a>{breadcrumb}</p><h1>{'Edit trial' if trial else 'New conversational trial'}</h1><p class='muted'>This screen saves review material only. It never invokes a model.</p><form method='post' action='{action}'>
 <input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='source_text'>Source paragraph</label><textarea id='source_text' name='source_text' maxlength='{MAX_SOURCE}' required>{value('source_text')}</textarea>
 {project_select}
-<label for='model_identifier'>Model-selection metadata</label><select id='model_identifier' name='model_identifier'>{options}</select>
-<label for='generation_parameters'>Generation parameters (metadata only)</label><input id='generation_parameters' name='generation_parameters' maxlength='1000' value='{value('generation_parameters', '{"execution":"disabled"}')}' />
-<label for='integrity_findings'>Integrity findings</label><textarea id='integrity_findings' name='integrity_findings' maxlength='{MAX_NOTES}'>{value('integrity_findings')}</textarea>
-<label for='raw_output'>Raw model output (optional, operator-supplied; no execution)</label><textarea id='raw_output' name='raw_output' maxlength='{MAX_FIELD}'>{value('raw_output')}</textarea>
-<label for='normalized_output'>Normalized conversational proposal (optional)</label><textarea id='normalized_output' name='normalized_output' maxlength='{MAX_FIELD}'>{value('normalized_output')}</textarea>
-<label for='reviewer_notes'>Reviewer notes</label><textarea id='reviewer_notes' name='reviewer_notes' maxlength='{MAX_NOTES}'>{value('reviewer_notes')}</textarea><button type='submit'>Save draft</button></form>"""
+<fieldset><legend>Writing setup for the first proposal</legend><label for='primary_audience'>Primary audience</label><input id='primary_audience' name='primary_audience' maxlength='400' value='{value('primary_audience', 'Not specified')}' required><label for='tone'>Tone</label><input id='tone' name='tone' maxlength='400' value='{value('tone', 'Not specified')}' required><label for='purpose'>Purpose</label><textarea id='purpose' name='purpose' maxlength='2000' required>{value('purpose')}</textarea><label for='preservation_instructions'>What must be preserved</label><textarea id='preservation_instructions' name='preservation_instructions' maxlength='4000' required>{value('preservation_instructions')}</textarea><label for='clarification_policy'>Clarification policy</label><textarea id='clarification_policy' name='clarification_policy' maxlength='1000' required>{value('clarification_policy')}</textarea></fieldset>
+<details class='developer-only'><summary>Server-owned generation metadata</summary><p>Model selection and generation settings are application-owned and are recorded on each attempt. Generated output and review evidence appear only after they exist.</p></details>
+<button type='submit'>Save draft</button></form>"""
         return self._html("New trial", body, csrf)
 
     def _render_trial(self, trial: sqlite3.Row, versions: list[sqlite3.Row], attempts: list[sqlite3.Row], review_events: list[sqlite3.Row], csrf: str, review_error: str = "", review_notice: str = "", project: sqlite3.Row | None = None) -> str:
@@ -906,7 +952,7 @@ class DocWriterApp:
         current_note = next((event["note_text"] for event in reversed(review_events) if event["event_type"] == "REVIEW_NOTE" and not event["private_steering"] and (event["note_text"] or "").strip()), "")
         review_form = f"""<section id='review-rationale'><h2>Operator review record</h2>{review_error_html}<p>Review notes are durable review material, not publishable document prose. Private steering is stored and displayed separately.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/review'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='review_note'>Current reviewer note / rationale</label><textarea id='review_note' name='note_text' maxlength='{MAX_NOTES}' aria-describedby='review-help'>{html.escape(current_note)}</textarea><p id='review-help' class='muted'>Describe what sounded generic, what did not sound like the operator, exact rejected passages, and preferred replacement wording.</p><label for='related_passage'>Exact phrase or passage, if applicable</label><textarea id='related_passage' name='related_passage' maxlength='{MAX_NOTES}'></textarea><label><input type='checkbox' name='private_steering' value='1'> Private operator aside / steering note (never publishable prose)</label><button type='submit'>Save review note</button></form><h3>Review history</h3><table><tr><th>Timestamp</th><th>Reviewer</th><th>Event</th><th>Decision</th><th>Note</th><th>Visibility</th></tr>{review_history or '<tr><td colspan="6">No review events recorded.</td></tr>'}</table></section>"""
         model_options = "".join(f"<option {'selected' if profile.model_identifier == trial['model_identifier'] else ''}>{html.escape(profile.model_identifier)}</option>" for profile in self.adapter_profiles.values())
-        generation = f"""<section id='generation-attempts'><h2>Generate conversational proposal</h2><p>Prompt contract: <code>conversational-proposal-v2</code><br>Controlled settings: context 8192, temperature 0.2, top-p 0.9, seed 42, streaming disabled, thinking disabled</p><p class='muted'>Execution uses local Ollama only. The result remains <code>REVIEW_REQUIRED</code> and is never accepted automatically.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/generate' onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Generating…';"><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='generation-model'>Server-owned model adapter</label><select id='generation-model' name='model_identifier'>{model_options}</select><button type='submit'>Generate conversational proposal</button></form></section>"""
+        generation = f"""<section id='generation-attempts'><h2>Generate conversational proposal</h2><p>Setup-aware drafts use <code>conversational-proposal-v3</code>; historical attempts retain their original contract.<br>Controlled settings: context 8192, temperature 0.2, top-p 0.9, seed 42, streaming disabled, thinking disabled</p><p class='muted'>Execution uses local Ollama only. The result remains <code>REVIEW_REQUIRED</code> and is never accepted automatically.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/generate' onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Generating…';"><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='generation-model'>Server-owned model adapter</label><select id='generation-model' name='model_identifier'>{model_options}</select><button type='submit'>Generate conversational proposal</button></form></section>"""
         attempt_view = ""
         diff_view = ""
         if attempt:
@@ -933,13 +979,24 @@ class DocWriterApp:
         breadcrumb = f"<p class='meta'><a href='/projects'>Projects</a> → <a href='/project/{html.escape(project['slug'])}'>{html.escape(project['name'])}</a> → {html.escape(trial['trial_id'])}</p>" if project else f"<p class='meta'><a href='/projects'>Projects</a> → {html.escape(trial['trial_id'])}</p>"
         with self._db() as db:
             guidance_baselines = db.execute("SELECT * FROM accepted_baselines WHERE trial_id=? ORDER BY created_at,baseline_id", (trial["trial_id"],)).fetchall()
+            setup_row = self._latest_setup(db, trial["trial_id"])
+            open_question = self._open_clarification(db, trial["trial_id"])
+            latest_question = db.execute("SELECT * FROM clarification_questions WHERE trial_id=? ORDER BY created_at DESC LIMIT 1", (trial["trial_id"],)).fetchone()
+            latest_answer = db.execute("SELECT a.* FROM clarification_answers a JOIN clarification_questions q ON q.question_id=a.question_id WHERE q.trial_id=? ORDER BY a.created_at DESC LIMIT 1", (trial["trial_id"],)).fetchone()
         guidance = guidance_for(trial, attempts, review_events, project_slug=project["slug"] if project else None, baselines=guidance_baselines)
         integrity_block = f"<section id='integrity-findings'><h2>Model integrity findings</h2><pre>{html.escape(trial['integrity_findings'] or '—')}</pre></section>"
+        setup_block = f"<section id='writing-setup'><h2>Writing setup for the first proposal</h2><p><strong>Primary audience:</strong> {html.escape(setup_row['primary_audience'])}<br><strong>Tone:</strong> {html.escape(setup_row['tone'])}<br><strong>Purpose:</strong> {html.escape(setup_row['purpose'])}<br><strong>Preserve:</strong> {html.escape(setup_row['preservation_instructions'])}<br><strong>Clarification policy:</strong> {html.escape(setup_row['clarification_policy'])}</p><details><summary>Setup provenance</summary><p>Version <code>{html.escape(setup_row['setup_version_id'])}</code> · SHA-256 <code>{html.escape(setup_row['setup_sha256'])}</code></p></details></section>" if setup_row else "<section id='writing-setup'><h2>Writing setup</h2><p>This historical trial predates versioned writing setup provenance.</p></section>"
+        clarification_block = ""
+        if latest_question and attempt and attempt["result_kind"] == "CLARIFICATION_REQUIRED":
+            if open_question:
+                clarification_block = f"<section id='clarification'><h2>Clarification required before proposal</h2><p>{html.escape(latest_question['question_text'])}</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/clarification/{html.escape(latest_question['question_id'])}/answer'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='clarification-answer'>Your answer</label><textarea id='clarification-answer' name='answer_text' maxlength='2000' required></textarea><button type='submit'>Save answer</button></form></section>"
+            else:
+                clarification_block = f"<section id='clarification'><h2>Clarification answered</h2><p>The answer is preserved. Resume explicitly when ready.</p><details><summary>Question and answer provenance</summary><p>Question <code>{html.escape(latest_question['question_id'])}</code> · answer <code>{html.escape(latest_answer['answer_id']) if latest_answer else 'not recorded'}</code></p></details><form method='post' action='/trial/{html.escape(trial['trial_id'])}/clarification/{html.escape(latest_question['question_id'])}/resume'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button type='submit'>Resume proposal generation</button></form></section>"
         editorial_sections = self._render_editorial_sections(trial, attempts, review_events, csrf)
         baseline_section = self._render_baseline_section(trial, attempts, review_events, csrf, project)
         audience_section = self._render_audience_section(trial, csrf, project)
         body = f"""{breadcrumb}<h1>Trial <code>{html.escape(trial['trial_id'])}</code></h1>{self._guidance_panel(guidance)}<p class='status'>Review status: {review_status}</p><p>Created {html.escape(trial['created_at'])}; updated {html.escape(trial['updated_at'])}; source SHA-256 <code>{html.escape(trial['source_sha256'])}</code></p><p>Model: <code>{html.escape(trial['model_identifier'])}</code><br>Digest: <code>{html.escape(trial['model_digest'])}</code></p>
-{generation}{block('Source paragraph', trial['source_text'])}<section><h2>Conversational proposal</h2><div class='prose'>{html.escape(trial['normalized_output'] or 'No normalized proposal recorded.')}</div></section>{diff_view}{integrity_block}{editorial_sections}{baseline_section}{audience_section}{review_form}{no_attempt_view}{attempt_view}
+{generation}{setup_block}{clarification_block}{block('Source paragraph', trial['source_text'])}<section><h2>Conversational proposal</h2><div class='prose'>{html.escape(trial['normalized_output'] or 'No normalized proposal recorded.')}</div></section>{diff_view}{integrity_block}{editorial_sections}{baseline_section}{audience_section}{review_form}{no_attempt_view}{attempt_view}
 <section id='revision-review'><h2>Decision</h2><form method='post' action='/trial/{html.escape(trial['trial_id'])}/decision'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='decision'>Decision</label><select id='decision' name='decision'>{''.join(f'<option>{decision}</option>' for decision in sorted(DECISIONS))}</select><label for='decision_reason'>Decision rationale (required for rejection or revision)</label><textarea id='decision_reason' name='decision_reason' maxlength='{MAX_NOTES}' aria-describedby='decision-help'></textarea><p id='decision-help' class='muted'>Add a short reason before marking this revision rejected or requiring revision.</p><button type='submit'>Record decision</button></form></section><section><h2>Generation-attempt history</h2><table><tr><th>Started</th><th>Completed</th><th>Status</th><th>Model</th><th>Source version</th><th>Result</th></tr>{generation_history}</table></section><section><h2>Draft version history</h2><table><tr><th>Version</th><th>When</th><th>Action</th></tr>{history}</table></section><p><a href='/trial/{html.escape(trial['trial_id'])}/artifact'>View artifact/provenance</a> · <a href='/trial/{html.escape(trial['trial_id'])}/edit'>Edit</a></p>{archive_form}"""
         return self._html("Trial", body, csrf)
 
@@ -1045,13 +1102,17 @@ class DocWriterApp:
                 start_response("303 See Other", [("Location", f"/project/{project_id}")]); return [b""]
             elif method == "POST" and path == "/trial":
                 form = self._parse_form(environ); source = form.get("source_text", ""); model = form.get("model_identifier", "")
-                if not self._csrf_valid(environ, form) or not source or len(source) > MAX_SOURCE or model not in MODEL_DIGESTS: raise ValueError("invalid draft or CSRF token")
+                if not self._csrf_valid(environ, form) or not source or len(source) > MAX_SOURCE: raise ValueError("invalid draft or CSRF token")
+                model = model if model in MODEL_DIGESTS else MODEL
+                setup = setup_from_form(form)
                 now, trial_id = utc_now(), f"trial-{secrets.token_hex(8)}"
                 with self._db() as db:
                     project_id = form.get("project_id", "") or self._default_project_id(db)
                     project = self._project(db, project_id)
                     if not project or project["status"] != PROJECT_ACTIVE: raise ValueError("an active project is required")
-                    db.execute("INSERT INTO trials(trial_id,created_at,updated_at,source_text,source_sha256,model_identifier,model_digest,generation_parameters,integrity_findings,raw_output,normalized_output,review_status,reviewer_notes,revision_lineage,project_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (trial_id, now, now, source, sha256_text(source), model, MODEL_DIGESTS[model], form.get("generation_parameters", "")[:1000], form.get("integrity_findings", "")[:MAX_NOTES], form.get("raw_output", "")[:MAX_FIELD], form.get("normalized_output", "")[:MAX_FIELD], "REVIEW_REQUIRED", form.get("reviewer_notes", "")[:MAX_NOTES], json.dumps([]), project_id)); self._save_version(db, db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone(), "CREATED")
+                    db.execute("INSERT INTO trials(trial_id,created_at,updated_at,source_text,source_sha256,model_identifier,model_digest,generation_parameters,integrity_findings,raw_output,normalized_output,review_status,reviewer_notes,revision_lineage,project_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (trial_id, now, now, source, sha256_text(source), model, MODEL_DIGESTS[model], "", "", "", "", "REVIEW_REQUIRED", "", json.dumps([]), project_id))
+                    version_id = self._save_version(db, db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone(), "CREATED")
+                    self._create_writing_setup(db, trial_id, version_id, setup, self._authenticated_user(environ) or "operator")
                 start_response("303 See Other", [("Location", f"/trial/{trial_id}")]); return [b""]
             elif method == "GET" and path.startswith("/trial/") and len(path.strip("/").split("/")) == 2:
                 trial_id = path.strip("/").split("/")[1]
@@ -1123,6 +1184,23 @@ class DocWriterApp:
                 with self._db() as db:
                     trial = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
                     if not trial: raise LookupError("trial not found")
+                    if len(parts) == 5 and parts[2] == "clarification":
+                        question_id, action = parts[3], parts[4]
+                        question = db.execute("SELECT * FROM clarification_questions WHERE question_id=? AND trial_id=?", (question_id, trial_id)).fetchone()
+                        if not question: raise LookupError("clarification question not found")
+                        if action == "answer":
+                            answer_text = form.get("answer_text", "").strip()
+                            if not answer_text or len(answer_text) > 2000: raise ValueError("enter one concise clarification answer")
+                            if db.execute("SELECT 1 FROM clarification_answers WHERE question_id=?", (question_id,)).fetchone(): raise ValueError("this clarification already has a durable answer")
+                            answer_id = f"clarification-answer-{secrets.token_hex(8)}"
+                            db.execute("INSERT INTO clarification_answers(answer_id,question_id,answer_text,answer_sha256,created_at,created_by) VALUES(?,?,?,?,?,?)", (answer_id, question_id, answer_text, sha256_text(answer_text), utc_now(), self._authenticated_user(environ)))
+                        elif action == "resume":
+                            answer = db.execute("SELECT * FROM clarification_answers WHERE question_id=?", (question_id,)).fetchone()
+                            if not answer: raise ValueError("save the clarification answer before resuming")
+                            self._generate_trial(trial_id, clarification_question_id=question_id, clarification_answer_id=answer["answer_id"])
+                        else:
+                            raise LookupError("clarification action not found")
+                        start_response("303 See Other", [("Location", f"/trial/{trial_id}#clarification")]); return [b""]
                     if len(parts) == 5 and parts[2] == "audience":
                         slug, action = parts[3], parts[4]
                         if action == "create": self._create_audience_adaptation(db, trial, slug)
@@ -1202,9 +1280,13 @@ class DocWriterApp:
                         event_id = self._insert_review_event(db, trial_id, "DECISION", decision, reason, False, "", self._authenticated_user(environ))
                         db.execute("UPDATE trials SET review_status=?,updated_at=? WHERE trial_id=?", (decision, now, trial_id)); self._save_version(db, db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone(), f"DECISION_{decision}")
                     elif parts[2] == "save":
-                        source, model = form.get("source_text", ""), form.get("model_identifier", "")
+                        source, model = form.get("source_text", ""), form.get("model_identifier", trial["model_identifier"])
                         if not source or len(source) > MAX_SOURCE or model not in MODEL_DIGESTS: raise ValueError("invalid draft")
-                        db.execute("UPDATE trials SET updated_at=?,source_text=?,source_sha256=?,model_identifier=?,model_digest=?,generation_parameters=?,integrity_findings=?,raw_output=?,normalized_output=?,reviewer_notes=?,review_status='REVIEW_REQUIRED' WHERE trial_id=?", (utc_now(), source, sha256_text(source), model, MODEL_DIGESTS[model], form.get("generation_parameters", "")[:1000], form.get("integrity_findings", "")[:MAX_NOTES], form.get("raw_output", "")[:MAX_FIELD], form.get("normalized_output", "")[:MAX_FIELD], form.get("reviewer_notes", "")[:MAX_NOTES], trial_id)); self._save_version(db, db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone(), "EDITED")
+                        setup = setup_from_form(form)
+                        prior_setup = self._latest_setup(db, trial_id)
+                        db.execute("UPDATE trials SET updated_at=?,source_text=?,source_sha256=?,model_identifier=?,model_digest=?,generation_parameters='',integrity_findings='',raw_output='',normalized_output='',reviewer_notes='',review_status='REVIEW_REQUIRED' WHERE trial_id=?", (utc_now(), source, sha256_text(source), model, MODEL_DIGESTS[model], trial_id))
+                        version_id = self._save_version(db, db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone(), "EDITED")
+                        self._create_writing_setup(db, trial_id, version_id, setup, self._authenticated_user(environ) or "operator", prior_setup["setup_version_id"] if prior_setup else None)
                 start_response("303 See Other", [("Location", f"/trial/{trial_id}")]); return [b""]
             else:
                 start_response("404 Not Found", self._headers()); return [b"Not found\n"]

@@ -22,7 +22,8 @@ from docwriter_web.generation import (
 )
 from docwriter_web.prompt_contracts import PROMPT_VERSION as V2_PROMPT_VERSION
 from docwriter_web.prompt_contracts import load_phase_b_assets
-from docwriter_web.generation import delimited_source_payload, parse_response_v2, request_payload_v2, validate_task_adherence
+from docwriter_web.generation import CONVERSATIONAL_V3_VERSION, delimited_source_payload, parse_response_v2, request_payload_v2, validate_task_adherence
+from docwriter_web.writing_setup import SETUP_VERSION
 
 
 class FakeHTTPResponse:
@@ -94,7 +95,7 @@ def test_success_persists_fixed_settings_provenance_and_review_required(tmp_path
     assert json.loads(trial[3])[0]["category"] == "no material issue found"
     assert trial[4] == "The service remains local, and review is unresolved."
     assert trial[5] == "REVIEW_REQUIRED"
-    assert attempt[0] == 1 and attempt[1] == V2_PROMPT_VERSION and attempt[2] == application.contract_bundle.composed_hash
+    assert attempt[0] == 1 and attempt[1] == CONVERSATIONAL_V3_VERSION and attempt[2] == application.contract_bundle.composed_hash
     assert attempt[4] and "source paragraph" in attempt[5] and attempt[6] == sha256_text(trial[4]) and attempt[7] == "COMPLETED"
 
 

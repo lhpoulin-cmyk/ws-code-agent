@@ -47,6 +47,7 @@ MIGRATION_NAMES = (
     "audience-request-conflicts-v1",
     "audience-attempt-before-request-v1",
     "audience-attempt-reconciliation-v1",
+    "writing-setup-clarification-v1",
 )
 
 
@@ -62,7 +63,7 @@ def _database_hash(db: sqlite3.Connection) -> str:
 
 
 def _counts(db: sqlite3.Connection) -> dict[str, int]:
-    tables = ["projects", "trials", "trial_versions", "generation_attempts", "review_events", "project_migration_events", "accepted_baselines", "generation_attempt_reconciliations"]
+    tables = ["projects", "trials", "trial_versions", "generation_attempts", "review_events", "project_migration_events", "accepted_baselines", "generation_attempt_reconciliations", "writing_setup_versions", "clarification_questions", "clarification_answers"]
     return {table: db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in tables if _table_exists(db, table)}
 
 
@@ -675,6 +676,114 @@ def _audience_attempt_reconciliation(db: sqlite3.Connection, commit: str) -> Non
     _ledger(db, name, commit, before, before_hash)
 
 
+def _writing_setup_clarification(db: sqlite3.Connection, commit: str) -> None:
+    name = "writing-setup-clarification-v1"
+    if _migration_applied(db, name):
+        return
+    before, before_hash = _counts(db), _database_hash(db)
+    _add_column(db, "trial_versions", "writing_setup_version_id", "TEXT REFERENCES writing_setup_versions(setup_version_id)")
+    db.execute("""CREATE TABLE IF NOT EXISTS writing_setup_versions (
+      setup_version_id TEXT PRIMARY KEY,
+      trial_id TEXT NOT NULL REFERENCES trials(trial_id),
+      source_version_id INTEGER NOT NULL REFERENCES trial_versions(version_id),
+      primary_audience TEXT NOT NULL,
+      tone TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      preservation_instructions TEXT NOT NULL,
+      clarification_policy TEXT NOT NULL,
+      serialized_setup TEXT NOT NULL,
+      setup_sha256 TEXT NOT NULL CHECK(length(setup_sha256)=64),
+      created_at TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      supersedes_setup_version_id TEXT REFERENCES writing_setup_versions(setup_version_id),
+      UNIQUE(trial_id, source_version_id)
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS clarification_questions (
+      question_id TEXT PRIMARY KEY,
+      trial_id TEXT NOT NULL REFERENCES trials(trial_id),
+      source_version_id INTEGER NOT NULL REFERENCES trial_versions(version_id),
+      setup_version_id TEXT NOT NULL REFERENCES writing_setup_versions(setup_version_id),
+      originating_attempt_id TEXT NOT NULL REFERENCES generation_attempts(attempt_id),
+      question_text TEXT NOT NULL,
+      question_sha256 TEXT NOT NULL CHECK(length(question_sha256)=64),
+      created_at TEXT NOT NULL,
+      created_by TEXT NOT NULL
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS clarification_answers (
+      answer_id TEXT PRIMARY KEY,
+      question_id TEXT NOT NULL UNIQUE REFERENCES clarification_questions(question_id),
+      answer_text TEXT NOT NULL,
+      answer_sha256 TEXT NOT NULL CHECK(length(answer_sha256)=64),
+      created_at TEXT NOT NULL,
+      created_by TEXT NOT NULL
+    )""")
+    for column, definition in {
+        "writing_setup_version_id": "TEXT REFERENCES writing_setup_versions(setup_version_id)",
+        "writing_setup_sha256": "TEXT NOT NULL DEFAULT ''",
+        "serialized_writing_setup": "TEXT NOT NULL DEFAULT ''",
+        "primary_audience": "TEXT NOT NULL DEFAULT ''",
+        "tone": "TEXT NOT NULL DEFAULT ''",
+        "purpose": "TEXT NOT NULL DEFAULT ''",
+        "preservation_instructions": "TEXT NOT NULL DEFAULT ''",
+        "clarification_policy": "TEXT NOT NULL DEFAULT ''",
+        "clarification_question_id": "TEXT REFERENCES clarification_questions(question_id)",
+        "clarification_answer_id": "TEXT REFERENCES clarification_answers(answer_id)",
+        "result_kind": "TEXT NOT NULL DEFAULT 'PROPOSAL'",
+    }.items():
+        _add_column(db, "generation_attempts", column, definition)
+    db.execute("CREATE INDEX IF NOT EXISTS writing_setup_trial_idx ON writing_setup_versions(trial_id, source_version_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS clarification_questions_trial_idx ON clarification_questions(trial_id, created_at)")
+    db.execute("CREATE INDEX IF NOT EXISTS clarification_answers_question_idx ON clarification_answers(question_id)")
+    db.executescript("""
+    CREATE TRIGGER IF NOT EXISTS writing_setup_versions_no_update
+    BEFORE UPDATE ON writing_setup_versions BEGIN SELECT RAISE(ABORT, 'writing setup versions are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS writing_setup_versions_no_delete
+    BEFORE DELETE ON writing_setup_versions BEGIN SELECT RAISE(ABORT, 'writing setup versions are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS clarification_questions_no_update
+    BEFORE UPDATE ON clarification_questions BEGIN SELECT RAISE(ABORT, 'clarification questions are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS clarification_questions_no_delete
+    BEFORE DELETE ON clarification_questions BEGIN SELECT RAISE(ABORT, 'clarification questions are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS clarification_answers_no_update
+    BEFORE UPDATE ON clarification_answers BEGIN SELECT RAISE(ABORT, 'clarification answers are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS clarification_answers_no_delete
+    BEFORE DELETE ON clarification_answers BEGIN SELECT RAISE(ABORT, 'clarification answers are immutable'); END;
+    """)
+    db.execute("DROP TRIGGER IF EXISTS generation_attempts_safe_update")
+    db.executescript("""
+    CREATE TRIGGER generation_attempts_safe_update
+    BEFORE UPDATE ON generation_attempts
+    WHEN OLD.status NOT IN ('RUNNING','QUEUED')
+      OR NEW.status NOT IN ('RUNNING','COMPLETED','INTERRUPTED','REQUEST_TIMEOUT','OLLAMA_UNAVAILABLE','OLLAMA_HTTP_ERROR','EMPTY_RESPONSE','MALFORMED_JSON','RESPONSE_SCHEMA_INVALID','PROPOSAL_FIELD_MISSING','TASK_ADHERENCE_FAILED','NORMALIZATION_FAILURE','PERSISTENCE_FAILURE','RENDER_FAILURE','STALE_SOURCE')
+      OR OLD.attempt_id<>NEW.attempt_id OR OLD.trial_id<>NEW.trial_id
+      OR OLD.source_version_id<>NEW.source_version_id OR OLD.source_text<>NEW.source_text
+      OR OLD.source_sha256<>NEW.source_sha256 OR OLD.prompt_version<>NEW.prompt_version
+      OR OLD.prompt_text<>NEW.prompt_text OR OLD.prompt_sha256<>NEW.prompt_sha256
+      OR OLD.request_json<>NEW.request_json OR OLD.model_identifier<>NEW.model_identifier
+      OR OLD.model_digest<>NEW.model_digest OR OLD.generation_settings<>NEW.generation_settings
+      OR OLD.started_at<>NEW.started_at OR OLD.application_version<>NEW.application_version
+      OR OLD.transport_type<>NEW.transport_type OR OLD.transport_endpoint<>NEW.transport_endpoint
+      OR OLD.adapter_id<>NEW.adapter_id OR OLD.adapter_version<>NEW.adapter_version
+      OR OLD.request_serializer_version<>NEW.request_serializer_version OR OLD.message_roles<>NEW.message_roles
+      OR OLD.canonical_contract_hashes<>NEW.canonical_contract_hashes OR OLD.composed_contract_hash<>NEW.composed_contract_hash
+      OR OLD.schema_version<>NEW.schema_version OR OLD.schema_hash<>NEW.schema_hash OR OLD.response_schema<>NEW.response_schema
+      OR (OLD.task_adherence_result<>NEW.task_adherence_result AND NOT (NEW.task_adherence_result IN ('passed','failed','not_run') AND OLD.status IN ('RUNNING','QUEUED')))
+      OR (OLD.canonical_failure_class<>NEW.canonical_failure_class AND OLD.status NOT IN ('RUNNING','QUEUED'))
+      OR (OLD.classifier_version<>NEW.classifier_version AND OLD.classifier_version<>'')
+      OR OLD.recovery_spool_ref<>NEW.recovery_spool_ref OR COALESCE(OLD.worker_pid,0)<>COALESCE(NEW.worker_pid,0)
+      OR OLD.worker_start_identity<>NEW.worker_start_identity
+      OR COALESCE(OLD.writing_setup_version_id,'')<>COALESCE(NEW.writing_setup_version_id,'')
+      OR OLD.writing_setup_sha256<>NEW.writing_setup_sha256
+      OR OLD.serialized_writing_setup<>NEW.serialized_writing_setup
+      OR OLD.primary_audience<>NEW.primary_audience OR OLD.tone<>NEW.tone OR OLD.purpose<>NEW.purpose
+      OR OLD.preservation_instructions<>NEW.preservation_instructions OR OLD.clarification_policy<>NEW.clarification_policy
+      OR COALESCE(OLD.clarification_question_id,'')<>COALESCE(NEW.clarification_question_id,'')
+      OR COALESCE(OLD.clarification_answer_id,'')<>COALESCE(NEW.clarification_answer_id,'')
+      OR (OLD.result_kind<>NEW.result_kind AND OLD.status NOT IN ('RUNNING','QUEUED'))
+    BEGIN SELECT RAISE(ABORT, 'generation attempt provenance or lifecycle is immutable'); END;
+    """)
+    _ledger(db, name, commit, before, before_hash)
+
+
 def apply_migrations(db: sqlite3.Connection, application_commit: str) -> None:
     db.execute("PRAGMA foreign_keys=ON")
     db.execute("""CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -706,3 +815,4 @@ def apply_migrations(db: sqlite3.Connection, application_commit: str) -> None:
     _audience_request_conflicts(db, application_commit)
     _audience_attempt_before_request(db, application_commit)
     _audience_attempt_reconciliation(db, application_commit)
+    _writing_setup_clarification(db, application_commit)

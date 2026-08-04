@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "docwriter/conversational-proposal-v3.schema.json",
+  "title": "Doc Writer conversational proposal v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["integrity_findings", "result"],
+  "properties": {
+    "integrity_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["category", "detail", "related_passage", "blocks_approval", "resolution_authority"],
+        "properties": {
+          "category": {"type": "string", "enum": ["confirmed_conflict", "apparent_conflict_requiring_authority_review", "unsupported_claim", "ambiguity", "no_material_issue_found"]},
+          "detail": {"type": "string", "minLength": 1, "maxLength": 4000},
+          "related_passage": {"type": "string", "maxLength": 1000},
+          "blocks_approval": {"type": "boolean"},
+          "resolution_authority": {"type": "string", "maxLength": 1000}
+        }
+      }
+    },
+    "result": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "conversational_proposal"],
+          "properties": {
+            "kind": {"const": "PROPOSAL"},
+            "conversational_proposal": {"type": "string", "minLength": 1, "maxLength": 12000}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "clarification_question"],
+          "properties": {
+            "kind": {"const": "CLARIFICATION_REQUIRED"},
+            "clarification_question": {"type": "string", "minLength": 1, "maxLength": 1000}
+          }
+        }
+      ]
+    }
+  }
+}

@@ -9,12 +9,16 @@ import re
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 from .prompt_contracts import AdapterProfile, ContractBundle
 from .audience import AUDIENCE_VERSION, audience_schema, parse_audience_response, sha256_text as audience_sha256
+from .writing_setup import WritingSetup, serialize as serialize_setup
+
+CONVERSATIONAL_V3_VERSION = "conversational-proposal-v3"
 
 MODEL = "mistral-nemo:12b-instruct-2407-q4_K_M"
 MODEL_DIGEST = "sha256:daf6737417121831e572a9c482e92a221ee0c33537f35f1f857c7b4f7191df55"
@@ -139,6 +143,8 @@ class GenerationResult:
     schema_hash: str = ""
     response_schema: str = ""
     task_adherence_result: str = "not_run"
+    result_kind: str = "PROPOSAL"
+    clarification_question: str = ""
 
 
 class OllamaError(RuntimeError):
@@ -167,6 +173,29 @@ def request_payload_v2(bundle: ContractBundle, profile: AdapterProfile, source: 
     return {"model": profile.model_identifier, "messages": [{"role": "system", "content": v2_system_prompt(bundle, profile)}, {"role": "user", "content": delimited_source_payload(source)}], "stream": False, "format": bundle.schema, "think": False, "options": options}
 
 
+def setup_response_schema() -> dict[str, Any]:
+    path = Path(__file__).resolve().parents[2] / "schemas/conversational-proposal-v3.schema.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def setup_schema_hash() -> str:
+    path = Path(__file__).resolve().parents[2] / "schemas/conversational-proposal-v3.schema.json"
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def delimited_setup_payload(setup: WritingSetup, clarification_answer: str = "") -> str:
+    serialized = serialize_setup(setup)
+    answer = f"\n\nCLARIFICATION_ANSWER_BEGIN\n{clarification_answer}\nCLARIFICATION_ANSWER_END" if clarification_answer else ""
+    return f"TASK: EDIT_SOURCE_PARAGRAPH\n\nWRITING_SETUP_BEGIN\n{serialized}\nWRITING_SETUP_END{answer}"
+
+
+def request_payload_with_setup(bundle: ContractBundle, profile: AdapterProfile, source: str, setup: WritingSetup, clarification_answer: str = "") -> dict[str, Any]:
+    options = {"num_ctx": profile.generation_settings["context"], "temperature": profile.generation_settings["temperature"], "top_p": profile.generation_settings["top_p"], "seed": profile.generation_settings["seed"]}
+    user = delimited_setup_payload(setup, clarification_answer) + f"\n\nSOURCE_PARAGRAPH_BEGIN\n{source}\nSOURCE_PARAGRAPH_END\n\nReturn only the required structured response."
+    system = "\n\n".join((bundle.composed_text, f"Adapter instructions ({profile.adapter_id}): {profile.adapter_instructions}", "Use the writing setup as operator intent for this edit. Return exactly conversational-proposal-v3. The result must be either one proposal or one focused clarification question, never both. Do not emit commentary outside the schema."))
+    return {"model": profile.model_identifier, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}], "stream": False, "format": setup_response_schema(), "think": False, "options": options}
+
+
 def parse_response_v2(raw_response: str) -> tuple[list[dict[str, Any]], str]:
     try:
         value = json.loads(raw_response)
@@ -189,6 +218,35 @@ def parse_response_v2(raw_response: str) -> tuple[list[dict[str, Any]], str]:
             raise ResponseSchemaError("v2 integrity finding is invalid", "RESPONSE_SCHEMA_INVALID")
         normalized.append(finding)
     return normalized, proposal.strip()
+
+
+def parse_response_with_setup(raw_response: str) -> tuple[list[dict[str, Any]], str, str, str]:
+    try:
+        value = json.loads(raw_response)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ResponseSchemaError("v3 response is not valid JSON", "MALFORMED_JSON") from exc
+    if not isinstance(value, dict) or set(value) != {"integrity_findings", "result"}:
+        raise ResponseSchemaError("v3 response has unexpected top-level fields", "RESPONSE_SCHEMA_INVALID")
+    findings = value["integrity_findings"]
+    if not isinstance(findings, list):
+        raise ResponseSchemaError("v3 integrity_findings is not an array", "RESPONSE_SCHEMA_INVALID")
+    categories = {"confirmed_conflict", "apparent_conflict_requiring_authority_review", "unsupported_claim", "ambiguity", "no_material_issue_found"}
+    required = {"category", "detail", "related_passage", "blocks_approval", "resolution_authority"}
+    normalized = []
+    for finding in findings:
+        if not isinstance(finding, dict) or set(finding) != required or finding["category"] not in categories or not isinstance(finding["detail"], str) or not finding["detail"].strip() or len(finding["detail"]) > 4000 or not isinstance(finding["related_passage"], str) or len(finding["related_passage"]) > 1000 or not isinstance(finding["blocks_approval"], bool) or not isinstance(finding["resolution_authority"], str) or len(finding["resolution_authority"]) > 1000:
+            raise ResponseSchemaError("v3 integrity finding is invalid", "RESPONSE_SCHEMA_INVALID")
+        normalized.append(finding)
+    result = value["result"]
+    if not isinstance(result, dict) or result.get("kind") not in {"PROPOSAL", "CLARIFICATION_REQUIRED"}:
+        raise ResponseSchemaError("v3 result kind is invalid", "RESPONSE_SCHEMA_INVALID")
+    if result["kind"] == "PROPOSAL":
+        if set(result) != {"kind", "conversational_proposal"} or not isinstance(result["conversational_proposal"], str) or not result["conversational_proposal"].strip() or len(result["conversational_proposal"]) > 12000:
+            raise ResponseSchemaError("v3 proposal result is invalid", "PROPOSAL_FIELD_MISSING")
+        return normalized, result["conversational_proposal"].strip(), "PROPOSAL", ""
+    if set(result) != {"kind", "clarification_question"} or not isinstance(result["clarification_question"], str) or not result["clarification_question"].strip() or len(result["clarification_question"]) > 1000 or "?" not in result["clarification_question"]:
+        raise ResponseSchemaError("v3 clarification result is invalid", "RESPONSE_SCHEMA_INVALID")
+    return normalized, "", "CLARIFICATION_REQUIRED", result["clarification_question"].strip()
 
 
 def validate_task_adherence(source: str, proposal: str, required_fragments: tuple[str, ...] = ()) -> str:
@@ -303,6 +361,31 @@ class OllamaClient:
         telemetry = {key: response_payload[key] for key in ("total_duration", "load_duration", "prompt_eval_count", "prompt_eval_duration", "eval_count", "eval_duration") if key in response_payload and isinstance(response_payload[key], (int, float))}
         telemetry["wall_seconds"] = round(time.monotonic() - started_monotonic, 6)
         return GenerationResult(profile.model_identifier, digest, request_json, v2_system_prompt(bundle, profile), bundle.composed_hash, started_at, completed_at, raw_http, response_payload, findings, proposal, exact_diff(source, proposal), sha256_text(raw_http), sha256_text(proposal), telemetry, "chat", "/api/chat", profile.adapter_id, profile.profile_version, profile.request_serializer_version, ("system", "user"), bundle.contract_hashes, bundle.composed_hash, bundle.version, bundle.schema_hash, serialized_json(bundle.schema), adherence)
+
+    def generate_with_setup(self, source: str, setup: WritingSetup, bundle: ContractBundle, profile: AdapterProfile, clarification_answer: str = "") -> GenerationResult:
+        digest = self.installed_digest(profile.model_identifier)
+        if digest != profile.expected_digest:
+            raise OllamaError("installed model digest does not match the configured adapter profile")
+        request_payload = request_payload_with_setup(bundle, profile, source, setup, clarification_answer)
+        request_json = serialized_json(request_payload)
+        started_at = utc_now()
+        started_monotonic = time.monotonic()
+        response_payload, raw_http = self._request_raw("/api/chat", request_payload, classify_response_errors=True)
+        completed_at = utc_now()
+        message = response_payload.get("message")
+        raw_content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(raw_content, str) or not raw_content.strip():
+            raise OllamaError("local Ollama chat response has no structured response text", raw_http, response_payload, "EMPTY_RESPONSE")
+        try:
+            findings, proposal, result_kind, question = parse_response_with_setup(raw_content)
+            adherence = "not_run" if result_kind == "CLARIFICATION_REQUIRED" else validate_task_adherence(source, proposal)
+        except (ResponseSchemaError, TaskAdherenceError) as exc:
+            error_class = getattr(exc, "error_class", "RESPONSE_SCHEMA_INVALID")
+            raise OllamaError(str(exc), raw_http, response_payload, error_class) from exc
+        telemetry = {key: response_payload[key] for key in ("total_duration", "load_duration", "prompt_eval_count", "prompt_eval_duration", "eval_count", "eval_duration") if key in response_payload and isinstance(response_payload[key], (int, float))}
+        telemetry["wall_seconds"] = round(time.monotonic() - started_monotonic, 6)
+        schema = setup_response_schema()
+        return GenerationResult(profile.model_identifier, digest, request_json, request_payload["messages"][0]["content"], sha256_text(request_payload["messages"][0]["content"]), started_at, completed_at, raw_http, response_payload, findings, proposal, exact_diff(source, proposal) if proposal else "", sha256_text(raw_http), sha256_text(proposal) if proposal else "", telemetry, "chat", "/api/chat", profile.adapter_id, profile.profile_version, profile.request_serializer_version, ("system", "user"), bundle.contract_hashes, sha256_text(request_payload["messages"][0]["content"]), CONVERSATIONAL_V3_VERSION, setup_schema_hash(), serialized_json(schema), adherence, result_kind, question)
 
     def prepare_audience_request(self, baseline: str, source: str, integrity: str, audience_contract: str, profile_contract_text: str, voice_contract: str, profile: AdapterProfile) -> tuple[dict[str, Any], str, str]:
         system = "\n\n".join(("You are a document editor adapting an accepted conversational baseline for a named audience. Preserve facts, authority, uncertainty, status, identifiers, unresolved issues, and human meaning. Do not address the author, add facts, decisions, recommendations, or certainty. Return exactly the required JSON object and no commentary.", audience_contract, profile_contract_text, voice_contract, "Return schema audience-adaptation-v1."))

@@ -39,6 +39,7 @@ from .prompt_contracts import load_phase_b_assets
 from .failure_taxonomy import CLASSIFIER_VERSION, canonical_state, classify_error, ATTENTION_STATES
 from .editorial_state import EditorialState, derive_editorial_state
 from .baselines import eligibility as baseline_eligibility, current_baseline
+from .audience import AUDIENCE_VERSION, derived_state as audience_state, profile_contract, sha256_text as audience_sha256, audience_schema
 
 MAX_SOURCE = 12000
 MAX_FIELD = 12000
@@ -64,6 +65,7 @@ EDITORIAL_OUTCOMES = {
     "BASELINE": {"BASELINE_ACCEPTED"},
 }
 TONE_FINDING_CODES = {"generic_or_assistant_like", "too_formal", "too_casual", "academic", "corporate", "bureaucratic", "consultant_like", "emotionally_flattened", "overpolished", "lost_bluntness", "lost_warmth", "lost_humor", "lost_rhythm", "lost_emphasis", "lost_vulnerability", "other"}
+AUDIENCE_OUTCOMES = {"AUDIENCE_ACCEPTED", "AUDIENCE_REVISION_REQUIRED", "AUDIENCE_REJECTED"}
 
 
 class NotFoundError(LookupError):
@@ -638,6 +640,73 @@ class DocWriterApp:
 <details><summary>Review and model provenance</summary><p>Target event <code>{html.escape(baseline['review_target_event_id'])}</code><br>Integrity event <code>{html.escape(baseline['integrity_review_event_id'])}</code><br>Revision event <code>{html.escape(baseline['revision_review_event_id'])}</code><br>Tone event <code>{html.escape(baseline['tone_review_event_id'])}</code><br>Prompt <code>{html.escape(baseline['prompt_version'])}</code> · model <code>{html.escape(baseline['model_identifier'])}</code> · digest <code>{html.escape(baseline['model_digest'])}</code><br>Acceptance note: {html.escape(baseline['acceptance_note'] or '—')}</p></details>"""
         return self._html("Accepted conversational baseline", body, csrf)
 
+    def _audience_adaptation(self, db: sqlite3.Connection, trial_id: str, slug: str) -> sqlite3.Row:
+        row = db.execute("SELECT aa.*, ap.slug, ap.name, ap.purpose, ap.contract_sha256, ab.accepted_proposal, ab.proposal_sha256 AS baseline_sha256, ab.source_version_id AS baseline_source_version_id, ab.integrity_review_event_id, ab.integrity_contract_sha256 FROM audience_adaptations aa JOIN audience_profiles ap ON ap.profile_id=aa.profile_id JOIN accepted_baselines ab ON ab.baseline_id=aa.baseline_id WHERE aa.trial_id=? AND ap.slug=? ORDER BY aa.created_at DESC LIMIT 1", (trial_id, slug)).fetchone()
+        if not row: raise NotFoundError("audience adaptation not found")
+        return row
+
+    def _create_audience_adaptation(self, db: sqlite3.Connection, trial: sqlite3.Row, slug: str) -> str:
+        profile = db.execute("SELECT * FROM audience_profiles WHERE slug=? AND active=1", (slug,)).fetchone()
+        if not profile: raise ValueError("that audience profile is not active")
+        baseline = current_baseline(db.execute("SELECT * FROM accepted_baselines WHERE trial_id=? ORDER BY created_at,baseline_id", (trial["trial_id"],)).fetchall())
+        if not baseline: raise ValueError("an accepted conversational baseline is required before audience work")
+        existing = db.execute("SELECT adaptation_id FROM audience_adaptations WHERE baseline_id=? AND profile_id=? AND archived_at IS NULL", (baseline["baseline_id"], profile["profile_id"])).fetchone()
+        if existing: return existing[0]
+        contract, contract_hash = profile_contract(slug)
+        adaptation_id = f"adaptation-{secrets.token_hex(8)}"
+        db.execute("INSERT INTO audience_adaptations(adaptation_id,trial_id,baseline_id,profile_id,baseline_sha256,source_version_id,source_sha256,integrity_review_event_id,integrity_contract_sha256,audience_contract_version,audience_contract_sha256,profile_contract_sha256,created_at,archived_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)", (adaptation_id, trial["trial_id"], baseline["baseline_id"], profile["profile_id"], baseline["proposal_sha256"], baseline["source_version_id"], baseline["source_sha256"], baseline["integrity_review_event_id"], baseline["integrity_contract_sha256"], AUDIENCE_VERSION, audience_sha256((Path(__file__).resolve().parents[2]/"prompts/canonical/audience-adaptation-contract.md").read_text()), contract_hash, utc_now()))
+        return adaptation_id
+
+    def _generate_audience(self, trial_id: str, slug: str) -> tuple[str, str]:
+        if not self._generation_lock.acquire(blocking=False): raise RuntimeError("another generation is already running")
+        try:
+            with self._db() as db:
+                trial = db.execute("SELECT * FROM trials WHERE trial_id=? AND lifecycle_state='ACTIVE'", (trial_id,)).fetchone()
+                if not trial: raise ValueError("an active trial is required")
+                adaptation_id = self._create_audience_adaptation(db, trial, slug)
+                adaptation = self._audience_adaptation(db, trial_id, slug)
+                profile = db.execute("SELECT * FROM audience_profiles WHERE profile_id=?", (adaptation["profile_id"],)).fetchone()
+                baseline = db.execute("SELECT * FROM accepted_baselines WHERE baseline_id=?", (adaptation["baseline_id"],)).fetchone()
+                source = db.execute("SELECT snapshot FROM trial_versions WHERE version_id=?", (baseline["source_version_id"],)).fetchone()
+                source_snapshot = json.loads(source[0]); source_text = source_snapshot.get("source_text", trial["source_text"])
+                profile_text, _ = profile_contract(slug)
+                audience_contract = (Path(__file__).resolve().parents[2]/"prompts/canonical/audience-adaptation-contract.md").read_text()
+                attempt_id = f"generation-{secrets.token_hex(8)}"; started = utc_now()
+                request_seed = f"{baseline['baseline_id']}:{adaptation_id}:{profile['profile_id']}"
+                db.execute("INSERT INTO generation_attempts(attempt_id,trial_id,source_version_id,source_text,source_sha256,prompt_version,prompt_text,prompt_sha256,request_json,model_identifier,model_digest,generation_settings,started_at,completed_at,raw_ollama_response,response_sha256,integrity_findings,normalized_proposal,proposal_sha256,source_to_proposal_diff,telemetry,application_version,status,error,error_class,transport_type,transport_endpoint,adapter_id,adapter_version,request_serializer_version,message_roles,canonical_contract_hashes,composed_contract_hash,schema_version,schema_hash,response_schema,task_adherence_result,canonical_failure_class,classifier_version,last_state_at,worker_pid,worker_start_identity,kind,adaptation_id,baseline_id,profile_id,output_sha256) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id,trial_id,baseline["source_version_id"],source_text,baseline["source_sha256"],AUDIENCE_VERSION,"",audience_sha256(request_seed),"",profile["name"],profile["contract_sha256"],serialized_json(GENERATION_SETTINGS),started,"","","","[]","","","","{}",self.config.version,"RUNNING","","","RUNNING",profile["slug"],profile["contract_sha256"],"audience-v1","system,user",serialized_json({"audience":audience_sha256(audience_contract),"profile":profile["contract_sha256"],"voice":self.contract_bundle.contract_hashes["voice"]}),"","audience-adaptation-v1",audience_sha256(serialized_json(audience_schema())),serialized_json(audience_schema()),"not_run","RUNNING",CLASSIFIER_VERSION,started,os.getpid(),process_start_identity(os.getpid()),"AUDIENCE",adaptation_id,baseline["baseline_id"],profile["profile_id"],"",""))
+                self._record_attempt_event(db, attempt_id, None, "RUNNING")
+            result = self.ollama_client.generate_audience(baseline["accepted_proposal"], source_text, json.dumps({"outcome":"INTEGRITY_ACCEPTED","findings":json.loads(trial["integrity_findings"] or "[]")}, sort_keys=True), audience_contract, profile_text, self.adapter_profiles["mistral-nemo-12b"])
+            with self._db() as db:
+                db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,integrity_findings=?,normalized_proposal=?,proposal_sha256=?,source_to_proposal_diff=?,telemetry=?,status='COMPLETED',error_class='',canonical_failure_class='COMPLETED',last_state_at=?,task_adherence_result=?,output_sha256=?,request_json=?,prompt_text=?,prompt_sha256=?,model_identifier=?,model_digest=?,transport_type=?,transport_endpoint=?,adapter_id=?,adapter_version=?,request_serializer_version=?,message_roles=?,canonical_contract_hashes=?,composed_contract_hash=?,schema_version=?,schema_hash=?,response_schema=? WHERE attempt_id=?", (result.completed_at,result.raw_ollama_response,result.response_hash,serialized_json(result.integrity_findings),result.proposal,result.proposal_hash,result.source_to_proposal_diff,serialized_json(result.telemetry),result.completed_at,result.task_adherence_result,result.proposal_hash,result.request_json,result.prompt,result.prompt_hash,result.model_identifier,result.model_digest,result.transport_type,result.transport_endpoint,result.adapter_id,result.adapter_version,result.request_serializer_version,serialized_json(result.message_roles),serialized_json(result.canonical_contract_hashes or {}),result.composed_contract_hash,result.schema_version,result.schema_hash,result.response_schema,attempt_id))
+                self._record_attempt_event(db, attempt_id, "RUNNING", "COMPLETED")
+            return attempt_id, "COMPLETED"
+        finally: self._generation_lock.release()
+
+    def _insert_audience_event(self, db: sqlite3.Connection, adaptation: sqlite3.Row, attempt: sqlite3.Row, event_type: str, decision: str, note: str, reviewer: str) -> str:
+        if decision not in ({"SELECTED"} if event_type == "AUDIENCE_REVIEW_TARGET_SELECTED" else AUDIENCE_OUTCOMES): raise ValueError("invalid audience review outcome")
+        if decision in {"AUDIENCE_REVISION_REQUIRED","AUDIENCE_REJECTED"} and not note.strip(): raise ValueError("a rationale is required for this audience outcome")
+        stream = f"audience:{adaptation['adaptation_id']}:{attempt['attempt_id']}"; prior=db.execute("SELECT * FROM review_events WHERE stream_id=? ORDER BY sequence_number DESC LIMIT 1",(stream,)).fetchone(); seq=(prior["sequence_number"] if prior else 0)+1; event_id=f"review-{secrets.token_hex(8)}"; event_type=event_type
+        payload={"event_id":event_id,"trial_id":adaptation["trial_id"],"generation_attempt_id":attempt["attempt_id"],"event_type":event_type,"decision":decision,"adaptation_id":adaptation["adaptation_id"],"baseline_id":adaptation["baseline_id"],"profile_id":adaptation["profile_id"],"output_sha256":attempt["proposal_sha256"],"note_text":note,"created_at":utc_now(),"stream_id":stream,"sequence_number":seq,"prior_content_hash":prior["content_hash"] if prior else None}
+        content=sha256_text(json.dumps(payload,sort_keys=True)); db.execute("INSERT INTO review_events(event_id,trial_id,generation_attempt_id,event_type,decision,note_text,private_steering,related_passage,reviewer_identity,created_at,prior_event_id,content_hash,stream_id,sequence_number,prior_content_hash,event_content_hash,adaptation_id,baseline_id,profile_id,output_sha256) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(event_id,adaptation["trial_id"],attempt["attempt_id"],event_type,decision,note,0,"",reviewer,payload["created_at"],prior["event_id"] if prior else None,content,stream,seq,prior["content_hash"] if prior else None,content,adaptation["adaptation_id"],adaptation["baseline_id"],adaptation["profile_id"],attempt["proposal_sha256"])); db.execute("INSERT INTO review_event_chain(event_id,stream_id,sequence_number,prior_content_hash,event_content_hash,authoritative,superseded_event_id) VALUES(?,?,?,?,?,?,NULL)",(event_id,stream,seq,prior["content_hash"] if prior else None,content,1)); return event_id
+
+    def _accept_audience(self, db: sqlite3.Connection, adaptation: sqlite3.Row, attempt: sqlite3.Row, event: sqlite3.Row, by: str, note: str) -> str:
+        current=db.execute("SELECT * FROM accepted_audience_versions WHERE adaptation_id=? AND accepted_audience_version_id NOT IN (SELECT supersedes_accepted_version_id FROM accepted_audience_versions WHERE supersedes_accepted_version_id IS NOT NULL)",(adaptation["adaptation_id"],)).fetchone(); version_id=f"audience-version-{secrets.token_hex(8)}"; now=utc_now()
+        acceptance=self._insert_audience_event(db,adaptation,attempt,"AUDIENCE_REVIEW","AUDIENCE_ACCEPTED",note,by)
+        db.execute("INSERT INTO accepted_audience_versions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(version_id,adaptation["adaptation_id"],adaptation["trial_id"],adaptation["baseline_id"],adaptation["profile_id"],attempt["attempt_id"],event["event_id"],acceptance,attempt["normalized_proposal"],attempt["proposal_sha256"],adaptation["baseline_sha256"],adaptation["source_sha256"],adaptation["integrity_contract_sha256"],adaptation["audience_contract_sha256"],adaptation["profile_contract_sha256"],attempt["prompt_version"],attempt["prompt_sha256"],attempt["model_identifier"],attempt["model_digest"],by,now,note or None,current["accepted_audience_version_id"] if current else None,now)); return version_id
+
+    def _generate_audience(self, trial_id: str, slug: str) -> tuple[str, str]:
+        with self._db() as db:
+            trial=db.execute("SELECT * FROM trials WHERE trial_id=? AND lifecycle_state='ACTIVE'",(trial_id,)).fetchone()
+            if not trial: raise ValueError("an active trial is required")
+            self._create_audience_adaptation(db,trial,slug); adaptation=self._audience_adaptation(db,trial_id,slug); baseline=db.execute("SELECT * FROM accepted_baselines WHERE baseline_id=?",(adaptation["baseline_id"],)).fetchone(); profile=self.adapter_profiles["mistral-nemo-12b"]
+            version=db.execute("SELECT snapshot FROM trial_versions WHERE version_id=?",(baseline["source_version_id"],)).fetchone(); source=json.loads(version[0]).get("source_text",trial["source_text"]); profile_text,_=profile_contract(slug); audience_contract=(Path(__file__).resolve().parents[2]/"prompts/canonical/audience-adaptation-contract.md").read_text(); integrity=json.dumps({"outcome":"INTEGRITY_ACCEPTED","findings":json.loads(trial["integrity_findings"] or "[]")},sort_keys=True)
+        result=self.ollama_client.generate_audience(baseline["accepted_proposal"],source,integrity,audience_contract,profile_text,self.contract_bundle.contracts["voice"],profile); attempt_id=f"generation-{secrets.token_hex(8)}"; now=utc_now()
+        columns="attempt_id,trial_id,source_version_id,source_text,source_sha256,prompt_version,prompt_text,prompt_sha256,request_json,model_identifier,model_digest,generation_settings,started_at,completed_at,raw_ollama_response,response_sha256,integrity_findings,normalized_proposal,proposal_sha256,source_to_proposal_diff,telemetry,application_version,status,error,error_class,transport_type,transport_endpoint,adapter_id,adapter_version,request_serializer_version,message_roles,canonical_contract_hashes,composed_contract_hash,schema_version,schema_hash,response_schema,task_adherence_result,canonical_failure_class,classifier_version,last_state_at,worker_pid,worker_start_identity,kind,adaptation_id,baseline_id,profile_id,output_sha256"
+        values=(attempt_id,trial_id,baseline["source_version_id"],source,baseline["source_sha256"],result.schema_version,result.prompt,result.prompt_hash,result.request_json,result.model_identifier,result.model_digest,serialized_json(GENERATION_SETTINGS),result.started_at,result.completed_at,result.raw_ollama_response,result.response_hash,serialized_json(result.integrity_findings),result.proposal,result.proposal_hash,result.source_to_proposal_diff,serialized_json(result.telemetry),self.config.version,"COMPLETED","","",result.transport_type,result.transport_endpoint,result.adapter_id,result.adapter_version,result.request_serializer_version,serialized_json(result.message_roles),serialized_json(result.canonical_contract_hashes or {}),result.composed_contract_hash,result.schema_version,result.schema_hash,result.response_schema,result.task_adherence_result,"COMPLETED",CLASSIFIER_VERSION,result.completed_at,0,"","AUDIENCE",adaptation["adaptation_id"],baseline["baseline_id"],adaptation["profile_id"],result.proposal_hash)
+        with self._db() as db:
+            db.execute(f"INSERT INTO generation_attempts({columns}) VALUES({','.join('?' for _ in values)})",values); self._record_attempt_event(db,attempt_id,None,"COMPLETED")
+        return attempt_id,"COMPLETED"
+
     def _render_editorial_sections(self, trial: sqlite3.Row, attempts: list[sqlite3.Row], review_events: list[sqlite3.Row], csrf: str) -> str:
         state = derive_editorial_state(trial, attempts, review_events)
         completed = [a for a in attempts if a["status"] == "COMPLETED" and (a["normalized_proposal"] or "").strip()]
@@ -660,6 +729,33 @@ class DocWriterApp:
 <section id='integrity-review'><h2>Integrity review</h2><p>Review the source, proposal, model findings, authority, facts, uncertainty, and status before evaluating meaning.</p>{integrity_form or '<p class=\'muted\'>Integrity review is not the current action.</p>'}</section>
 <section id='revision-review'><h2>Revision review</h2><p>Check whether the proposal still says what the operator meant. This is separate from tone acceptance.</p>{revision_form or '<p class=\'muted\'>Revision review is not the current action.</p>'}</section>
 <section id='tone-review'><h2>Tone review</h2><p>This step asks whether the revision sounds like you. Meaning and factual safety were reviewed separately.</p>{tone_form or '<p class=\'muted\'>Tone review is not the current action.</p>'}</section>"""
+
+    def _render_audience_section(self, trial: sqlite3.Row, csrf: str, project: sqlite3.Row | None) -> str:
+        with self._db() as db:
+            profiles = db.execute("SELECT * FROM audience_profiles WHERE active=1 ORDER BY slug").fetchall()
+            baselines = db.execute("SELECT * FROM accepted_baselines WHERE trial_id=? ORDER BY created_at,baseline_id", (trial["trial_id"],)).fetchall()
+            baseline = current_baseline(baselines) if baselines else None
+            cards=[]
+            for profile in profiles:
+                adaptation = db.execute("SELECT * FROM audience_adaptations WHERE baseline_id=? AND profile_id=? AND archived_at IS NULL", (baseline["baseline_id"],profile["profile_id"])).fetchone() if baseline else None
+                attempts = db.execute("SELECT * FROM generation_attempts WHERE adaptation_id=? ORDER BY started_at", (adaptation["adaptation_id"],)).fetchall() if adaptation else []
+                events = db.execute("SELECT * FROM review_events WHERE adaptation_id=? ORDER BY created_at,event_id", (adaptation["adaptation_id"],)).fetchall() if adaptation else []
+                accepted = db.execute("SELECT * FROM accepted_audience_versions WHERE adaptation_id=?", (adaptation["adaptation_id"],)).fetchall() if adaptation else []
+                state = audience_state(adaptation, attempts, events, accepted) if adaptation else "AUDIENCE_GENERATION_REQUIRED"
+                action = f"<form method='post' action='/trial/{html.escape(trial['trial_id'])}/audience/{html.escape(profile['slug'])}/create'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button type='submit'>Create adaptation</button></form>" if baseline and not adaptation else f"<form method='post' action='/trial/{html.escape(trial['trial_id'])}/audience/{html.escape(profile['slug'])}/generate'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button type='submit'>Generate audience version</button></form>" if adaptation and state in {"AUDIENCE_GENERATION_REQUIRED","AUDIENCE_REVIEW_TARGET_REQUIRED"} else f"<a class='button' href='/project/{html.escape(project['slug'])}/trial/{html.escape(trial['trial_id'])}/audience/{html.escape(profile['slug'])}'>Review audience version</a>" if adaptation else ""
+                cards.append(f"<article class='trial-card'><h3>{html.escape(profile['name'])}</h3><p>{html.escape(profile['purpose'])}</p><p>State: <code>{html.escape(state)}</code></p><div class='actions'>{action}</div></article>")
+        return "<section id='audience-adaptations'><h2>Audience adaptations</h2><p>Each audience version begins from the accepted conversational baseline and remains independently reviewed.</p>" + "".join(cards) + "</section>"
+
+    def _render_audience_workspace(self, trial: sqlite3.Row, adaptation: sqlite3.Row, attempts: list[sqlite3.Row], events: list[sqlite3.Row], accepted: list[sqlite3.Row], csrf: str, project: sqlite3.Row | None) -> str:
+        latest = attempts[-1] if attempts else None; state = audience_state(adaptation, attempts, events, accepted)
+        proposal = latest["normalized_proposal"] if latest else "No audience version has been generated."
+        target = next((e for e in reversed(events) if e["event_type"] == "AUDIENCE_REVIEW_TARGET_SELECTED"), None)
+        forms = ""
+        if latest and state == "AUDIENCE_REVIEW_TARGET_REQUIRED": forms += f"<form method='post' action='/trial/{html.escape(trial['trial_id'])}/audience/{html.escape(adaptation['slug'])}/review-target'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><input type='hidden' name='attempt_id' value='{html.escape(latest['attempt_id'])}'><button type='submit'>Choose version to review</button></form>"
+        elif latest and state in {"AUDIENCE_REVIEW_REQUIRED","AUDIENCE_REVISION_REQUIRED"}: forms += f"<form method='post' action='/trial/{html.escape(trial['trial_id'])}/audience/{html.escape(adaptation['slug'])}/review'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='audience-note'>Audience review note</label><textarea id='audience-note' name='note_text' maxlength='{MAX_NOTES}'></textarea><label for='audience-passage'>Affected passage</label><input id='audience-passage' name='related_passage'><div class='actions'><button name='outcome' value='AUDIENCE_ACCEPTED'>Accept audience version</button><button class='secondary' name='outcome' value='AUDIENCE_REVISION_REQUIRED'>Revision required</button><button class='secondary' name='outcome' value='AUDIENCE_REJECTED'>Reject audience version</button></div></form>"
+        history = "".join(f"<li><code>{html.escape(v['accepted_audience_version_id'])}</code> · accepted {html.escape(v['accepted_at'])}</li>" for v in accepted)
+        body = f"<p class='meta'><a href='/project/{html.escape(project['slug'])}/trial/{html.escape(trial['trial_id'])}'>Return to trial</a></p><h1>{html.escape(adaptation['name'])} audience adaptation</h1><p>{html.escape(adaptation['purpose'])}</p><p>Baseline <code>{html.escape(adaptation['baseline_id'])}</code> · state <code>{html.escape(state)}</code></p><section><h2>Audience version</h2><pre>{html.escape(proposal)}</pre><p>Output SHA-256: <code>{html.escape(latest['proposal_sha256']) if latest else 'not generated'}</code></p>{forms}</section><section><h2>Accepted-version history</h2><ul>{history or '<li>No accepted audience version.</li>'}</ul></section><details><summary>Provenance</summary><p>Adaptation <code>{html.escape(adaptation['adaptation_id'])}</code> · profile contract <code>{html.escape(adaptation['profile_contract_sha256'])}</code> · baseline SHA-256 <code>{html.escape(adaptation['baseline_sha256'])}</code></p></details>"
+        return self._html("Audience adaptation", body, csrf)
 
     def _render_attempt_fallback(self, trial: sqlite3.Row, attempt: sqlite3.Row, csrf: str, project: sqlite3.Row | None) -> str:
         state = canonical_state(attempt["status"], attempt["error_class"], attempt["canonical_failure_class"])
@@ -798,8 +894,9 @@ class DocWriterApp:
         integrity_block = f"<section id='integrity-findings'><h2>Model integrity findings</h2><pre>{html.escape(trial['integrity_findings'] or '—')}</pre></section>"
         editorial_sections = self._render_editorial_sections(trial, attempts, review_events, csrf)
         baseline_section = self._render_baseline_section(trial, attempts, review_events, csrf, project)
+        audience_section = self._render_audience_section(trial, csrf, project)
         body = f"""{breadcrumb}<h1>Trial <code>{html.escape(trial['trial_id'])}</code></h1>{self._guidance_panel(guidance)}<p class='status'>Review status: {review_status}</p><p>Created {html.escape(trial['created_at'])}; updated {html.escape(trial['updated_at'])}; source SHA-256 <code>{html.escape(trial['source_sha256'])}</code></p><p>Model: <code>{html.escape(trial['model_identifier'])}</code><br>Digest: <code>{html.escape(trial['model_digest'])}</code></p>
-{generation}{block('Source paragraph', trial['source_text'])}<section><h2>Conversational proposal</h2><div class='prose'>{html.escape(trial['normalized_output'] or 'No normalized proposal recorded.')}</div></section>{diff_view}{integrity_block}{editorial_sections}{baseline_section}{review_form}{no_attempt_view}{attempt_view}
+{generation}{block('Source paragraph', trial['source_text'])}<section><h2>Conversational proposal</h2><div class='prose'>{html.escape(trial['normalized_output'] or 'No normalized proposal recorded.')}</div></section>{diff_view}{integrity_block}{editorial_sections}{baseline_section}{audience_section}{review_form}{no_attempt_view}{attempt_view}
 <section id='revision-review'><h2>Decision</h2><form method='post' action='/trial/{html.escape(trial['trial_id'])}/decision'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='decision'>Decision</label><select id='decision' name='decision'>{''.join(f'<option>{decision}</option>' for decision in sorted(DECISIONS))}</select><label for='decision_reason'>Decision rationale (required for rejection or revision)</label><textarea id='decision_reason' name='decision_reason' maxlength='{MAX_NOTES}' aria-describedby='decision-help'></textarea><p id='decision-help' class='muted'>Add a short reason before marking this revision rejected or requiring revision.</p><button type='submit'>Record decision</button></form></section><section><h2>Generation-attempt history</h2><table><tr><th>Started</th><th>Completed</th><th>Status</th><th>Model</th><th>Source version</th><th>Result</th></tr>{generation_history}</table></section><section><h2>Draft version history</h2><table><tr><th>Version</th><th>When</th><th>Action</th></tr>{history}</table></section><p><a href='/trial/{html.escape(trial['trial_id'])}/artifact'>View artifact/provenance</a> · <a href='/trial/{html.escape(trial['trial_id'])}/edit'>Edit</a></p>{archive_form}"""
         return self._html("Trial", body, csrf)
 
@@ -834,6 +931,12 @@ class DocWriterApp:
                     baseline = db.execute("SELECT * FROM accepted_baselines WHERE baseline_id=? AND trial_id=?", (parts[5], parts[3])).fetchone()
                     if not project or not baseline or project["project_id"] != db.execute("SELECT project_id FROM trials WHERE trial_id=?", (parts[3],)).fetchone()[0]: raise NotFoundError("baseline not found")
                     content = self._render_baseline_detail(baseline, csrf, project)
+            elif method == "GET" and path.startswith("/project/") and len(path.strip("/").split("/")) == 6 and path.strip("/").split("/")[4] == "audience":
+                parts=path.strip("/").split("/")
+                with self._db() as db:
+                    project=db.execute("SELECT * FROM projects WHERE slug=? OR project_id=?",(parts[1],parts[1])).fetchone(); trial=db.execute("SELECT * FROM trials WHERE trial_id=?",(parts[3],)).fetchone(); adaptation=self._audience_adaptation(db,parts[3],parts[5])
+                    if not project or not trial or trial["project_id"]!=project["project_id"]: raise NotFoundError("audience workspace not found")
+                    content=self._render_audience_workspace(trial,adaptation,db.execute("SELECT * FROM generation_attempts WHERE adaptation_id=? ORDER BY started_at",(adaptation["adaptation_id"],)).fetchall(),db.execute("SELECT * FROM review_events WHERE adaptation_id=? ORDER BY created_at,event_id",(adaptation["adaptation_id"],)).fetchall(),db.execute("SELECT * FROM accepted_audience_versions WHERE adaptation_id=? ORDER BY created_at",(adaptation["adaptation_id"],)).fetchall(),csrf,project)
             elif method == "GET" and path.startswith("/project/"):
                 parts = path.strip("/").split("/")
                 project_key = parts[1]
@@ -944,6 +1047,23 @@ class DocWriterApp:
                 with self._db() as db:
                     trial = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
                     if not trial: raise LookupError("trial not found")
+                    if len(parts) == 5 and parts[2] == "audience":
+                        slug, action = parts[3], parts[4]
+                        if action == "create": self._create_audience_adaptation(db, trial, slug)
+                        elif action == "generate": self._generate_audience(trial_id, slug)
+                        else:
+                            adaptation=self._audience_adaptation(db,trial_id,slug); attempt_id=form.get("attempt_id"); attempt=db.execute("SELECT * FROM generation_attempts WHERE attempt_id=? AND adaptation_id=? AND status='COMPLETED'",(attempt_id,adaptation["adaptation_id"])).fetchone() if attempt_id else db.execute("SELECT * FROM generation_attempts WHERE adaptation_id=? AND status='COMPLETED' ORDER BY started_at DESC",(adaptation["adaptation_id"],)).fetchone()
+                            if not attempt: raise ValueError("a completed audience attempt is required")
+                            if action == "review-target": self._insert_audience_event(db,adaptation,attempt,"AUDIENCE_REVIEW_TARGET_SELECTED","SELECTED","",self._authenticated_user(environ))
+                            elif action == "review":
+                                outcome=form.get("outcome",""); note=form.get("note_text","").strip()[:MAX_NOTES]
+                                if outcome == "AUDIENCE_ACCEPTED":
+                                    target=db.execute("SELECT * FROM review_events WHERE adaptation_id=? AND event_type='AUDIENCE_REVIEW_TARGET_SELECTED' ORDER BY created_at DESC,event_id DESC LIMIT 1",(adaptation["adaptation_id"],)).fetchone()
+                                    if not target: raise ValueError("choose the exact audience version before accepting it")
+                                    self._accept_audience(db,adaptation,attempt,target,self._authenticated_user(environ),note)
+                                else: self._insert_audience_event(db,adaptation,attempt,"AUDIENCE_REVIEW",outcome,note,self._authenticated_user(environ))
+                            else: raise LookupError("audience action not found")
+                        start_response("303 See Other",[("Location",f"/project/{self._project(db,trial['project_id'])['slug']}/trial/{trial_id}/audience/{slug}")]); return [b""]
                     if len(parts) == 4 and parts[2] == "baseline" and parts[3] == "accept":
                         if form.get("confirm_baseline") != "1": raise ValueError("Confirm the exact proposal before accepting the baseline.")
                         baseline_id = self._accept_baseline(db, trial, db.execute("SELECT * FROM generation_attempts WHERE trial_id=? ORDER BY started_at DESC", (trial_id,)).fetchall(), self._review_events(db, trial_id), self._authenticated_user(environ), form.get("acceptance_note", "").strip()[:MAX_NOTES])

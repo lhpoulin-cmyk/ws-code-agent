@@ -3,6 +3,7 @@ import io
 import json
 import sqlite3
 import pytest
+from dataclasses import replace
 
 from docwriter_web import AppConfig, DocWriterApp
 from docwriter_web.generation import (
@@ -53,7 +54,7 @@ def make_trial(app):
 
 def result_for(source, proposal="The service remains local, and review is unresolved."):
     raw = json.dumps({"integrity_findings": [{"category": "no material issue found", "detail": "No material issue found."}], "conversational_proposal": proposal}, separators=(",", ":"))
-    return GenerationResult(MODEL, MODEL_DIGEST, "{request}", prompt_for(source), sha256_text(prompt_for(source)), "2026-08-03T00:00:00+00:00", "2026-08-03T00:00:01+00:00", raw, {"eval_count": 12}, [{"category": "no material issue found", "detail": "No material issue found."}], proposal, exact_diff(source, proposal), sha256_text(raw), sha256_text(proposal), {"eval_count": 12, "wall_seconds": 1.0})
+    return replace(GenerationResult(MODEL, MODEL_DIGEST, "{request}", prompt_for(source), sha256_text(prompt_for(source)), "2026-08-03T00:00:00+00:00", "2026-08-03T00:00:01+00:00", raw, {"eval_count": 12}, [{"category": "no material issue found", "detail": "No material issue found."}], proposal, exact_diff(source, proposal), sha256_text(raw), sha256_text(proposal), {"eval_count": 12, "wall_seconds": 1.0}), task_adherence_result="passed")
 
 
 class FakeClient:

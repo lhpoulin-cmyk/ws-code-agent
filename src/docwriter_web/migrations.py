@@ -29,6 +29,7 @@ MIGRATION_NAMES = (
     "legacy-review-supersession-v1",
     "prompt-provenance-v2-v1",
     "generation-failure-taxonomy-v1",
+    "generation-failure-taxonomy-v2",
 )
 
 
@@ -241,6 +242,43 @@ def _failure_taxonomy(db: sqlite3.Connection, commit: str) -> None:
     _ledger(db, name, commit, before, before_hash)
 
 
+def _failure_taxonomy_v2(db: sqlite3.Connection, commit: str) -> None:
+    name = "generation-failure-taxonomy-v2"
+    if _migration_applied(db, name):
+        return
+    before, before_hash = _counts(db), _database_hash(db)
+    db.execute("DROP TRIGGER IF EXISTS generation_attempts_safe_update")
+    db.executescript("""
+    CREATE TRIGGER generation_attempts_safe_update
+    BEFORE UPDATE ON generation_attempts
+    WHEN OLD.status NOT IN ('RUNNING','QUEUED')
+      OR NEW.status NOT IN ('COMPLETED','INTERRUPTED','REQUEST_TIMEOUT','OLLAMA_UNAVAILABLE','OLLAMA_HTTP_ERROR','EMPTY_RESPONSE','MALFORMED_JSON','RESPONSE_SCHEMA_INVALID','PROPOSAL_FIELD_MISSING','TASK_ADHERENCE_FAILED','NORMALIZATION_FAILURE','PERSISTENCE_FAILURE','RENDER_FAILURE','STALE_SOURCE')
+      OR OLD.attempt_id<>NEW.attempt_id OR OLD.trial_id<>NEW.trial_id
+      OR OLD.source_version_id<>NEW.source_version_id OR OLD.source_text<>NEW.source_text
+      OR OLD.source_sha256<>NEW.source_sha256 OR OLD.prompt_version<>NEW.prompt_version
+      OR OLD.prompt_text<>NEW.prompt_text OR OLD.prompt_sha256<>NEW.prompt_sha256
+      OR OLD.request_json<>NEW.request_json OR OLD.model_identifier<>NEW.model_identifier
+      OR OLD.model_digest<>NEW.model_digest OR OLD.generation_settings<>NEW.generation_settings
+      OR OLD.started_at<>NEW.started_at OR OLD.application_version<>NEW.application_version
+      OR OLD.transport_type<>NEW.transport_type OR OLD.transport_endpoint<>NEW.transport_endpoint
+      OR OLD.adapter_id<>NEW.adapter_id OR OLD.adapter_version<>NEW.adapter_version
+      OR OLD.request_serializer_version<>NEW.request_serializer_version OR OLD.message_roles<>NEW.message_roles
+      OR OLD.canonical_contract_hashes<>NEW.canonical_contract_hashes OR OLD.composed_contract_hash<>NEW.composed_contract_hash
+      OR OLD.schema_version<>NEW.schema_version OR OLD.schema_hash<>NEW.schema_hash
+      OR OLD.response_schema<>NEW.response_schema
+      OR (OLD.task_adherence_result<>NEW.task_adherence_result
+          AND NOT (OLD.status='RUNNING' AND OLD.task_adherence_result='not_run'
+                   AND NEW.task_adherence_result IN ('passed','failed')))
+      OR (OLD.canonical_failure_class<>NEW.canonical_failure_class AND OLD.status NOT IN ('RUNNING','QUEUED'))
+      OR (OLD.classifier_version<>NEW.classifier_version AND OLD.classifier_version<>'')
+      OR OLD.recovery_spool_ref<>NEW.recovery_spool_ref
+      OR COALESCE(OLD.worker_pid,0)<>COALESCE(NEW.worker_pid,0)
+      OR OLD.worker_start_identity<>NEW.worker_start_identity
+    BEGIN SELECT RAISE(ABORT, 'generation attempt provenance or lifecycle is immutable'); END;
+    """)
+    _ledger(db, name, commit, before, before_hash)
+
+
 def _attempt_events(db: sqlite3.Connection, commit: str) -> None:
     name = "generation-attempt-events-v1"
     if _migration_applied(db, name):
@@ -382,6 +420,7 @@ def apply_migrations(db: sqlite3.Connection, application_commit: str) -> None:
     _foreign_keys_and_routing(db, application_commit)
     _prompt_provenance_v2(db, application_commit)
     _failure_taxonomy(db, application_commit)
+    _failure_taxonomy_v2(db, application_commit)
     _attempt_events(db, application_commit)
     _immutability(db, application_commit)
     _review_append_only(db, application_commit)

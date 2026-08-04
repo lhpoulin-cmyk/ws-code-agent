@@ -170,18 +170,22 @@ def parse_response_v2(raw_response: str) -> tuple[list[dict[str, Any]], str]:
     try:
         value = json.loads(raw_response)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ResponseSchemaError("v2 response is not valid JSON") from exc
+        raise ResponseSchemaError("v2 response is not valid JSON", "MALFORMED_JSON") from exc
     if not isinstance(value, dict) or set(value) != {"integrity_findings", "conversational_proposal"}:
-        raise ResponseSchemaError("v2 response has unexpected top-level fields")
+        if isinstance(value, dict) and "conversational_proposal" not in value:
+            raise ResponseSchemaError("v2 response is missing conversational_proposal", "PROPOSAL_FIELD_MISSING")
+        raise ResponseSchemaError("v2 response has unexpected top-level fields", "RESPONSE_SCHEMA_INVALID")
     findings, proposal = value["integrity_findings"], value["conversational_proposal"]
     categories = {"confirmed_conflict", "apparent_conflict_requiring_authority_review", "unsupported_claim", "ambiguity", "no_material_issue_found"}
-    if not isinstance(findings, list) or not isinstance(proposal, str) or not proposal.strip():
-        raise ResponseSchemaError("v2 response has invalid proposal or findings")
+    if not isinstance(proposal, str) or not proposal.strip():
+        raise ResponseSchemaError("v2 response has no usable conversational_proposal", "PROPOSAL_FIELD_MISSING")
+    if not isinstance(findings, list):
+        raise ResponseSchemaError("v2 response integrity_findings is not an array", "RESPONSE_SCHEMA_INVALID")
     normalized = []
     required = {"category", "detail", "related_passage", "blocks_approval", "resolution_authority"}
     for finding in findings:
         if not isinstance(finding, dict) or set(finding) != required or finding["category"] not in categories or not isinstance(finding["detail"], str) or not 0 < len(finding["detail"]) <= 4000 or not isinstance(finding["related_passage"], str) or len(finding["related_passage"]) > 1000 or not isinstance(finding["blocks_approval"], bool) or not isinstance(finding["resolution_authority"], str) or len(finding["resolution_authority"]) > 1000:
-            raise ResponseSchemaError("v2 integrity finding is invalid")
+            raise ResponseSchemaError("v2 integrity finding is invalid", "RESPONSE_SCHEMA_INVALID")
         normalized.append(finding)
     return normalized, proposal.strip()
 
@@ -207,7 +211,7 @@ class OllamaClient:
         self.base_url = base_url.rstrip("/")
         self.opener = opener
 
-    def _request_raw(self, path: str, payload: dict[str, Any] | None = None) -> tuple[dict[str, Any], str]:
+    def _request_raw(self, path: str, payload: dict[str, Any] | None = None, classify_response_errors: bool = False) -> tuple[dict[str, Any], str]:
         data = None if payload is None else serialized_json(payload).encode("utf-8")
         request = urllib.request.Request(self.base_url + path, data=data, headers={"Content-Type": "application/json"} if data else {})
         try:
@@ -236,7 +240,8 @@ class OllamaClient:
         try:
             value = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise OllamaError("local Ollama returned invalid JSON", raw.decode("utf-8", errors="replace"), error_class="RESPONSE_SCHEMA_INVALID") from exc
+            error_class = "MALFORMED_JSON" if classify_response_errors else "RESPONSE_SCHEMA_INVALID"
+            raise OllamaError("local Ollama returned invalid JSON", raw.decode("utf-8", errors="replace"), error_class=error_class) from exc
         if not isinstance(value, dict):
             raise OllamaError("local Ollama response is not an object", raw.decode("utf-8", errors="replace"), error_class="RESPONSE_SCHEMA_INVALID")
         return value, raw.decode("utf-8", errors="replace")
@@ -282,7 +287,7 @@ class OllamaClient:
         request_json = serialized_json(request_payload)
         started_at = utc_now()
         started_monotonic = time.monotonic()
-        response_payload, raw_http = self._request_raw("/api/chat", request_payload)
+        response_payload, raw_http = self._request_raw("/api/chat", request_payload, classify_response_errors=True)
         completed_at = utc_now()
         message = response_payload.get("message")
         raw_content = message.get("content") if isinstance(message, dict) else None

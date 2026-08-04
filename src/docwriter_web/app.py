@@ -36,6 +36,7 @@ from .generation import (
 from .migrations import apply_migrations
 from .recovery_guidance import Guidance, guidance_for
 from .prompt_contracts import load_phase_b_assets
+from .failure_taxonomy import CLASSIFIER_VERSION, canonical_state, classify_error, ATTENTION_STATES
 
 MAX_SOURCE = 12000
 MAX_FIELD = 12000
@@ -96,6 +97,15 @@ def utc_now() -> str:
 
 def sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def process_start_identity(pid: int) -> str:
+    """Return Linux process start identity without trusting PID alone."""
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text().split()
+        return fields[21]
+    except (OSError, IndexError, ValueError):
+        return ""
 
 
 class DocWriterApp:
@@ -190,16 +200,18 @@ class DocWriterApp:
 
     def _recover_stale_attempts(self, db: sqlite3.Connection) -> None:
         now = datetime.now(timezone.utc)
-        rows = db.execute("SELECT attempt_id, started_at FROM generation_attempts WHERE status='RUNNING'").fetchall()
+        rows = db.execute("SELECT attempt_id, started_at, worker_pid, worker_start_identity FROM generation_attempts WHERE status IN ('RUNNING','QUEUED')").fetchall()
         for row in rows:
             try:
                 started = datetime.fromisoformat(row["started_at"])
                 age = (now - started).total_seconds()
             except (TypeError, ValueError):
                 age = STALE_RUNNING_SECONDS + 1
-            if age > STALE_RUNNING_SECONDS:
-                db.execute("UPDATE generation_attempts SET completed_at=?,status=?,error_class=?,error=? WHERE attempt_id=? AND status='RUNNING'", (utc_now(), "FAILED", "STUCK_RUNNING", "generation exceeded the bounded timeout and was recovered on application startup", row["attempt_id"]))
-                self._record_attempt_event(db, row["attempt_id"], "RUNNING", "FAILED", "STUCK_RUNNING")
+            worker_matches = bool(row["worker_pid"] and row["worker_start_identity"] and process_start_identity(int(row["worker_pid"])) == row["worker_start_identity"])
+            if age > STALE_RUNNING_SECONDS and not worker_matches:
+                state = "INTERRUPTED"
+                db.execute("UPDATE generation_attempts SET completed_at=?,status=?,error_class=?,error=?,canonical_failure_class=?,classifier_version=?,safe_error_detail=?,last_state_at=? WHERE attempt_id=? AND status IN ('RUNNING','QUEUED')", (utc_now(), state, state, "generation stopped before a terminal result and no matching worker remained", state, CLASSIFIER_VERSION, "The attempt did not reach a completed result before execution stopped.", utc_now(), row["attempt_id"]))
+                self._record_attempt_event(db, row["attempt_id"], "RUNNING" if row["worker_pid"] else "QUEUED", state, state)
 
     def _db(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.config.database)
@@ -423,7 +435,7 @@ class DocWriterApp:
                 v2_request = request_payload_v2(self.contract_bundle, profile, trial["source_text"])
                 request_json = serialized_json(v2_request)
                 started_at = utc_now()
-                db.execute("INSERT INTO generation_attempts(attempt_id,trial_id,source_version_id,source_text,source_sha256,prompt_version,prompt_text,prompt_sha256,request_json,model_identifier,model_digest,generation_settings,started_at,completed_at,raw_ollama_response,response_sha256,integrity_findings,normalized_proposal,proposal_sha256,source_to_proposal_diff,telemetry,application_version,status,error,error_class,transport_type,transport_endpoint,adapter_id,adapter_version,request_serializer_version,message_roles,canonical_contract_hashes,composed_contract_hash,schema_version,schema_hash,response_schema,task_adherence_result) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id, trial_id, version["version_id"], trial["source_text"], trial["source_sha256"], self.contract_bundle.version, self.contract_bundle.composed_text, self.contract_bundle.composed_hash, request_json, profile.model_identifier, profile.expected_digest, serialized_json(profile.generation_settings), started_at, "", "", "", "[]", "", "", "", "{}", self.config.version, "RUNNING", "", "", profile.transport, "/api/chat", profile.adapter_id, profile.profile_version, profile.request_serializer_version, serialized_json(profile.supported_message_roles), serialized_json(self.contract_bundle.contract_hashes), self.contract_bundle.composed_hash, self.contract_bundle.version, self.contract_bundle.schema_hash, serialized_json(self.contract_bundle.schema), "not_run"))
+                db.execute("INSERT INTO generation_attempts(attempt_id,trial_id,source_version_id,source_text,source_sha256,prompt_version,prompt_text,prompt_sha256,request_json,model_identifier,model_digest,generation_settings,started_at,completed_at,raw_ollama_response,response_sha256,integrity_findings,normalized_proposal,proposal_sha256,source_to_proposal_diff,telemetry,application_version,status,error,error_class,transport_type,transport_endpoint,adapter_id,adapter_version,request_serializer_version,message_roles,canonical_contract_hashes,composed_contract_hash,schema_version,schema_hash,response_schema,task_adherence_result,canonical_failure_class,classifier_version,last_state_at,worker_pid,worker_start_identity) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id, trial_id, version["version_id"], trial["source_text"], trial["source_sha256"], self.contract_bundle.version, self.contract_bundle.composed_text, self.contract_bundle.composed_hash, request_json, profile.model_identifier, profile.expected_digest, serialized_json(profile.generation_settings), started_at, "", "", "", "[]", "", "", "", "{}", self.config.version, "RUNNING", "", "", profile.transport, "/api/chat", profile.adapter_id, profile.profile_version, profile.request_serializer_version, serialized_json(profile.supported_message_roles), serialized_json(self.contract_bundle.contract_hashes), self.contract_bundle.composed_hash, self.contract_bundle.version, self.contract_bundle.schema_hash, serialized_json(self.contract_bundle.schema), "not_run", "RUNNING", CLASSIFIER_VERSION, started_at, os.getpid(), process_start_identity(os.getpid())))
                 self._record_attempt_event(db, attempt_id, None, "RUNNING")
             try:
                 if hasattr(self.ollama_client, "generate_v2"):
@@ -432,19 +444,21 @@ class DocWriterApp:
                     result = self.ollama_client.generate(trial["source_text"])
             except OllamaError as exc:
                 with self._db() as db:
-                    db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,telemetry=?,status=?,error_class=?,error=?,task_adherence_result=? WHERE attempt_id=?", (utc_now(), exc.raw_response, sha256_text(exc.raw_response) if exc.raw_response else "", serialized_json(exc.response_payload), "FAILED", exc.error_class, str(exc), "failed" if exc.error_class == "TASK_ADHERENCE_FAILED" else "not_run", attempt_id))
-                    self._record_attempt_event(db, attempt_id, "RUNNING", "REQUEST_TIMEOUT" if exc.error_class == "REQUEST_TIMEOUT" else "FAILED", exc.error_class)
-                return attempt_id, "failed"
+                    classification = classify_error(exc.error_class, str(exc))
+                    state = classification.state
+                    db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,telemetry=?,status=?,error_class=?,error=?,canonical_failure_class=?,classifier_version=?,safe_error_detail=?,last_state_at=?,task_adherence_result=? WHERE attempt_id=?", (utc_now(), exc.raw_response, sha256_text(exc.raw_response) if exc.raw_response else "", serialized_json(exc.response_payload), state, state, str(exc), state, CLASSIFIER_VERSION, classification.safe_detail, utc_now(), "failed" if state == "TASK_ADHERENCE_FAILED" else "not_run", attempt_id))
+                    self._record_attempt_event(db, attempt_id, "RUNNING", state, state)
+                return attempt_id, state.lower()
             with self._db() as db:
                 current = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
                 if current["source_sha256"] != trial["source_sha256"]:
-                    db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,telemetry=?,status=?,error_class=?,error=? WHERE attempt_id=?", (result.completed_at, result.raw_ollama_response, result.response_hash, serialized_json(result.telemetry), "STALE_SOURCE", "UNKNOWN_FAILURE", "source changed during generation", attempt_id))
-                    self._record_attempt_event(db, attempt_id, "RUNNING", "STALE_SOURCE", "UNKNOWN_FAILURE")
-                    return attempt_id, "stale"
+                    db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,telemetry=?,status=?,error_class=?,error=?,canonical_failure_class=?,classifier_version=?,safe_error_detail=?,last_state_at=? WHERE attempt_id=?", (result.completed_at, result.raw_ollama_response, result.response_hash, serialized_json(result.telemetry), "STALE_SOURCE", "STALE_SOURCE", "source changed during generation", "STALE_SOURCE", CLASSIFIER_VERSION, "The source changed before the result could be applied.", result.completed_at, attempt_id))
+                    self._record_attempt_event(db, attempt_id, "RUNNING", "STALE_SOURCE", "STALE_SOURCE")
+                    return attempt_id, "stale_source"
                 findings_json = json.dumps(result.integrity_findings, ensure_ascii=False, sort_keys=True)
                 lineage = json.loads(current["revision_lineage"] or "[]")
                 lineage.append(attempt_id)
-                db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,integrity_findings=?,normalized_proposal=?,proposal_sha256=?,source_to_proposal_diff=?,telemetry=?,status=?,error_class=?,error=?,task_adherence_result=? WHERE attempt_id=?", (result.completed_at, result.raw_ollama_response, result.response_hash, findings_json, result.proposal, result.proposal_hash, result.source_to_proposal_diff, serialized_json(result.telemetry), "COMPLETED", "", "", result.task_adherence_result, attempt_id))
+                db.execute("UPDATE generation_attempts SET completed_at=?,raw_ollama_response=?,response_sha256=?,integrity_findings=?,normalized_proposal=?,proposal_sha256=?,source_to_proposal_diff=?,telemetry=?,status=?,error_class=?,error=?,canonical_failure_class=?,classifier_version=?,safe_error_detail=?,last_state_at=?,task_adherence_result=? WHERE attempt_id=?", (result.completed_at, result.raw_ollama_response, result.response_hash, findings_json, result.proposal, result.proposal_hash, result.source_to_proposal_diff, serialized_json(result.telemetry), "COMPLETED", "", "", "COMPLETED", CLASSIFIER_VERSION, "", result.completed_at, result.task_adherence_result, attempt_id))
                 self._record_attempt_event(db, attempt_id, "RUNNING", "COMPLETED")
                 db.execute("UPDATE trials SET updated_at=?,model_identifier=?,model_digest=?,generation_parameters=?,integrity_findings=?,raw_output=?,normalized_output=?,review_status='REVIEW_REQUIRED',revision_lineage=? WHERE trial_id=?", (result.completed_at, result.model_identifier, result.model_digest, serialized_json(profile.generation_settings), findings_json, result.raw_ollama_response, result.proposal, json.dumps(lineage), trial_id))
                 self._save_version(db, db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone(), "GENERATED")
@@ -472,9 +486,9 @@ class DocWriterApp:
         if status_filter in DECISIONS or status_filter == "REVIEW_REQUIRED":
             conditions.append("t.review_status=?"); params.append(status_filter)
         elif status_filter == "needs_review":
-            conditions.append("(t.review_status IN ('REVIEW_REQUIRED','REVISION_REQUIRED') OR (t.review_status IN ('REJECTED','REVISION_REQUIRED') AND NOT EXISTS (SELECT 1 FROM review_events rn WHERE rn.trial_id=t.trial_id AND rn.event_type='REVIEW_NOTE' AND trim(COALESCE(rn.note_text,''))<>'')))")
+            conditions.append("(t.review_status IN ('REVIEW_REQUIRED','REVISION_REQUIRED') OR (t.review_status IN ('REJECTED','REVISION_REQUIRED') AND NOT EXISTS (SELECT 1 FROM review_events rn WHERE rn.trial_id=t.trial_id AND rn.event_type='REVIEW_NOTE' AND trim(COALESCE(rn.note_text,''))<>'')) OR EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND COALESCE(gf.canonical_failure_class,'') IN ('INTERRUPTED','REQUEST_TIMEOUT','OLLAMA_UNAVAILABLE','OLLAMA_HTTP_ERROR','EMPTY_RESPONSE','MALFORMED_JSON','RESPONSE_SCHEMA_INVALID','PROPOSAL_FIELD_MISSING','TASK_ADHERENCE_FAILED','NORMALIZATION_FAILURE','PERSISTENCE_FAILURE','RENDER_FAILURE','STALE_SOURCE')))")
         elif status_filter == "generation_failed":
-            conditions.append("EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND gf.status='FAILED')")
+            conditions.append("EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND COALESCE(gf.canonical_failure_class,'') IN ('INTERRUPTED','REQUEST_TIMEOUT','OLLAMA_UNAVAILABLE','OLLAMA_HTTP_ERROR','EMPTY_RESPONSE','MALFORMED_JSON','RESPONSE_SCHEMA_INVALID','PROPOSAL_FIELD_MISSING','TASK_ADHERENCE_FAILED','NORMALIZATION_FAILURE','PERSISTENCE_FAILURE','RENDER_FAILURE','STALE_SOURCE'))")
         elif status_filter == "rationale_missing":
             conditions.append("t.review_status IN ('REJECTED','REVISION_REQUIRED') AND NOT EXISTS (SELECT 1 FROM review_events rn WHERE rn.trial_id=t.trial_id AND rn.event_type='REVIEW_NOTE' AND trim(COALESCE(rn.note_text,''))<>'')")
         if search:
@@ -486,9 +500,11 @@ class DocWriterApp:
             EXISTS (SELECT 1 FROM review_events rn WHERE rn.trial_id=t.trial_id AND rn.event_type='REVIEW_NOTE' AND trim(COALESCE(rn.note_text,''))<>'') AS has_notes,
             EXISTS (SELECT 1 FROM review_events ps WHERE ps.trial_id=t.trial_id AND ps.event_type='REVIEW_NOTE' AND ps.private_steering=1) AS has_private,
             (SELECT decision FROM review_events de JOIN review_event_chain dc ON dc.event_id=de.event_id WHERE dc.authoritative=1 AND de.trial_id=t.trial_id AND de.event_type='DECISION' ORDER BY de.created_at DESC, de.event_id DESC LIMIT 1) AS latest_decision,
-            EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND gf.status='FAILED') AS has_failed,
+            EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND COALESCE(gf.canonical_failure_class,'') IN ('INTERRUPTED','REQUEST_TIMEOUT','OLLAMA_UNAVAILABLE','OLLAMA_HTTP_ERROR','EMPTY_RESPONSE','MALFORMED_JSON','RESPONSE_SCHEMA_INVALID','PROPOSAL_FIELD_MISSING','TASK_ADHERENCE_FAILED','NORMALIZATION_FAILURE','PERSISTENCE_FAILURE','RENDER_FAILURE','STALE_SOURCE')) AS has_failed,
             (SELECT ga.status FROM generation_attempts ga WHERE ga.trial_id=t.trial_id ORDER BY ga.started_at DESC LIMIT 1) AS latest_attempt_state,
-            (SELECT ga.error_class FROM generation_attempts ga WHERE ga.trial_id=t.trial_id ORDER BY ga.started_at DESC LIMIT 1) AS latest_error_class
+            (SELECT ga.error_class FROM generation_attempts ga WHERE ga.trial_id=t.trial_id ORDER BY ga.started_at DESC LIMIT 1) AS latest_error_class,
+            (SELECT ga.canonical_failure_class FROM generation_attempts ga WHERE ga.trial_id=t.trial_id ORDER BY ga.started_at DESC LIMIT 1) AS latest_failure_state,
+            (SELECT ga.attempt_id FROM generation_attempts ga WHERE ga.trial_id=t.trial_id ORDER BY ga.started_at DESC LIMIT 1) AS latest_attempt_id
             FROM trials t LEFT JOIN projects p ON p.project_id=t.project_id{where} ORDER BY t.updated_at DESC, t.trial_id DESC""", params).fetchall()
 
     def _render_trial_card(self, row: sqlite3.Row) -> str:
@@ -501,8 +517,9 @@ class DocWriterApp:
         flag_text = " · ".join(flags) if flags else "no reviewer notes"
         attempt_state = row["latest_attempt_state"] or "REQUEST_NOT_STARTED"
         if attempt_state == "COMPLETED" and not (row["normalized_output"] or "").strip(): attempt_state = "COMPLETED_WITHOUT_NORMALIZATION"
-        if row["latest_error_class"]: attempt_state += f" · {row['latest_error_class']}"
-        attempt = {"status": row["latest_attempt_state"], "error_class": row["latest_error_class"], "attempt_id": row["trial_id"], "normalized_proposal": row["normalized_output"]}
+        if row["latest_failure_state"]: attempt_state = row["latest_failure_state"]
+        elif row["latest_error_class"]: attempt_state += f" · {row['latest_error_class']}"
+        attempt = {"status": row["latest_attempt_state"], "canonical_failure_class": row["latest_failure_state"], "error_class": row["latest_error_class"], "attempt_id": row["latest_attempt_id"] or row["trial_id"], "normalized_proposal": row["normalized_output"]}
         review_events = [{"event_type": "REVIEW_NOTE", "note_text": "saved"}] if row["has_notes"] else []
         guidance = guidance_for(row, [attempt] if row["latest_attempt_state"] else [], review_events, project_slug=row["project_slug"])
         action = f"<a class='button' href='{html.escape(guidance.primary_action_url)}'>{html.escape(guidance.primary_action_label)}</a>" if guidance.primary_action_url and guidance.primary_action_label else ""
@@ -522,6 +539,17 @@ class DocWriterApp:
 <section><h2>Recovery record</h2><p>{'The original trial content is unavailable. Doc Writer preserved the evidence it can verify without reconstructing prose.' if provenance else 'The trial content is preserved in the archived record.'}</p><p>Recovery state: <code>{html.escape(trial['recovery_state'] or 'NONE')}</code><br>Evidence reference: <code>{html.escape(trial['recovery_evidence_ref'] or 'not recorded')}</code></p></section>
 <div class='actions' id='archive-actions'>{restore}<a class='button secondary' href='/project/{html.escape(project['slug']) if project else ''}'>View history</a></div>"""
         return self._html("Archived trial", body, csrf)
+
+    def _render_attempt_fallback(self, trial: sqlite3.Row, attempt: sqlite3.Row, csrf: str, project: sqlite3.Row | None) -> str:
+        state = canonical_state(attempt["status"], attempt["error_class"], attempt["canonical_failure_class"])
+        detail = attempt["safe_error_detail"] or attempt["error"] or "The attempt state is recorded in the preserved lifecycle evidence."
+        retry = "A new attempt is not started automatically." if state in ATTENTION_STATES else "This completed result remains available for review."
+        body = f"""<p class='meta'><a href='/project/{html.escape(project['slug']) if project else ''}/trial/{html.escape(trial['trial_id'])}'>Return to trial</a></p>
+<h1>Preserved generation attempt</h1>
+<section><h2>{html.escape(state)}</h2><p>{html.escape(detail)}</p><p>{html.escape(retry)}</p><p>Attempt <code>{html.escape(attempt['attempt_id'])}</code>; last state change <code>{html.escape(attempt['last_state_at'] or attempt['completed_at'] or attempt['started_at'])}</code>.</p></section>
+<details><summary>Technical details</summary><p>Model <code>{html.escape(attempt['model_identifier'])}</code> · digest <code>{html.escape(attempt['model_digest'])}</code><br>Prompt <code>{html.escape(attempt['prompt_version'])}</code><br>Failure class <code>{html.escape(state)}</code> · classifier <code>{html.escape(attempt['classifier_version'])}</code><br>Response SHA-256 <code>{html.escape(attempt['response_sha256'])}</code></p></details>
+<p><a class='button' href='/project/{html.escape(project['slug']) if project else ''}/trial/{html.escape(trial['trial_id'])}#generation-attempts'>View provenance and attempt history</a></p>"""
+        return self._html("Preserved generation attempt", body, csrf)
 
     def _render_projects(self, csrf: str) -> str:
         with self._db() as db:
@@ -622,24 +650,25 @@ class DocWriterApp:
         attempt_view = ""
         diff_view = ""
         if attempt:
+            attempt_state = canonical_state(attempt["status"], attempt["error_class"], attempt["canonical_failure_class"])
             v2_provenance = ""
             if attempt["transport_type"]:
                 v2_provenance = f"<details><summary>Prompt and request provenance</summary><p>Contract version: <code>{html.escape(attempt['prompt_version'])}</code><br>Adapter: <code>{html.escape(attempt['adapter_id'])}</code> · version <code>{html.escape(attempt['adapter_version'])}</code><br>Transport: <code>{html.escape(attempt['transport_type'])}</code> · endpoint <code>{html.escape(attempt['transport_endpoint'])}</code><br>Message roles: <code>{html.escape(attempt['message_roles'])}</code><br>Request serializer: <code>{html.escape(attempt['request_serializer_version'])}</code><br>Schema: <code>{html.escape(attempt['schema_version'])}</code> · SHA-256 <code>{html.escape(attempt['schema_hash'])}</code><br>Contract hashes: <code>{html.escape(attempt['canonical_contract_hashes'])}</code><br>Composed contract SHA-256: <code>{html.escape(attempt['composed_contract_hash'])}</code><br>Task adherence: <code>{html.escape(attempt['task_adherence_result'])}</code></p><details><summary>Exact serialized request</summary><pre>{html.escape(attempt['request_json'])}</pre></details><details><summary>Response schema</summary><pre>{html.escape(attempt['response_schema'])}</pre></details></details>"
-            if attempt["status"] == "FAILED":
-                error_class = attempt["error_class"] or "UNKNOWN_FAILURE"
-                detail = attempt["error"] or "No further error detail was recorded."
+            if attempt_state in ATTENTION_STATES:
+                error_class = attempt_state
+                detail = attempt["safe_error_detail"] or attempt["error"] or "The attempt state is recorded in the preserved lifecycle evidence."
                 raw_view = f"<details><summary>Preserved raw Ollama response</summary><pre>{html.escape(attempt['raw_ollama_response'])}</pre></details>" if attempt["raw_ollama_response"] else "<p>No raw Ollama response was persisted.</p>"
-                attempt_view = f"<section><h2>Generation attempt</h2><p class='error'>FAILED · {html.escape(error_class)}</p><p>{html.escape(detail)}</p>{raw_view}<p>Generation failed closed; the existing draft was preserved. An explicit retry creates a new immutable attempt.</p>{v2_provenance}</section>"
-            elif attempt["status"] == "STALE_SOURCE":
-                attempt_view = "<section><h2>Generation attempt</h2><p class='status'>Source changed during generation; the result was not applied to this draft.</p></section>"
-            elif attempt["status"] == "RUNNING":
+                attempt_view = f"<section><h2>Generation attempt</h2><p class='error'>{html.escape(error_class)}</p><p>{html.escape(detail)}</p><p>What reached this boundary remains preserved. An explicit retry, when offered, creates a new immutable attempt.</p><p><a class='button secondary' href='/trial/{html.escape(trial['trial_id'])}/attempt/{html.escape(attempt['attempt_id'])}'>View preserved attempt</a></p>{raw_view}{v2_provenance}</section>"
+            elif attempt_state == "RUNNING":
                 attempt_view = "<section><h2>Generation attempt</h2><p class='status'>RUNNING · bounded generation is still in progress.</p></section>"
-            elif attempt["status"] == "COMPLETED":
+            elif attempt_state == "COMPLETED" and attempt["presentation_result"] == "failed":
+                attempt_view = f"<section><h2>Generation attempt</h2><p class='error'>The result was saved, but the normal review page could not display it.</p><p>The writing and provenance remain preserved. <a class='button' href='/trial/{html.escape(trial['trial_id'])}/attempt/{html.escape(attempt['attempt_id'])}'>Open fallback result view</a></p>{v2_provenance}</section>"
+            elif attempt_state == "COMPLETED":
                 diff_view = f"""<section><h2>Exact diff</h2><pre class='prose'>{html.escape(attempt['source_to_proposal_diff'] or '(no textual difference)')}</pre></section>"""
                 legacy_notice = "<p class='status'>COMPLETED_WITHOUT_NORMALIZATION · the attempt predates the normalized-output contract.</p>" if not (trial["normalized_output"] or "").strip() else ""
                 attempt_view = f"""<details class='panel'><summary><strong>Full provenance and raw model output</strong></summary>{legacy_notice}<p>Attempt <code>{html.escape(attempt['attempt_id'])}</code>; prompt contract <code>{html.escape(attempt['prompt_version'])}</code>; prompt SHA-256 <code>{html.escape(attempt['prompt_sha256'])}</code>; response SHA-256 <code>{html.escape(attempt['response_sha256'])}</code>; proposal SHA-256 <code>{html.escape(attempt['proposal_sha256'])}</code>; source version <code>{attempt['source_version_id']}</code>.</p><details><summary>Raw Ollama response</summary><pre>{html.escape(attempt['raw_ollama_response'])}</pre></details><p>Telemetry: <code>{html.escape(attempt['telemetry'])}</code></p>{v2_provenance}</details>"""
         generation_history = "".join(f"<tr><td>{html.escape(item['started_at'])}</td><td>{html.escape(item['completed_at'] or 'running')}</td><td>{html.escape(item['status'])}</td><td>{html.escape(item['model_identifier'])}</td><td>{item['source_version_id']}</td><td>{html.escape(item['error'] or '—')}</td></tr>" for item in attempts) or "<tr><td colspan='6'>No generation attempts recorded.</td></tr>"
-        no_attempt_view = "<section><h2>Generation attempt</h2><p class='error'>REQUEST_NOT_STARTED</p><p>This trial has no generation attempt. The source was saved, but no request was submitted to Ollama.</p></section>" if not attempt else ""
+        no_attempt_view = "<section><h2>Generation attempt</h2><p class='status'>REQUEST_NOT_STARTED</p><p>This trial has a saved source paragraph, but the writer has not been run yet. Your draft is safe.</p></section>" if not attempt else ""
         archive_form = f"<form method='post' action='/trial/{html.escape(trial['trial_id'])}/archive'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button class='secondary' type='submit'>Archive trial</button></form>"
         breadcrumb = f"<p class='meta'><a href='/projects'>Projects</a> → <a href='/project/{html.escape(project['slug'])}'>{html.escape(project['name'])}</a> → {html.escape(trial['trial_id'])}</p>" if project else f"<p class='meta'><a href='/projects'>Projects</a> → {html.escape(trial['trial_id'])}</p>"
         guidance = guidance_for(trial, attempts, review_events, project_slug=project["slug"] if project else None)
@@ -735,7 +764,11 @@ class DocWriterApp:
                     trial = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
                     if not trial: raise NotFoundError("trial not found")
                     project = self._project(db, trial["project_id"]) if trial["project_id"] else None
-                    if len(parts) == 3 and parts[2] == "edit": content = self._render_form(csrf, trial, project=project)
+                    if len(parts) == 4 and parts[2] == "attempt":
+                        attempt = db.execute("SELECT * FROM generation_attempts WHERE trial_id=? AND attempt_id=?", (trial_id, parts[3])).fetchone()
+                        if not attempt: raise NotFoundError("attempt not found")
+                        content = self._render_attempt_fallback(trial, attempt, csrf, project)
+                    elif len(parts) == 3 and parts[2] == "edit": content = self._render_form(csrf, trial, project=project)
                     elif len(parts) == 3 and parts[2] == "artifact":
                         artifact = json.dumps({"trial_id": trial_id, "source_sha256": trial["source_sha256"], "model_identifier": trial["model_identifier"], "model_digest": trial["model_digest"], "generation_parameters": json.loads(trial["generation_parameters"] or "{}"), "review_status": trial["review_status"], "revision_lineage": json.loads(trial["revision_lineage"] or "[]")}, indent=2)
                         versions = db.execute("SELECT snapshot FROM trial_versions WHERE trial_id=? ORDER BY version_id", (trial_id,)).fetchall()

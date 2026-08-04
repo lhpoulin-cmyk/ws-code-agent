@@ -156,14 +156,14 @@ def test_malformed_response_fails_closed_and_retry_is_new_attempt(tmp_path):
     application.ollama_client = failed
     assert request(application, f"/trial/{trial_id}/generate", "POST", {"csrf": "x"})["status"].startswith("303")
     with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
-        assert db.execute("select status,raw_ollama_response from generation_attempts").fetchone() == ("FAILED", '{"bad":true}')
+        assert db.execute("select status,raw_ollama_response from generation_attempts").fetchone() == ("INTERRUPTED", '{"bad":true}')
         assert db.execute("select normalized_output,review_status from trials where trial_id=?", (trial_id,)).fetchone() == ("", "REVIEW_REQUIRED")
     source = "The observed service remains local and review is unresolved."
     application.ollama_client = FakeClient(result_for(source))
     assert request(application, f"/trial/{trial_id}/generate", "POST", {"csrf": "x"})["status"].startswith("303")
     with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
         attempts = db.execute("select status,raw_ollama_response from generation_attempts order by rowid").fetchall()
-    assert [row[0] for row in attempts] == ["FAILED", "COMPLETED"]
+    assert [row[0] for row in attempts] == ["INTERRUPTED", "COMPLETED"]
     assert attempts[0][1] == '{"bad":true}'
 
 

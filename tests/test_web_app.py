@@ -220,7 +220,7 @@ def test_project_scoped_and_global_review_queues_and_incomplete_state(tmp_path):
     application = app(tmp_path)
     trial_id = _trial_id(request(application, "/trial", "POST", {"source_text": "Unsumbitted source.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"}))
     page = trial_page(application, trial_id)["body"]
-    assert "REQUEST_NOT_STARTED" in page and "no generation attempt" in page
+    assert "REQUEST_NOT_STARTED" in page and "writer has not been run yet" in page
     assert trial_id in request(application, "/review-queue")["body"]
     assert trial_id in request(application, "/project/alpha?status=needs_review")["body"]
     assert request(application, f"/trial/{trial_id}/generate", "POST", {"csrf": "wrong"})["status"].startswith("403")
@@ -235,7 +235,7 @@ def test_failed_attempt_classification_and_raw_response_render(tmp_path):
     body = trial_page(application, trial_id)["body"]
     assert "OLLAMA_HTTP_ERROR" in body and "Preserved raw Ollama response" in body and '{&quot;error&quot;:&quot;safe&quot;}' in body
     with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
-        assert db.execute("select error_class,status from generation_attempts").fetchone() == ("OLLAMA_HTTP_ERROR", "FAILED")
+        assert db.execute("select error_class,status from generation_attempts").fetchone() == ("OLLAMA_HTTP_ERROR", "OLLAMA_HTTP_ERROR")
 
 
 def test_stale_running_attempt_is_recovered_without_rewriting_history(tmp_path):
@@ -246,5 +246,5 @@ def test_stale_running_attempt_is_recovered_without_rewriting_history(tmp_path):
         db.commit()
     restarted = DocWriterApp(application.config)
     with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
-        assert db.execute("select status,error_class,raw_ollama_response from generation_attempts where attempt_id='generation-stale'").fetchone() == ("FAILED", "STUCK_RUNNING", "preserved-raw")
-    assert "STUCK_RUNNING" in trial_page(restarted, trial_id)["body"]
+        assert db.execute("select status,error_class,raw_ollama_response from generation_attempts where attempt_id='generation-stale'").fetchone() == ("INTERRUPTED", "INTERRUPTED", "preserved-raw")
+    assert "INTERRUPTED" in trial_page(restarted, trial_id)["body"]

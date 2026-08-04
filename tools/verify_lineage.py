@@ -11,9 +11,26 @@ import sqlite3
 import sys
 from pathlib import Path
 
+STATES = {
+    "REQUEST_NOT_STARTED", "QUEUED", "RUNNING", "COMPLETED", "INTERRUPTED",
+    "REQUEST_TIMEOUT", "OLLAMA_UNAVAILABLE", "OLLAMA_HTTP_ERROR", "EMPTY_RESPONSE",
+    "MALFORMED_JSON", "RESPONSE_SCHEMA_INVALID", "PROPOSAL_FIELD_MISSING",
+    "TASK_ADHERENCE_FAILED", "NORMALIZATION_FAILURE", "PERSISTENCE_FAILURE",
+    "RENDER_FAILURE", "STALE_SOURCE",
+}
+TERMINAL_STATES = STATES - {"REQUEST_NOT_STARTED", "QUEUED", "RUNNING"}
+LEGACY = {"FAILED:REQUEST_TIMEOUT":"REQUEST_TIMEOUT", "FAILED:OLLAMA_UNAVAILABLE":"OLLAMA_UNAVAILABLE", "FAILED:OLLAMA_HTTP_ERROR":"OLLAMA_HTTP_ERROR", "FAILED:EMPTY_RESPONSE":"EMPTY_RESPONSE", "FAILED:RESPONSE_SCHEMA_INVALID":"RESPONSE_SCHEMA_INVALID", "FAILED:PROPOSAL_FIELD_MISSING":"PROPOSAL_FIELD_MISSING", "FAILED:TASK_ADHERENCE_FAILED":"TASK_ADHERENCE_FAILED", "FAILED:":"INTERRUPTED", "STALE_SOURCE:":"STALE_SOURCE", "INTERRUPTED:":"INTERRUPTED", "REQUEST_TIMEOUT:REQUEST_TIMEOUT":"REQUEST_TIMEOUT", "COMPLETED:":"COMPLETED", "RUNNING:":"RUNNING", "QUEUED:":"QUEUED"}
 
-TERMINAL = {"COMPLETED", "FAILED", "STALE_SOURCE", "INTERRUPTED", "REQUEST_TIMEOUT"}
+def canonical_state(status, error_class="", explicit=""):
+    if explicit in STATES: return explicit
+    if status in STATES: return status
+    return LEGACY.get(f"{status}:{error_class}", LEGACY.get(f"{status}:", "INTERRUPTED"))
+
+
+TERMINAL = TERMINAL_STATES
 ALLOWED = {
+    (None, "REQUEST_NOT_STARTED"),
+    ("REQUEST_NOT_STARTED", "QUEUED"),
     (None, "RUNNING"),
     (None, "COMPLETED"),
     (None, "FAILED"),
@@ -27,6 +44,12 @@ ALLOWED = {
     ("RUNNING", "INTERRUPTED"),
     ("RUNNING", "REQUEST_TIMEOUT"),
 }
+for _source in STATES:
+    for _target in STATES:
+        if _source == "QUEUED" and _target in {"RUNNING", "INTERRUPTED"}:
+            ALLOWED.add((_source, _target))
+        if _source == "RUNNING" and _target in TERMINAL_STATES:
+            ALLOWED.add((_source, _target))
 
 
 def digest(payload: dict) -> str:
@@ -60,17 +83,18 @@ def verify(db: sqlite3.Connection) -> int:
                 return fail(f"attempt={attempt_id} sequence={row['sequence_number']}")
             if row["prior_event_hash"] != previous_hash:
                 return fail(f"attempt={attempt_id} prior_hash")
-            if (previous_status, row["to_status"]) not in ALLOWED:
-                return fail(f"attempt={attempt_id} transition={previous_status}->{row['to_status']}")
+            event_status = canonical_state(row["to_status"], row["error_class"])
+            previous_canonical = canonical_state(previous_status, rows[-1]["error_class"] if rows else "") if previous_status else None
+            if (previous_canonical, event_status) not in ALLOWED:
+                return fail(f"attempt={attempt_id} transition={previous_canonical}->{event_status}")
             payload = {key: row[key] for key in ("event_id", "attempt_id", "sequence_number", "from_status", "to_status", "error_class", "created_at", "prior_event_hash")}
             if row["event_hash"] != digest(payload):
                 return fail(f"attempt={attempt_id} event_hash")
             previous_hash = row["event_hash"]
             previous_status = row["to_status"]
-        status = attempts[attempt_id]["status"]
-        if status == "FAILED" and previous_status == "REQUEST_TIMEOUT":
-            pass
-        elif status != previous_status and not (status == "RUNNING" and previous_status == "RUNNING"):
+        status = canonical_state(attempts[attempt_id]["status"], attempts[attempt_id]["error_class"], attempts[attempt_id].get("canonical_failure_class", "") if hasattr(attempts[attempt_id], "get") else "")
+        last_event = canonical_state(previous_status, rows[-1]["error_class"] if rows else "")
+        if status != last_event and not (status == "RUNNING" and last_event == "RUNNING"):
             return fail(f"attempt={attempt_id} terminal_status={status}")
 
     streams: dict[str, list[sqlite3.Row]] = {}

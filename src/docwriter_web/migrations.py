@@ -48,6 +48,7 @@ MIGRATION_NAMES = (
     "audience-attempt-before-request-v1",
     "audience-attempt-reconciliation-v1",
     "writing-setup-clarification-v1",
+    "writing-setup-explicit-intent-v1",
 )
 
 
@@ -784,6 +785,26 @@ def _writing_setup_clarification(db: sqlite3.Connection, commit: str) -> None:
     _ledger(db, name, commit, before, before_hash)
 
 
+def _writing_setup_explicit_intent(db: sqlite3.Connection, commit: str) -> None:
+    name = "writing-setup-explicit-intent-v1"
+    if _migration_applied(db, name):
+        return
+    before, before_hash = _counts(db), _database_hash(db)
+    for column, definition in {
+        "completion_state": "TEXT NOT NULL DEFAULT 'LEGACY_UNVERIFIED'",
+        "field_provenance_json": "TEXT NOT NULL DEFAULT '{}'",
+        "confirmed_at": "TEXT",
+        "confirmed_by": "TEXT",
+        "setup_contract_version": "TEXT NOT NULL DEFAULT 'writing-setup-v1'",
+    }.items():
+        _add_column(db, "writing_setup_versions", column, definition)
+    # Existing rows receive the conservative defaults above. Their values are
+    # retained, but no authorship is inferred from default-like text or old
+    # call paths.
+    db.execute("CREATE INDEX IF NOT EXISTS writing_setup_state_idx ON writing_setup_versions(trial_id, completion_state, source_version_id)")
+    _ledger(db, name, commit, before, before_hash)
+
+
 def apply_migrations(db: sqlite3.Connection, application_commit: str) -> None:
     db.execute("PRAGMA foreign_keys=ON")
     db.execute("""CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -816,3 +837,4 @@ def apply_migrations(db: sqlite3.Connection, application_commit: str) -> None:
     _audience_attempt_before_request(db, application_commit)
     _audience_attempt_reconciliation(db, application_commit)
     _writing_setup_clarification(db, application_commit)
+    _writing_setup_explicit_intent(db, application_commit)

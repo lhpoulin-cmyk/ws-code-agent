@@ -47,7 +47,7 @@ from .baselines import eligibility as baseline_eligibility, current_baseline
 from .audience import AUDIENCE_VERSION, derived_state as audience_state, profile_contract, sha256_text as audience_sha256, audience_schema
 from .system_status import collect as collect_system_status
 from .ui_state import DEVELOPER, NORMAL, mode_cookie, mode_from_cookie
-from .writing_setup import WritingSetup, from_form as setup_from_form, from_row as setup_from_row, serialize as serialize_setup, sha256_serialized
+from .writing_setup import WritingSetup, from_form as setup_from_form, from_row as setup_from_row, serialize as serialize_setup, sha256_serialized, missing_labels
 
 
 _CURRENT_MODE: contextvars.ContextVar[str] = contextvars.ContextVar("docwriter_mode", default=NORMAL)
@@ -493,12 +493,32 @@ class DocWriterApp:
         serialized = serialize_setup(setup)
         setup_hash = sha256_serialized(serialized)
         setup_id = f"setup-{secrets.token_hex(8)}"
-        db.execute("INSERT INTO writing_setup_versions(setup_version_id,trial_id,source_version_id,primary_audience,tone,purpose,preservation_instructions,clarification_policy,serialized_setup,setup_sha256,created_at,created_by,supersedes_setup_version_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", (setup_id, trial_id, source_version_id, setup.primary_audience, setup.tone, setup.purpose, setup.preservation_instructions, setup.clarification_policy, serialized, setup_hash, utc_now(), created_by, supersedes))
+        db.execute("INSERT INTO writing_setup_versions(setup_version_id,trial_id,source_version_id,primary_audience,tone,purpose,preservation_instructions,clarification_policy,serialized_setup,setup_sha256,created_at,created_by,supersedes_setup_version_id,completion_state,field_provenance_json,confirmed_at,confirmed_by,setup_contract_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (setup_id, trial_id, source_version_id, setup.primary_audience, setup.tone, setup.purpose, setup.preservation_instructions, setup.clarification_policy, serialized, setup_hash, utc_now(), created_by, supersedes, setup.completion_state, json.dumps(setup.field_provenance or {}, sort_keys=True), setup.confirmed_at, setup.confirmed_by, setup.setup_contract_version))
         db.execute("UPDATE trial_versions SET writing_setup_version_id=? WHERE version_id=?", (setup_id, source_version_id))
         return setup_id
 
     def _latest_setup(self, db: sqlite3.Connection, trial_id: str) -> sqlite3.Row | None:
         return db.execute("SELECT * FROM writing_setup_versions WHERE trial_id=? ORDER BY source_version_id DESC, setup_version_id DESC LIMIT 1", (trial_id,)).fetchone()
+
+    def _confirm_writing_setup(self, trial_id: str, reviewer: str) -> str:
+        with self._db() as db:
+            trial = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
+            if not trial:
+                raise LookupError("trial not found")
+            current_version = db.execute("SELECT * FROM trial_versions WHERE trial_id=? ORDER BY version_id DESC LIMIT 1", (trial_id,)).fetchone()
+            setup_row = db.execute("SELECT * FROM writing_setup_versions WHERE source_version_id=?", (current_version["version_id"],)).fetchone() if current_version else None
+            setup = setup_from_row(setup_row) if setup_row else None
+            if not setup:
+                raise ValueError("Save the source and writing setup before confirming it.")
+            if setup.completion_state == "LEGACY_UNVERIFIED":
+                raise ValueError("This historical setup requires a new explicit writing setup before it can be confirmed.")
+            if setup.missing_fields:
+                raise ValueError(f"Finish writing setup before confirming: {', '.join(missing_labels(setup))}.")
+            confirmed = setup.confirmed(utc_now(), reviewer)
+            version_id = self._save_version(db, trial, "SETUP_CONFIRMED")
+            new_id = self._create_writing_setup(db, trial_id, version_id, confirmed, reviewer, setup_row["setup_version_id"])
+            db.execute("UPDATE trials SET updated_at=? WHERE trial_id=?", (utc_now(), trial_id))
+            return new_id
 
     def _open_clarification(self, db: sqlite3.Connection, trial_id: str) -> sqlite3.Row | None:
         return db.execute("SELECT q.* FROM clarification_questions q LEFT JOIN clarification_answers a ON a.question_id=q.question_id WHERE q.trial_id=? AND a.answer_id IS NULL ORDER BY q.created_at DESC LIMIT 1", (trial_id,)).fetchone()
@@ -519,6 +539,13 @@ class DocWriterApp:
                     raise ValueError("source version is unavailable")
                 setup_row = db.execute("SELECT * FROM writing_setup_versions WHERE source_version_id=?", (version["version_id"],)).fetchone()
                 setup = setup_from_row(setup_row) if setup_row else None
+                if not setup or not setup.explicit_complete:
+                    if not setup:
+                        raise ValueError("The source is saved, but the writing setup is not complete yet. Finish writing setup before generation.")
+                    if setup.completion_state == "LEGACY_UNVERIFIED":
+                        raise ValueError("This historical setup predates explicit writing decisions. Review writing setup and create a new confirmed version before generating again.")
+                    missing = ", ".join(missing_labels(setup))
+                    raise ValueError(f"The source is saved, but the writing setup is not complete yet. Decide {missing} before generation.")
                 answer_row = None
                 if setup:
                     open_question = self._open_clarification(db, trial_id)
@@ -923,17 +950,28 @@ class DocWriterApp:
         if trial:
             with self._db() as db:
                 setup_row = self._latest_setup(db, trial["trial_id"])
-        def value(key: str, default: str = "") -> str:
-            raw = setup_row[key] if setup_row and key in setup_row.keys() else (trial[key] if trial and key in trial.keys() else default)
-            return html.escape((raw or default) or "")
+        def value(key: str) -> str:
+            raw = setup_row[key] if setup_row and key in setup_row.keys() else (trial[key] if trial and key in trial.keys() else "")
+            return html.escape(raw or "")
         trial_id = trial["trial_id"] if trial else ""
         action = f"/trial/{trial_id}/save" if trial_id else "/trial"
         project_select = f"<p>Project: <strong>{html.escape(project['name'])}</strong></p><input type='hidden' name='project_id' value='{html.escape(project['project_id'])}'>" if project else "<label for='project_id'>Project</label><select id='project_id' name='project_id' required>" + "".join(f"<option value='{html.escape(item['project_id'])}'>{html.escape(item['name'])}</option>" for item in (projects or [])) + "</select>"
         breadcrumb = f" → {html.escape(project['name'])}" if project else ""
-        body = f"""<p class='meta'><a href='/projects'>Projects</a>{breadcrumb}</p><h1>{'Edit trial' if trial else 'New conversational trial'}</h1><p class='muted'>This screen saves review material only. It never invokes a model.</p><form method='post' action='{action}'>
+        policy = value('clarification_policy')
+        policy_choices = (
+            "Ask one focused question when ambiguity would materially change meaning",
+            "Preserve ambiguity and draft without guessing",
+            "Do not ask; stop and return the unresolved issue for review",
+        )
+        policy_options = "".join(
+            f"<label><input type='radio' name='clarification_policy' value='{html.escape(choice)}'{' checked' if policy == choice else ''}>{html.escape(choice)}</label>"
+            for choice in policy_choices
+        )
+        custom_policy = policy if policy and policy not in policy_choices else ""
+        body = f"""<p class='meta'><a href='/projects'>Projects</a>{breadcrumb}</p><h1>{'Edit trial' if trial else 'New conversational trial'}</h1><p class='muted'>Save a source and unfinished writing setup at any time. Nothing is sent to the model from this screen.</p><form method='post' action='{action}'>
 <input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='source_text'>Source paragraph</label><textarea id='source_text' name='source_text' maxlength='{MAX_SOURCE}' required>{value('source_text')}</textarea>
 {project_select}
-<fieldset><legend>Writing setup for the first proposal</legend><label for='primary_audience'>Primary audience</label><input id='primary_audience' name='primary_audience' maxlength='400' value='{value('primary_audience', 'Not specified')}' required><label for='tone'>Tone</label><input id='tone' name='tone' maxlength='400' value='{value('tone', 'Not specified')}' required><label for='purpose'>Purpose</label><textarea id='purpose' name='purpose' maxlength='2000' required>{value('purpose')}</textarea><label for='preservation_instructions'>What must be preserved</label><textarea id='preservation_instructions' name='preservation_instructions' maxlength='4000' required>{value('preservation_instructions')}</textarea><label for='clarification_policy'>Clarification policy</label><textarea id='clarification_policy' name='clarification_policy' maxlength='1000' required>{value('clarification_policy')}</textarea></fieldset>
+<fieldset><legend>Writing setup for the first proposal</legend><p class='muted'>Blank means undecided. Complete and confirm all five choices before generation.</p><label for='primary_audience'>Primary audience</label><input id='primary_audience' name='primary_audience' maxlength='400' placeholder='Who should understand this first?' value='{value('primary_audience')}'><label for='tone'>Tone</label><input id='tone' name='tone' maxlength='400' placeholder='How should this feel to the reader?' value='{value('tone')}'><label for='purpose'>Purpose</label><textarea id='purpose' name='purpose' maxlength='2000' placeholder='What are you trying to accomplish?'>{value('purpose')}</textarea><label for='preservation_instructions'>What must be preserved</label><textarea id='preservation_instructions' name='preservation_instructions' maxlength='4000' placeholder='What must not be changed, omitted, or flattened?'>{value('preservation_instructions')}</textarea><fieldset><legend>Clarification policy</legend>{policy_options}<label for='clarification_policy_custom'>Custom policy</label><input id='clarification_policy_custom' name='clarification_policy_custom' maxlength='1000' placeholder='Enter a custom policy only when a standard choice does not fit.' value='{html.escape(custom_policy)}'></fieldset></fieldset>
 <details class='developer-only'><summary>Server-owned generation metadata</summary><p>Model selection and generation settings are application-owned and are recorded on each attempt. Generated output and review evidence appear only after they exist.</p></details>
 <button type='submit'>Save draft</button></form>"""
         return self._html("New trial", body, csrf)
@@ -951,8 +989,16 @@ class DocWriterApp:
         review_error_html = f"<p class='error' id='review-error'>{html.escape(review_error)}</p>" if review_error else (f"<p class='status' id='review-saved'>{html.escape(review_notice)}</p>" if review_notice else "")
         current_note = next((event["note_text"] for event in reversed(review_events) if event["event_type"] == "REVIEW_NOTE" and not event["private_steering"] and (event["note_text"] or "").strip()), "")
         review_form = f"""<section id='review-rationale'><h2>Operator review record</h2>{review_error_html}<p>Review notes are durable review material, not publishable document prose. Private steering is stored and displayed separately.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/review'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='review_note'>Current reviewer note / rationale</label><textarea id='review_note' name='note_text' maxlength='{MAX_NOTES}' aria-describedby='review-help'>{html.escape(current_note)}</textarea><p id='review-help' class='muted'>Describe what sounded generic, what did not sound like the operator, exact rejected passages, and preferred replacement wording.</p><label for='related_passage'>Exact phrase or passage, if applicable</label><textarea id='related_passage' name='related_passage' maxlength='{MAX_NOTES}'></textarea><label><input type='checkbox' name='private_steering' value='1'> Private operator aside / steering note (never publishable prose)</label><button type='submit'>Save review note</button></form><h3>Review history</h3><table><tr><th>Timestamp</th><th>Reviewer</th><th>Event</th><th>Decision</th><th>Note</th><th>Visibility</th></tr>{review_history or '<tr><td colspan="6">No review events recorded.</td></tr>'}</table></section>"""
+        with self._db() as db:
+            current_version = db.execute("SELECT * FROM trial_versions WHERE trial_id=? ORDER BY version_id DESC LIMIT 1", (trial["trial_id"],)).fetchone()
+            setup_for_generation = db.execute("SELECT * FROM writing_setup_versions WHERE source_version_id=?", (current_version["version_id"],)).fetchone() if current_version else None
+        setup_state = setup_from_row(setup_for_generation).completion_state if setup_for_generation else "DRAFT"
+        generation_ready = bool(setup_for_generation and setup_from_row(setup_for_generation).explicit_complete)
         model_options = "".join(f"<option {'selected' if profile.model_identifier == trial['model_identifier'] else ''}>{html.escape(profile.model_identifier)}</option>" for profile in self.adapter_profiles.values())
-        generation = f"""<section id='generation-attempts'><h2>Generate conversational proposal</h2><p>Setup-aware drafts use <code>conversational-proposal-v3</code>; historical attempts retain their original contract.<br>Controlled settings: context 8192, temperature 0.2, top-p 0.9, seed 42, streaming disabled, thinking disabled</p><p class='muted'>Execution uses local Ollama only. The result remains <code>REVIEW_REQUIRED</code> and is never accepted automatically.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/generate' onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Generating…';"><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='generation-model'>Server-owned model adapter</label><select id='generation-model' name='model_identifier'>{model_options}</select><button type='submit'>Generate conversational proposal</button></form></section>"""
+        if generation_ready:
+            generation = f"""<section id='generation-attempts'><h2>Generate conversational proposal</h2><p>Setup-aware drafts use <code>conversational-proposal-v3</code>; historical attempts retain their original contract.<br>Controlled settings: context 8192, temperature 0.2, top-p 0.9, seed 42, streaming disabled, thinking disabled</p><p class='muted'>Execution uses local Ollama only. The result remains <code>REVIEW_REQUIRED</code> and is never accepted automatically.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/generate' onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Generating…';"><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='generation-model'>Server-owned model adapter</label><select id='generation-model' name='model_identifier'>{model_options}</select><button type='submit'>Generate conversational proposal</button></form></section>"""
+        else:
+            generation = "<section id='generation-attempts'><h2>Generation unavailable</h2><p>The source is saved, but the writing setup is not complete yet. Decide who this is for, how it should sound, what it should accomplish, what must be preserved, and how ambiguity should be handled. Generation will become available after those choices are confirmed.</p><p class='status'>Writing setup state: " + html.escape(setup_state) + "</p><a class='button' href='#writing-setup'>Finish writing setup</a></section>"
         attempt_view = ""
         diff_view = ""
         if attempt:
@@ -985,7 +1031,21 @@ class DocWriterApp:
             latest_answer = db.execute("SELECT a.* FROM clarification_answers a JOIN clarification_questions q ON q.question_id=a.question_id WHERE q.trial_id=? ORDER BY a.created_at DESC LIMIT 1", (trial["trial_id"],)).fetchone()
         guidance = guidance_for(trial, attempts, review_events, project_slug=project["slug"] if project else None, baselines=guidance_baselines)
         integrity_block = f"<section id='integrity-findings'><h2>Model integrity findings</h2><pre>{html.escape(trial['integrity_findings'] or '—')}</pre></section>"
-        setup_block = f"<section id='writing-setup'><h2>Writing setup for the first proposal</h2><p><strong>Primary audience:</strong> {html.escape(setup_row['primary_audience'])}<br><strong>Tone:</strong> {html.escape(setup_row['tone'])}<br><strong>Purpose:</strong> {html.escape(setup_row['purpose'])}<br><strong>Preserve:</strong> {html.escape(setup_row['preservation_instructions'])}<br><strong>Clarification policy:</strong> {html.escape(setup_row['clarification_policy'])}</p><details><summary>Setup provenance</summary><p>Version <code>{html.escape(setup_row['setup_version_id'])}</code> · SHA-256 <code>{html.escape(setup_row['setup_sha256'])}</code></p></details></section>" if setup_row else "<section id='writing-setup'><h2>Writing setup</h2><p>This historical trial predates versioned writing setup provenance.</p></section>"
+        if setup_row:
+            setup_state = setup_from_row(setup_row)
+            field_names = {"primary_audience": "Primary audience", "tone": "Tone", "purpose": "Purpose", "preservation_instructions": "Preserve", "clarification_policy": "Clarification policy"}
+            setup_values = "<br>".join(f"<strong>{label}:</strong> {html.escape(setup_state.values()[field] or 'UNDECIDED')}" for field, label in field_names.items())
+            missing = missing_labels(setup_state)
+            setup_action = ""
+            if setup_state.completion_state == "DRAFT":
+                setup_action = f"<p class='status'>Writing setup is saved as a draft. Still to decide: {html.escape('; '.join(missing)) or 'confirm the choices below'}.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/confirm-setup'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button type='submit'>Confirm writing setup</button></form>"
+            elif setup_state.completion_state == "LEGACY_UNVERIFIED":
+                setup_action = "<p class='status'>This setup was recorded before Doc Writer required explicit writing decisions. The historical attempt remains preserved. Create a new setup version before generating again.</p>"
+            else:
+                setup_action = "<p class='notice'>Writing setup complete. Generation is available.</p>"
+            setup_block = f"<section id='writing-setup'><h2>Writing setup for the first proposal</h2>{setup_action}<p>{setup_values}</p><details><summary>Setup provenance</summary><p>Version <code>{html.escape(setup_row['setup_version_id'])}</code> · state <code>{html.escape(setup_state.completion_state)}</code> · SHA-256 <code>{html.escape(setup_row['setup_sha256'])}</code></p></details><p><a class='button secondary' href='/trial/{html.escape(trial['trial_id'])}/edit'>Review writing setup</a></p></section>"
+        else:
+            setup_block = "<section id='writing-setup'><h2>Writing setup</h2><p>This historical trial predates versioned writing setup provenance. Review writing setup before generating again.</p></section>"
         clarification_block = ""
         if latest_question and attempt and attempt["result_kind"] == "CLARIFICATION_REQUIRED":
             if open_question:
@@ -1181,6 +1241,9 @@ class DocWriterApp:
                 if len(parts) == 3 and parts[2] == "generate":
                     self._generate_trial(trial_id, form.get("model_identifier") or None)
                     start_response("303 See Other", [("Location", f"/trial/{trial_id}")]); return [b""]
+                if len(parts) == 3 and parts[2] == "confirm-setup":
+                    self._confirm_writing_setup(trial_id, self._authenticated_user(environ) or "operator")
+                    start_response("303 See Other", [("Location", f"/trial/{trial_id}#writing-setup")]); return [b""]
                 with self._db() as db:
                     trial = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
                     if not trial: raise LookupError("trial not found")

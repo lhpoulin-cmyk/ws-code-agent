@@ -49,8 +49,10 @@ def make_app(tmp_path):
 
 
 def make_trial(app):
-    response = request(app, "/trial", "POST", {"source_text": "The observed service remains local and review is unresolved.", "model_identifier": MODEL, "csrf": "x"})
-    return response["headers"][0][1].rsplit("/", 1)[-1]
+    response = request(app, "/trial", "POST", {"source_text": "The observed service remains local and review is unresolved.", "model_identifier": MODEL, "primary_audience": "General reader", "tone": "Direct", "purpose": "Explain the result.", "preservation_instructions": "Preserve the facts.", "clarification_policy": "Ask one focused question when ambiguity would materially change meaning", "csrf": "x"})
+    trial_id = response["headers"][0][1].rsplit("/", 1)[-1]
+    assert request(app, f"/trial/{trial_id}/confirm-setup", "POST", {"csrf": "x"})["status"].startswith("303")
+    return trial_id
 
 
 def result_for(source, proposal="The service remains local, and review is unresolved."):
@@ -95,7 +97,7 @@ def test_success_persists_fixed_settings_provenance_and_review_required(tmp_path
     assert json.loads(trial[3])[0]["category"] == "no material issue found"
     assert trial[4] == "The service remains local, and review is unresolved."
     assert trial[5] == "REVIEW_REQUIRED"
-    assert attempt[0] == 1 and attempt[1] == CONVERSATIONAL_V3_VERSION and attempt[2] == application.contract_bundle.composed_hash
+    assert attempt[0] == 2 and attempt[1] == CONVERSATIONAL_V3_VERSION and attempt[2] == application.contract_bundle.composed_hash
     assert attempt[4] and "source paragraph" in attempt[5] and attempt[6] == sha256_text(trial[4]) and attempt[7] == "COMPLETED"
 
 

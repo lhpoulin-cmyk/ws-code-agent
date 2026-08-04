@@ -228,7 +228,9 @@ def test_project_scoped_and_global_review_queues_and_incomplete_state(tmp_path):
 
 def test_failed_attempt_classification_and_raw_response_render(tmp_path):
     application = app(tmp_path)
-    trial_id = _trial_id(request(application, "/trial", "POST", {"source_text": "A source.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "csrf": "x"}))
+    trial_response = request(application, "/trial", "POST", {"source_text": "A source.", "model_identifier": "mistral-nemo:12b-instruct-2407-q4_K_M", "primary_audience": "General reader", "tone": "Direct", "purpose": "Explain the source.", "preservation_instructions": "Preserve the facts.", "clarification_policy": "Ask one focused question when ambiguity would materially change meaning", "csrf": "x"})
+    trial_id = _trial_id(trial_response)
+    assert request(application, f"/trial/{trial_id}/confirm-setup", "POST", {"csrf": "x"})["status"].startswith("303")
     from docwriter_web.generation import OllamaError
     application.ollama_client = type("FailingClient", (), {"generate": lambda self, source: (_ for _ in ()).throw(OllamaError("Ollama HTTP status 500", '{"error":"safe"}', {"error": "safe"}, "OLLAMA_HTTP_ERROR"))})()
     assert request(application, f"/trial/{trial_id}/generate", "POST", {"csrf": "x"})["status"].startswith("303")

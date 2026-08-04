@@ -88,7 +88,7 @@ def test_legacy_rejection_gets_later_rationale_without_rewriting_decision(tmp_pa
     assert saved["status"].startswith("303") and "review_saved=1" in saved["headers"][0][1]
     refreshed = DocWriterApp(application.config)
     page = trial_page(refreshed, trial_id)["body"]
-    assert "The opening sounded generic" in page and "private steering" in page
+    assert "The opening sounded generic" not in page and "Private steering recorded" in page
     with sqlite3.connect(tmp_path / "state" / "docwriter.sqlite3") as db:
         events = db.execute("select event_type,decision,note_text,private_steering,created_at from review_events where trial_id=? order by created_at,event_id", (trial_id,)).fetchall()
         assert events[0][0:2] == ("DECISION", "REJECTED") and events[0][4] == original_time

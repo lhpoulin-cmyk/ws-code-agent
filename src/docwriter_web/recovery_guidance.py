@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from .failure_taxonomy import canonical_state
+from .editorial_state import derive_editorial_state
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,22 @@ def guidance_for(
     attempts = list(attempts)
     events = list(review_events)
     attempt = attempts[0] if attempts else None
+    editorial = derive_editorial_state(trial, attempts, events)
+    editorial_messages = {
+        "REVIEW_TARGET_REQUIRED": ("This trial has more than one completed proposal, or no durable review target has been chosen.", "Earlier attempts and decisions remain preserved.", "Choose the exact proposal that should receive staged review.", "Choose proposal", f"{base}#editorial-target"),
+        "INTEGRITY_REVIEW_REQUIRED": ("A proposal is ready. First check whether it preserves the facts, authority, uncertainty, and meaning of the source.", "The source, proposal, findings, and exact hashes remain preserved.", "Integrity review must come before meaning review.", "Review integrity", f"{base}#integrity-review"),
+        "INTEGRITY_ISSUE_UNRESOLVED": ("An integrity issue is still open.", "The source and proposal are preserved.", "Confirm or explain the issue before moving to revision review.", "Return to integrity review", f"{base}#integrity-review"),
+        "REVISION_REVIEW_REQUIRED": ("Integrity has been accepted. Now check whether the proposal still says what you meant and whether anything important was lost.", "The exact reviewed source and proposal remain preserved.", "Meaning review is separate from tone review.", "Review revision", f"{base}#revision-review"),
+        "REVISION_REQUIRED": ("The proposal needs another meaning or content revision.", "The reviewed source, proposal, and rationale remain preserved.", "Record the next revision rationale before starting another attempt.", "Review revision feedback", f"{base}#revision-review"),
+        "REVISION_REJECTED": ("This proposal was rejected for staged review.", "The proposal and rejection rationale remain preserved.", "Choose another completed attempt if one is available.", "View review history", f"{base}#review-history"),
+        "TONE_REVIEW_REQUIRED": ("The proposal passed the meaning check. The next step is deciding whether it sounds like you.", "Meaning, integrity, and the exact proposal remain preserved.", "Tone is an independent human judgment.", "Review tone", f"{base}#tone-review"),
+        "TONE_REVISION_REQUIRED": ("The meaning is acceptable, but the voice still needs work.", "Your tone notes and preferred wording are preserved.", "Use the tone feedback to guide a later explicit revision.", "Review tone feedback", f"{base}#tone-review"),
+        "TONE_REJECTED": ("This proposal was rejected as a basis for the operator's voice.", "The proposal and tone rationale remain preserved.", "Choose another completed attempt if one is available.", "View review history", f"{base}#review-history"),
+        "READY_FOR_BASELINE_ACCEPTANCE": ("Meaning and tone have both been accepted.", "Your reviewed proposal and complete history are preserved.", "Baseline acceptance is the next editorial step, but it is not available in this version yet.", "View completed review", f"{base}#review-history"),
+    }
+    if editorial.state in editorial_messages:
+        title, preserved, why, label, url = editorial_messages[editorial.state]
+        return Guidance(editorial.state, "attention" if editorial.state not in {"READY_FOR_BASELINE_ACCEPTANCE"} else "neutral", title, preserved, preserved, why, label, url, target_section_id=url.rsplit("#", 1)[-1], technical_details=f"{editorial.state} · {editorial.target_attempt_id or 'target required'}")
     status = _value(trial, "review_status", "REVIEW_REQUIRED")
     notes = any(_value(event, "event_type") == "REVIEW_NOTE" and str(_value(event, "note_text", "") or "").strip() for event in events)
     if status in {"REJECTED", "REVISION_REQUIRED"} and not notes:

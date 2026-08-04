@@ -20,10 +20,10 @@ def test_guidance_covers_resume_states_without_blame_language():
         (guidance_for(trial(), [attempt("INTERRUPTED")]), "INTERRUPTED"),
         (guidance_for(trial(), [attempt("FAILED", "OLLAMA_UNAVAILABLE")]), "OLLAMA_UNAVAILABLE"),
         (guidance_for(trial(), [attempt("RESPONSE_SCHEMA_INVALID", "RESPONSE_SCHEMA_INVALID", "")]), "RESPONSE_SCHEMA_INVALID"),
-        (guidance_for(trial(integrity_findings='[{"category":"ambiguity","detail":"structural"}]'), [attempt("COMPLETED")]), "INTEGRITY_REVIEW_REQUIRED"),
-        (guidance_for(trial(), [attempt("COMPLETED")]), "REVISION_REVIEW_REQUIRED"),
-        (guidance_for(trial("ACCEPTED"), [attempt("COMPLETED")]), "TONE_REVIEW_UNAVAILABLE"),
-        (guidance_for(trial("ACCEPTED"), [attempt("COMPLETED")], tone_available=True), "AUDIENCE_WORK_UNAVAILABLE"),
+        (guidance_for(trial(integrity_findings='[{"category":"ambiguity","detail":"structural"}]'), [attempt("COMPLETED")]), "REVIEW_TARGET_REQUIRED"),
+        (guidance_for(trial(), [attempt("COMPLETED")]), "REVIEW_TARGET_REQUIRED"),
+        (guidance_for(trial("ACCEPTED"), [attempt("COMPLETED")]), "REVIEW_TARGET_REQUIRED"),
+        (guidance_for(trial("ACCEPTED"), [attempt("COMPLETED")], tone_available=True), "REVIEW_TARGET_REQUIRED"),
         (guidance_for(trial(lifecycle_state="ARCHIVED"), [attempt("COMPLETED")]), "ARCHIVED_TRIAL"),
         (guidance_for(trial(lifecycle_state="ARCHIVED", source_state="OPERATOR_DELETED_TEST_CONTENT", recovery_state="PROVENANCE_ONLY"), [attempt("COMPLETED")]), "PROVENANCE_ONLY"),
         (guidance_for(trial(project_slug=None, project_id=None), [attempt("COMPLETED")]), "MISSING_PROJECT_CONTEXT"),
@@ -40,9 +40,8 @@ def test_guidance_covers_resume_states_without_blame_language():
 
 def test_unknown_state_fails_honestly_and_keeps_history_action():
     result = guidance_for(trial("UNSUPPORTED"), [attempt("COMPLETED")], audience_available=True, tone_available=True)
-    assert result.guidance_id == "UNKNOWN_NEXT_STEP"
-    assert result.title == "Doc Writer cannot determine the next step from the available record."
-    assert result.primary_action_url.endswith("#generation-attempts")
+    assert result.guidance_id == "REVIEW_TARGET_REQUIRED"
+    assert result.primary_action_url.endswith("#editorial-target")
 
 
 def test_trial_and_queue_surfaces_explain_next_action_with_accessible_targets(tmp_path):

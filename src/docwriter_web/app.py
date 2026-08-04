@@ -37,6 +37,7 @@ from .migrations import apply_migrations
 from .recovery_guidance import Guidance, guidance_for
 from .prompt_contracts import load_phase_b_assets
 from .failure_taxonomy import CLASSIFIER_VERSION, canonical_state, classify_error, ATTENTION_STATES
+from .editorial_state import EditorialState, derive_editorial_state
 
 MAX_SOURCE = 12000
 MAX_FIELD = 12000
@@ -54,6 +55,13 @@ MODEL_DIGESTS = {
     "gemma3:12b-it-q4_K_M": "sha256:f4031aab637d1ffa37b425704ae0e4fad0314754d17ded67322e4b95836f8a",
     "mistral-nemo:12b-instruct-2407-q4_K_M": "sha256:daf6737417121831e572a9c482e92a221ee0c33537f35f1f857c7b4f7191df55",
 }
+EDITORIAL_OUTCOMES = {
+    "TARGET": {"SELECTED"},
+    "INTEGRITY": {"INTEGRITY_ACCEPTED", "INTEGRITY_ISSUE"},
+    "REVISION": {"READY_FOR_TONE_REVIEW", "REVISION_REQUIRED", "REJECTED"},
+    "TONE": {"TONE_ACCEPTED", "TONE_REVISION_REQUIRED", "TONE_REJECTED"},
+}
+TONE_FINDING_CODES = {"generic_or_assistant_like", "too_formal", "too_casual", "academic", "corporate", "bureaucratic", "consultant_like", "emotionally_flattened", "overpolished", "lost_bluntness", "lost_warmth", "lost_humor", "lost_rhythm", "lost_emphasis", "lost_vulnerability", "other"}
 
 
 class NotFoundError(LookupError):
@@ -289,6 +297,35 @@ class DocWriterApp:
         db.execute("INSERT INTO review_event_chain(event_id,stream_id,sequence_number,prior_content_hash,event_content_hash,authoritative,superseded_event_id) VALUES(?,?,?,?,?,?,NULL)", (event_id, f"trial:{trial_id}", sequence, prior_hash, event_hash, 1))
         return event_id
 
+    def _editorial_target(self, db: sqlite3.Connection, trial_id: str) -> tuple[sqlite3.Row, sqlite3.Row] | None:
+        target = db.execute("SELECT * FROM review_events WHERE trial_id=? AND event_type='REVIEW_TARGET_SELECTED' ORDER BY created_at DESC,event_id DESC LIMIT 1", (trial_id,)).fetchone()
+        if not target:
+            return None
+        attempt = db.execute("SELECT * FROM generation_attempts WHERE attempt_id=? AND trial_id=? AND status='COMPLETED'", (target["generation_attempt_id"], trial_id)).fetchone()
+        if not attempt or target["source_version_id"] != attempt["source_version_id"] or target["source_sha256"] != attempt["source_sha256"] or target["proposal_sha256"] != attempt["proposal_sha256"]:
+            return None
+        return target, attempt
+
+    def _insert_editorial_event(self, db: sqlite3.Connection, trial_id: str, stage: str, decision: str, note_text: str, related_passage: str, preferred_replacement: str, finding_codes: list[str], private_steering: bool, operator_aside: str, reviewer_identity: str, attempt: sqlite3.Row, source_version_id: int | None = None) -> str:
+        if stage not in EDITORIAL_OUTCOMES or decision not in EDITORIAL_OUTCOMES[stage]:
+            raise ValueError("that review outcome does not belong to this editorial stage")
+        if decision in {"INTEGRITY_ISSUE", "REVISION_REQUIRED", "REJECTED", "TONE_REVISION_REQUIRED", "TONE_REJECTED"} and not note_text.strip():
+            raise ValueError("Add a short rationale before recording this review outcome.")
+        if any(code not in TONE_FINDING_CODES for code in finding_codes):
+            raise ValueError("one or more tone finding codes are not recognized")
+        if stage != "TONE" and finding_codes:
+            raise ValueError("tone finding codes belong only to tone review")
+        stream_id = f"editorial:{trial_id}:{attempt['attempt_id']}"
+        prior = db.execute("SELECT event_id,content_hash,sequence_number FROM review_events WHERE stream_id=? ORDER BY sequence_number DESC,event_id DESC LIMIT 1", (stream_id,)).fetchone()
+        sequence = (prior["sequence_number"] if prior and "sequence_number" in prior.keys() and prior["sequence_number"] else 0) + 1
+        event_id, timestamp = f"review-{secrets.token_hex(8)}", utc_now()
+        event_type = "REVIEW_TARGET_SELECTED" if stage == "TARGET" else stage + "_REVIEW"
+        payload = {"event_id": event_id, "trial_id": trial_id, "generation_attempt_id": attempt["attempt_id"], "source_version_id": source_version_id or attempt["source_version_id"], "source_sha256": attempt["source_sha256"], "proposal_sha256": attempt["proposal_sha256"], "stage": stage, "event_type": event_type, "decision": decision, "note_text": note_text, "related_passage": related_passage, "preferred_replacement": preferred_replacement, "finding_codes": sorted(finding_codes), "private_steering": bool(private_steering), "operator_aside": operator_aside, "reviewer_identity": reviewer_identity, "created_at": timestamp, "stream_id": stream_id, "sequence_number": sequence, "prior_content_hash": prior["content_hash"] if prior else None}
+        content_hash = sha256_text(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        db.execute("INSERT INTO review_events(event_id,trial_id,generation_attempt_id,event_type,decision,note_text,private_steering,related_passage,reviewer_identity,created_at,prior_event_id,content_hash,source_version_id,source_sha256,proposal_sha256,stage,preferred_replacement,finding_codes,operator_aside,stream_id,sequence_number,prior_content_hash,event_content_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (event_id, trial_id, attempt["attempt_id"], event_type, decision, note_text, int(private_steering), related_passage, reviewer_identity, timestamp, prior["event_id"] if prior else None, content_hash, source_version_id or attempt["source_version_id"], attempt["source_sha256"], attempt["proposal_sha256"], stage, preferred_replacement, serialized_json(sorted(finding_codes)), operator_aside, stream_id, sequence, prior["content_hash"] if prior else None, content_hash))
+        db.execute("INSERT INTO review_event_chain(event_id,stream_id,sequence_number,prior_content_hash,event_content_hash,authoritative,superseded_event_id) VALUES(?,?,?,?,?,?,NULL)", (event_id, stream_id, sequence, prior["content_hash"] if prior else None, content_hash, 1))
+        return event_id
+
     def _record_attempt_event(self, db: sqlite3.Connection, attempt_id: str, from_status: str | None, to_status: str, error_class: str | None = None) -> None:
         previous = db.execute("SELECT sequence_number,event_hash FROM generation_attempt_events WHERE attempt_id=? ORDER BY sequence_number DESC LIMIT 1", (attempt_id,)).fetchone()
         sequence = (previous[0] if previous else 0) + 1
@@ -306,7 +343,7 @@ class DocWriterApp:
         if size > MAX_FIELD * 5:
             raise ValueError("request too large")
         body = environ["wsgi.input"].read(size).decode("utf-8")
-        return {key: values[-1] for key, values in urllib.parse.parse_qs(body, keep_blank_values=True).items()}
+        return {key: ",".join(values) if key == "finding_codes" else values[-1] for key, values in urllib.parse.parse_qs(body, keep_blank_values=True).items()}
 
     def _headers(self, csrf: str | None = None) -> list[tuple[str, str]]:
         headers = [("Content-Type", "text/html; charset=utf-8"), ("Cache-Control", "no-store")]
@@ -507,7 +544,7 @@ class DocWriterApp:
             (SELECT ga.attempt_id FROM generation_attempts ga WHERE ga.trial_id=t.trial_id ORDER BY ga.started_at DESC LIMIT 1) AS latest_attempt_id
             FROM trials t LEFT JOIN projects p ON p.project_id=t.project_id{where} ORDER BY t.updated_at DESC, t.trial_id DESC""", params).fetchall()
 
-    def _render_trial_card(self, row: sqlite3.Row) -> str:
+    def _render_trial_card(self, row: sqlite3.Row, editorial_events: list[sqlite3.Row] | None = None) -> str:
         rationale_missing = row["review_status"] in {"REJECTED", "REVISION_REQUIRED"} and not row["has_notes"]
         excerpt = " ".join((row["source_text"] or "").split())[:180]
         flags = []
@@ -521,7 +558,10 @@ class DocWriterApp:
         elif row["latest_error_class"]: attempt_state += f" · {row['latest_error_class']}"
         attempt = {"status": row["latest_attempt_state"], "canonical_failure_class": row["latest_failure_state"], "error_class": row["latest_error_class"], "attempt_id": row["latest_attempt_id"] or row["trial_id"], "normalized_proposal": row["normalized_output"]}
         review_events = [{"event_type": "REVIEW_NOTE", "note_text": "saved"}] if row["has_notes"] else []
-        guidance = guidance_for(row, [attempt] if row["latest_attempt_state"] else [], review_events, project_slug=row["project_slug"])
+        if editorial_events is None:
+            with self._db() as db:
+                editorial_events = db.execute("SELECT * FROM review_events WHERE trial_id=? AND stream_id IS NOT NULL ORDER BY created_at,event_id", (row["trial_id"],)).fetchall()
+        guidance = guidance_for(row, [attempt] if row["latest_attempt_state"] else [], review_events + list(editorial_events), project_slug=row["project_slug"])
         action = f"<a class='button' href='{html.escape(guidance.primary_action_url)}'>{html.escape(guidance.primary_action_label)}</a>" if guidance.primary_action_url and guidance.primary_action_label else ""
         return f"<article class='trial-card'><div><h3>{html.escape(excerpt or 'Untitled trial')}</h3><div class='meta'><code>{html.escape(row['trial_id'])}</code> · created {html.escape(row['created_at'])} · updated {html.escape(row['updated_at'])}</div><p>{self._status_badge(row['review_status'], rationale_missing)} <span class='meta'>{html.escape(row['model_identifier'])} · {row['attempt_count']} generation attempt(s) · {html.escape(attempt_state)} · {html.escape(flag_text)}</span></p><p class='guidance-summary'>{html.escape(guidance.title)}</p></div><div class='actions'>{action}<a class='button secondary' href='/trial/{html.escape(row['trial_id'])}'>Open</a></div></article>"
 
@@ -539,6 +579,29 @@ class DocWriterApp:
 <section><h2>Recovery record</h2><p>{'The original trial content is unavailable. Doc Writer preserved the evidence it can verify without reconstructing prose.' if provenance else 'The trial content is preserved in the archived record.'}</p><p>Recovery state: <code>{html.escape(trial['recovery_state'] or 'NONE')}</code><br>Evidence reference: <code>{html.escape(trial['recovery_evidence_ref'] or 'not recorded')}</code></p></section>
 <div class='actions' id='archive-actions'>{restore}<a class='button secondary' href='/project/{html.escape(project['slug']) if project else ''}'>View history</a></div>"""
         return self._html("Archived trial", body, csrf)
+
+    def _render_editorial_sections(self, trial: sqlite3.Row, attempts: list[sqlite3.Row], review_events: list[sqlite3.Row], csrf: str) -> str:
+        state = derive_editorial_state(trial, attempts, review_events)
+        completed = [a for a in attempts if a["status"] == "COMPLETED" and (a["normalized_proposal"] or "").strip()]
+        target_event = sorted([e for e in review_events if e["event_type"] == "REVIEW_TARGET_SELECTED"], key=lambda e: (e["created_at"], e["event_id"]))[-1] if any(e["event_type"] == "REVIEW_TARGET_SELECTED" for e in review_events) else None
+        target_attempt = next((a for a in completed if target_event and a["attempt_id"] == target_event["generation_attempt_id"]), None)
+        target_options = "".join(f"<option value='{html.escape(a['attempt_id'])}'>{html.escape(a['attempt_id'])} · {html.escape(a['completed_at'] or a['started_at'])} · {html.escape(a['proposal_sha256'])}</option>" for a in completed)
+        target_form = "" if target_attempt else f"<form method='post' action='/trial/{html.escape(trial['trial_id'])}/review-target'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='review-target'>Completed proposal to review</label><select id='review-target' name='attempt_id' required>{target_options}</select><button type='submit'>Choose proposal</button></form>" if completed else "<p class='muted'>A completed proposal is required before staged editorial review can begin.</p>"
+        target_text = f"<p>Selected attempt <code>{html.escape(target_attempt['attempt_id'])}</code>; source version <code>{target_attempt['source_version_id']}</code>; source SHA-256 <code>{html.escape(target_attempt['source_sha256'])}</code>; proposal SHA-256 <code>{html.escape(target_attempt['proposal_sha256'])}</code>.</p>" if target_attempt else "<p>No durable review target has been selected.</p>"
+        integrity_form = ""
+        if target_attempt and state.state in {"INTEGRITY_REVIEW_REQUIRED", "INTEGRITY_ISSUE_UNRESOLVED"}:
+            integrity_form = f"<form method='post' action='/trial/{html.escape(trial['trial_id'])}/integrity-review'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='integrity-note'>Integrity note</label><textarea id='integrity-note' name='note_text' maxlength='{MAX_NOTES}' aria-describedby='integrity-help'></textarea><p id='integrity-help' class='muted'>Record the authority, factual, ambiguity, status, or required-content consideration.</p><label for='integrity-passage'>Related passage or finding reference</label><input id='integrity-passage' name='related_passage' maxlength='{MAX_NOTES}'><div class='actions'><button type='submit' name='outcome' value='INTEGRITY_ACCEPTED'>Accept integrity</button><button class='secondary' type='submit' name='outcome' value='INTEGRITY_ISSUE'>Record integrity issue</button></div></form>"
+        revision_form = ""
+        if target_attempt and state.state in {"REVISION_REVIEW_REQUIRED", "REVISION_REQUIRED"}:
+            revision_form = f"<form method='post' action='/trial/{html.escape(trial['trial_id'])}/revision-review'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='revision-note'>Revision review note</label><textarea id='revision-note' name='note_text' maxlength='{MAX_NOTES}' aria-describedby='revision-help'></textarea><p id='revision-help' class='muted'>Check meaning, facts, authority, uncertainty, point of view, omissions, and editing task execution.</p><label for='revision-passage'>Affected passage</label><input id='revision-passage' name='related_passage' maxlength='{MAX_NOTES}'><label for='revision-replacement'>Preferred replacement wording</label><textarea id='revision-replacement' name='preferred_replacement' maxlength='{MAX_NOTES}'></textarea><div class='actions'><button type='submit' name='outcome' value='READY_FOR_TONE_REVIEW'>Ready for tone review</button><button class='secondary' type='submit' name='outcome' value='REVISION_REQUIRED'>Revision required</button><button class='secondary' type='submit' name='outcome' value='REJECTED'>Reject this proposal</button></div></form>"
+        tone_form = ""
+        if target_attempt and state.state in {"TONE_REVIEW_REQUIRED", "TONE_REVISION_REQUIRED"}:
+            codes = "".join(f"<label><input type='checkbox' name='finding_codes' value='{code}'> {code.replace('_', ' ')}</label>" for code in sorted(TONE_FINDING_CODES))
+            tone_form = f"<form method='post' action='/trial/{html.escape(trial['trial_id'])}/tone-review'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><p>This step asks whether the revision sounds like you. Meaning and factual safety were reviewed separately.</p><label for='tone-note'>Tone-review note</label><textarea id='tone-note' name='note_text' maxlength='{MAX_NOTES}' aria-describedby='tone-help'></textarea><p id='tone-help' class='muted'>Record exact voice feedback, rhythm, emphasis, warmth, humor, bluntness, or vulnerability.</p><fieldset><legend>Tone findings</legend>{codes}</fieldset><label for='tone-passage'>Related passage</label><input id='tone-passage' name='related_passage' maxlength='{MAX_NOTES}'><label for='tone-replacement'>Preferred replacement wording</label><textarea id='tone-replacement' name='preferred_replacement' maxlength='{MAX_NOTES}'></textarea><label><input type='checkbox' name='private_steering' value='1'> Keep this steering private</label><label for='tone-aside'>Operator aside</label><textarea id='tone-aside' name='operator_aside' maxlength='{MAX_NOTES}'></textarea><div class='actions'><button type='submit' name='outcome' value='TONE_ACCEPTED'>Accept tone</button><button class='secondary' type='submit' name='outcome' value='TONE_REVISION_REQUIRED'>Tone revision required</button><button class='secondary' type='submit' name='outcome' value='TONE_REJECTED'>Reject tone</button></div></form>"
+        return f"""<section id='editorial-target'><h2>Review target</h2><p class='status'>Current editorial stage: <code>{html.escape(state.state)}</code></p>{target_text}{target_form}</section>
+<section id='integrity-review'><h2>Integrity review</h2><p>Review the source, proposal, model findings, authority, facts, uncertainty, and status before evaluating meaning.</p>{integrity_form or '<p class=\'muted\'>Integrity review is not the current action.</p>'}</section>
+<section id='revision-review'><h2>Revision review</h2><p>Check whether the proposal still says what the operator meant. This is separate from tone acceptance.</p>{revision_form or '<p class=\'muted\'>Revision review is not the current action.</p>'}</section>
+<section id='tone-review'><h2>Tone review</h2><p>This step asks whether the revision sounds like you. Meaning and factual safety were reviewed separately.</p>{tone_form or '<p class=\'muted\'>Tone review is not the current action.</p>'}</section>"""
 
     def _render_attempt_fallback(self, trial: sqlite3.Row, attempt: sqlite3.Row, csrf: str, project: sqlite3.Row | None) -> str:
         state = canonical_state(attempt["status"], attempt["error_class"], attempt["canonical_failure_class"])
@@ -641,9 +704,9 @@ class DocWriterApp:
         history = "".join(f"<tr><td>{v['version_id']}</td><td>{html.escape(v['recorded_at'])}</td><td>{html.escape(v['action'])}</td></tr>" for v in versions)
         rationale_missing = self._review_rationale_missing(review_events, trial["review_status"])
         review_status = html.escape(trial["review_status"] + (" · REVIEW_RATIONALE_MISSING" if rationale_missing else ""))
-        review_history = "".join(f"<tr><td>{html.escape(event['created_at'])}</td><td>{html.escape(event['reviewer_identity'] or 'legacy / unavailable')}</td><td>{html.escape(event['event_type'])}</td><td>{html.escape(event['decision'] or '')}</td><td>{html.escape(event['note_text'] or '—')}</td><td>{'private steering' if event['private_steering'] else 'review note'}</td></tr>" for event in review_events)
+        review_history = "".join(f"<tr><td>{html.escape(event['created_at'])}</td><td>{html.escape(event['reviewer_identity'] or 'legacy / unavailable')}</td><td>{html.escape(event['event_type'])}</td><td>{html.escape(event['decision'] or '')}</td><td>{('Private steering recorded. <form method=\'post\' action=\'/trial/' + html.escape(trial['trial_id']) + '/private-steering/' + html.escape(event['event_id']) + '/reveal\'><input type=\'hidden\' name=\'csrf\' value=\'' + html.escape(csrf) + '\'><button class=\'secondary\' type=\'submit\'>Reveal privately</button></form>') if event['private_steering'] else html.escape(event['note_text'] or '—')}</td><td>{'private steering' if event['private_steering'] else 'review note'}</td></tr>" for event in review_events)
         review_error_html = f"<p class='error' id='review-error'>{html.escape(review_error)}</p>" if review_error else (f"<p class='status' id='review-saved'>{html.escape(review_notice)}</p>" if review_notice else "")
-        current_note = next((event["note_text"] for event in reversed(review_events) if event["event_type"] == "REVIEW_NOTE" and (event["note_text"] or "").strip()), "")
+        current_note = next((event["note_text"] for event in reversed(review_events) if event["event_type"] == "REVIEW_NOTE" and not event["private_steering"] and (event["note_text"] or "").strip()), "")
         review_form = f"""<section id='review-rationale'><h2>Operator review record</h2>{review_error_html}<p>Review notes are durable review material, not publishable document prose. Private steering is stored and displayed separately.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/review'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='review_note'>Current reviewer note / rationale</label><textarea id='review_note' name='note_text' maxlength='{MAX_NOTES}' aria-describedby='review-help'>{html.escape(current_note)}</textarea><p id='review-help' class='muted'>Describe what sounded generic, what did not sound like the operator, exact rejected passages, and preferred replacement wording.</p><label for='related_passage'>Exact phrase or passage, if applicable</label><textarea id='related_passage' name='related_passage' maxlength='{MAX_NOTES}'></textarea><label><input type='checkbox' name='private_steering' value='1'> Private operator aside / steering note (never publishable prose)</label><button type='submit'>Save review note</button></form><h3>Review history</h3><table><tr><th>Timestamp</th><th>Reviewer</th><th>Event</th><th>Decision</th><th>Note</th><th>Visibility</th></tr>{review_history or '<tr><td colspan="6">No review events recorded.</td></tr>'}</table></section>"""
         model_options = "".join(f"<option {'selected' if profile.model_identifier == trial['model_identifier'] else ''}>{html.escape(profile.model_identifier)}</option>" for profile in self.adapter_profiles.values())
         generation = f"""<section id='generation-attempts'><h2>Generate conversational proposal</h2><p>Prompt contract: <code>conversational-proposal-v2</code><br>Controlled settings: context 8192, temperature 0.2, top-p 0.9, seed 42, streaming disabled, thinking disabled</p><p class='muted'>Execution uses local Ollama only. The result remains <code>REVIEW_REQUIRED</code> and is never accepted automatically.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/generate' onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Generating…';"><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='generation-model'>Server-owned model adapter</label><select id='generation-model' name='model_identifier'>{model_options}</select><button type='submit'>Generate conversational proposal</button></form></section>"""
@@ -672,9 +735,10 @@ class DocWriterApp:
         archive_form = f"<form method='post' action='/trial/{html.escape(trial['trial_id'])}/archive'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button class='secondary' type='submit'>Archive trial</button></form>"
         breadcrumb = f"<p class='meta'><a href='/projects'>Projects</a> → <a href='/project/{html.escape(project['slug'])}'>{html.escape(project['name'])}</a> → {html.escape(trial['trial_id'])}</p>" if project else f"<p class='meta'><a href='/projects'>Projects</a> → {html.escape(trial['trial_id'])}</p>"
         guidance = guidance_for(trial, attempts, review_events, project_slug=project["slug"] if project else None)
-        integrity_block = f"<section id='integrity-review'><h2>Integrity findings</h2><pre>{html.escape(trial['integrity_findings'] or '—')}</pre></section>"
+        integrity_block = f"<section id='integrity-findings'><h2>Model integrity findings</h2><pre>{html.escape(trial['integrity_findings'] or '—')}</pre></section>"
+        editorial_sections = self._render_editorial_sections(trial, attempts, review_events, csrf)
         body = f"""{breadcrumb}<h1>Trial <code>{html.escape(trial['trial_id'])}</code></h1>{self._guidance_panel(guidance)}<p class='status'>Review status: {review_status}</p><p>Created {html.escape(trial['created_at'])}; updated {html.escape(trial['updated_at'])}; source SHA-256 <code>{html.escape(trial['source_sha256'])}</code></p><p>Model: <code>{html.escape(trial['model_identifier'])}</code><br>Digest: <code>{html.escape(trial['model_digest'])}</code></p>
-{generation}{block('Source paragraph', trial['source_text'])}<section><h2>Conversational proposal</h2><div class='prose'>{html.escape(trial['normalized_output'] or 'No normalized proposal recorded.')}</div></section>{diff_view}{integrity_block}{review_form}{no_attempt_view}{attempt_view}
+{generation}{block('Source paragraph', trial['source_text'])}<section><h2>Conversational proposal</h2><div class='prose'>{html.escape(trial['normalized_output'] or 'No normalized proposal recorded.')}</div></section>{diff_view}{integrity_block}{editorial_sections}{review_form}{no_attempt_view}{attempt_view}
 <section id='revision-review'><h2>Decision</h2><form method='post' action='/trial/{html.escape(trial['trial_id'])}/decision'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='decision'>Decision</label><select id='decision' name='decision'>{''.join(f'<option>{decision}</option>' for decision in sorted(DECISIONS))}</select><label for='decision_reason'>Decision rationale (required for rejection or revision)</label><textarea id='decision_reason' name='decision_reason' maxlength='{MAX_NOTES}' aria-describedby='decision-help'></textarea><p id='decision-help' class='muted'>Add a short reason before marking this revision rejected or requiring revision.</p><button type='submit'>Record decision</button></form></section><section><h2>Generation-attempt history</h2><table><tr><th>Started</th><th>Completed</th><th>Status</th><th>Model</th><th>Source version</th><th>Result</th></tr>{generation_history}</table></section><section><h2>Draft version history</h2><table><tr><th>Version</th><th>When</th><th>Action</th></tr>{history}</table></section><p><a href='/trial/{html.escape(trial['trial_id'])}/artifact'>View artifact/provenance</a> · <a href='/trial/{html.escape(trial['trial_id'])}/edit'>Edit</a></p>{archive_form}"""
         return self._html("Trial", body, csrf)
 
@@ -808,6 +872,36 @@ class DocWriterApp:
                 with self._db() as db:
                     trial = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
                     if not trial: raise LookupError("trial not found")
+                    if len(parts) == 3 and parts[2] == "review-target":
+                        attempt = db.execute("SELECT * FROM generation_attempts WHERE attempt_id=? AND trial_id=? AND status='COMPLETED'", (form.get("attempt_id", ""), trial_id)).fetchone()
+                        if not attempt or not (attempt["normalized_proposal"] or "").strip(): raise ValueError("Choose a completed proposal before staged review.")
+                        self._insert_editorial_event(db, trial_id, "TARGET", "SELECTED", "", "", "", [], False, "", self._authenticated_user(environ), attempt)
+                        start_response("303 See Other", [("Location", f"/trial/{trial_id}#editorial-target")]); return [b""]
+                    if len(parts) == 3 and parts[2] in {"integrity-review", "revision-review", "tone-review"}:
+                        target = self._editorial_target(db, trial_id)
+                        if not target: raise ValueError("Choose a completed proposal before staged review.")
+                        target_event, attempt = target
+                        events = self._review_events(db, trial_id)
+                        current = derive_editorial_state(trial, [db.execute("SELECT * FROM generation_attempts WHERE attempt_id=?", (attempt["attempt_id"],)).fetchone()], events)
+                        if parts[2] == "integrity-review":
+                            if current.state not in {"INTEGRITY_REVIEW_REQUIRED", "INTEGRITY_ISSUE_UNRESOLVED"}: raise ValueError("Integrity review is not the current editorial step.")
+                            stage, outcomes = "INTEGRITY", {"INTEGRITY_ACCEPTED", "INTEGRITY_ISSUE"}
+                        elif parts[2] == "revision-review":
+                            if current.state != "REVISION_REVIEW_REQUIRED": raise ValueError("Revision review requires accepted integrity review.")
+                            stage, outcomes = "REVISION", {"READY_FOR_TONE_REVIEW", "REVISION_REQUIRED", "REJECTED"}
+                        else:
+                            if current.state != "TONE_REVIEW_REQUIRED": raise ValueError("Tone review requires a proposal ready for tone review.")
+                            stage, outcomes = "TONE", {"TONE_ACCEPTED", "TONE_REVISION_REQUIRED", "TONE_REJECTED"}
+                        outcome = form.get("outcome", "")
+                        if outcome not in outcomes: raise ValueError("That outcome does not belong to this editorial step.")
+                        codes = [code for code in form.get("finding_codes", "").split(",") if code]
+                        self._insert_editorial_event(db, trial_id, stage, outcome, form.get("note_text", "").strip()[:MAX_NOTES], form.get("related_passage", "").strip()[:MAX_NOTES], form.get("preferred_replacement", "").strip()[:MAX_NOTES], codes, form.get("private_steering", "") == "1", form.get("operator_aside", "").strip()[:MAX_NOTES], self._authenticated_user(environ), attempt)
+                        start_response("303 See Other", [("Location", f"/trial/{trial_id}#{parts[2].replace('-', '-')}")]); return [b""]
+                    if len(parts) == 5 and parts[2] == "private-steering" and parts[4] == "reveal":
+                        event = db.execute("SELECT * FROM review_events WHERE event_id=? AND trial_id=? AND private_steering=1", (parts[3], trial_id)).fetchone()
+                        if not event: raise LookupError("private steering record not found")
+                        content = self._html("Private steering", f"<h1>Private steering</h1><p>This authenticated reveal is not included in ordinary history or logs.</p><pre>{html.escape(event['note_text'] or event['operator_aside'] or 'No private body recorded.')}</pre>", csrf)
+                        start_response("200 OK", self._headers(csrf)); return [content.encode("utf-8")]
                     if parts[2] == "delete":
                         raise LookupError("permanent deletion is not available; archive the trial instead")
                     elif parts[2] in {"archive", "restore"}:

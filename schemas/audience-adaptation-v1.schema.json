@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["integrity_findings", "audience_adaptation"],
+  "properties": {
+    "integrity_findings": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["category", "detail"], "properties": {"category": {"type": "string", "enum": ["confirmed_conflict", "apparent_conflict_requiring_authority_review", "unsupported_claim", "ambiguity", "no_material_issue_found"]}, "detail": {"type": "string"}}}},
+    "audience_adaptation": {"type": "string", "minLength": 1}
+  }
+}

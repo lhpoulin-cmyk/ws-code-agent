@@ -131,6 +131,13 @@ def verify(db: sqlite3.Connection) -> int:
                     return fail(f"stream={stream_id} ineligible_attempt")
                 if event["source_version_id"] != attempt["source_version_id"] or event["source_sha256"] != attempt["source_sha256"] or event["proposal_sha256"] != attempt["proposal_sha256"]:
                     return fail(f"stream={stream_id} evidence_binding={event['event_id']}")
+            if stream_id.startswith("audience:"):
+                parts = stream_id.split(":", 2)
+                if len(parts) != 3 or event["adaptation_id"] != parts[1] or event["generation_attempt_id"] != parts[2]: return fail(f"stream={stream_id} audience_binding={event['event_id']}")
+                adaptation = db.execute("SELECT adaptation_id,trial_id,baseline_id,profile_id FROM audience_adaptations WHERE adaptation_id=?", (event["adaptation_id"],)).fetchone()
+                attempt = db.execute("SELECT status,proposal_sha256,adaptation_id,baseline_id,profile_id FROM generation_attempts WHERE attempt_id=?", (event["generation_attempt_id"],)).fetchone()
+                if not adaptation or not attempt or attempt["status"] != "COMPLETED": return fail(f"stream={stream_id} audience_attempt")
+                if event["trial_id"] != adaptation["trial_id"] or event["baseline_id"] != adaptation["baseline_id"] or event["profile_id"] != adaptation["profile_id"] or attempt["adaptation_id"] != adaptation["adaptation_id"] or event["output_sha256"] != attempt["proposal_sha256"]: return fail(f"stream={stream_id} audience_evidence={event['event_id']}")
             if witness["authoritative"]:
                 if witness["sequence_number"] in authoritative_sequences:
                     return fail(f"stream={stream_id} duplicate_authoritative_sequence")
@@ -162,6 +169,12 @@ def verify(db: sqlite3.Connection) -> int:
             while cursor:
                 if cursor in seen: return fail(f"baseline={baseline['baseline_id']} cycle")
                 seen.add(cursor); row = next((r for r in baselines if r["baseline_id"] == cursor), None); cursor = row["supersedes_baseline_id"] if row else None
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='accepted_audience_versions'").fetchone():
+        versions = db.execute("SELECT * FROM accepted_audience_versions").fetchall(); accepts = db.execute("SELECT * FROM review_events WHERE event_type='AUDIENCE_REVIEW' AND decision='AUDIENCE_ACCEPTED'").fetchall()
+        for version in versions:
+            linked = [e for e in accepts if e["event_id"] == version["audience_review_event_id"]]
+            if len(linked) != 1 or linked[0]["adaptation_id"] != version["adaptation_id"] or linked[0]["output_sha256"] != version["accepted_text_sha256"]: return fail(f"audience_version={version['accepted_audience_version_id']} event_binding")
+            if hashlib.sha256(version["accepted_text"].encode()).hexdigest() != version["accepted_text_sha256"]: return fail(f"audience_version={version['accepted_audience_version_id']} text_hash")
     print(f"OK attempts={len(attempts)} attempt_events={sum(map(len, events_by_attempt.values()))} review_events={len(review_ids)} streams={len(streams)}")
     return 0
 

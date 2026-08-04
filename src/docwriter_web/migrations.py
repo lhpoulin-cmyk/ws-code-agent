@@ -38,6 +38,12 @@ MIGRATION_NAMES = (
     "baseline-review-events-v1",
     "baseline-immutability-v1",
     "baseline-supersession-v1",
+    "audience-profiles-v1",
+    "audience-adaptations-v1",
+    "audience-generation-attempts-v1",
+    "audience-review-events-v1",
+    "accepted-audience-versions-v1",
+    "audience-version-immutability-v1",
 )
 
 
@@ -499,6 +505,62 @@ def _baseline_supersession(db: sqlite3.Connection, commit: str) -> None:
     db.execute("CREATE UNIQUE INDEX IF NOT EXISTS accepted_baselines_one_successor_idx ON accepted_baselines(supersedes_baseline_id) WHERE supersedes_baseline_id IS NOT NULL")
     _ledger(db, name, commit, before, before_hash)
 
+def _audience_profiles(db: sqlite3.Connection, commit: str) -> None:
+    name = "audience-profiles-v1"
+    if _migration_applied(db, name): return
+    before, before_hash = _counts(db), _database_hash(db)
+    db.execute("CREATE TABLE IF NOT EXISTS audience_profiles (profile_id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT NULL, purpose TEXT NOT NULL, contract_version TEXT NOT NULL, contract_sha256 TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, retired_at TEXT)")
+    profiles = [("audience-technical-peer", "technical-peer", "Technical peer", "A technically capable reader who needs precise behavior, boundaries, evidence, terminology, and operational consequences without introductory over-explanation.", "prompts/audiences/technical-peer.md"), ("audience-executive", "executive", "Executive or decision-maker", "A decision-maker who needs the outcome, importance, risk, tradeoffs, confidence, unresolved issues, and required decision without unnecessary implementation detail.", "prompts/audiences/executive.md"), ("audience-public", "public", "Public or non-specialist", "A reader without assumed specialist knowledge who needs accurate, understandable explanation without distortion, condescension, or false simplification.", "prompts/audiences/public.md")]
+    root = __import__("pathlib").Path(__file__).resolve().parents[2]
+    for profile_id, slug, title, purpose, rel in profiles:
+        raw = (root / rel).read_bytes()
+        db.execute("INSERT OR IGNORE INTO audience_profiles VALUES(?,?,?,?,?,?,?,?,?)", (profile_id, slug, title, purpose, "audience-adaptation-v1", hashlib.sha256(raw).hexdigest(), 1, _now(), None))
+    _ledger(db, name, commit, before, before_hash)
+
+def _audience_adaptations(db: sqlite3.Connection, commit: str) -> None:
+    name = "audience-adaptations-v1"
+    if _migration_applied(db, name): return
+    before, before_hash = _counts(db), _database_hash(db)
+    db.execute("""CREATE TABLE IF NOT EXISTS audience_adaptations (
+      adaptation_id TEXT PRIMARY KEY, trial_id TEXT NOT NULL REFERENCES trials(trial_id), baseline_id TEXT NOT NULL REFERENCES accepted_baselines(baseline_id), profile_id TEXT NOT NULL REFERENCES audience_profiles(profile_id), baseline_sha256 TEXT NOT NULL, source_version_id INTEGER NOT NULL REFERENCES trial_versions(version_id), source_sha256 TEXT NOT NULL, integrity_review_event_id TEXT NOT NULL REFERENCES review_events(event_id), integrity_contract_sha256 TEXT NOT NULL, audience_contract_version TEXT NOT NULL, audience_contract_sha256 TEXT NOT NULL, profile_contract_sha256 TEXT NOT NULL, created_at TEXT NOT NULL, archived_at TEXT, UNIQUE(baseline_id, profile_id)
+    )""")
+    db.execute("CREATE INDEX IF NOT EXISTS audience_adaptations_trial_idx ON audience_adaptations(trial_id,profile_id)")
+    _ledger(db, name, commit, before, before_hash)
+
+def _audience_generation_attempts(db: sqlite3.Connection, commit: str) -> None:
+    name = "audience-generation-attempts-v1"
+    if _migration_applied(db, name): return
+    before, before_hash = _counts(db), _database_hash(db)
+    for col, definition in {"kind":"TEXT NOT NULL DEFAULT 'CONVERSATIONAL'", "adaptation_id":"TEXT REFERENCES audience_adaptations(adaptation_id)", "baseline_id":"TEXT REFERENCES accepted_baselines(baseline_id)", "profile_id":"TEXT REFERENCES audience_profiles(profile_id)", "output_sha256":"TEXT"}.items(): _add_column(db, "generation_attempts", col, definition)
+    db.execute("CREATE INDEX IF NOT EXISTS generation_attempts_audience_idx ON generation_attempts(adaptation_id,profile_id,started_at)")
+    _ledger(db, name, commit, before, before_hash)
+
+def _audience_review_events(db: sqlite3.Connection, commit: str) -> None:
+    name = "audience-review-events-v1"
+    if _migration_applied(db, name): return
+    before, before_hash = _counts(db), _database_hash(db)
+    for col, definition in {"adaptation_id":"TEXT REFERENCES audience_adaptations(adaptation_id)", "baseline_id":"TEXT REFERENCES accepted_baselines(baseline_id)", "profile_id":"TEXT REFERENCES audience_profiles(profile_id)", "output_sha256":"TEXT"}.items(): _add_column(db, "review_events", col, definition)
+    db.execute("CREATE INDEX IF NOT EXISTS review_events_audience_idx ON review_events(adaptation_id,profile_id,created_at)")
+    _ledger(db, name, commit, before, before_hash)
+
+def _accepted_audience_versions(db: sqlite3.Connection, commit: str) -> None:
+    name = "accepted-audience-versions-v1"
+    if _migration_applied(db, name): return
+    before, before_hash = _counts(db), _database_hash(db)
+    db.execute("""CREATE TABLE IF NOT EXISTS accepted_audience_versions (
+      accepted_audience_version_id TEXT PRIMARY KEY, adaptation_id TEXT NOT NULL REFERENCES audience_adaptations(adaptation_id), trial_id TEXT NOT NULL REFERENCES trials(trial_id), baseline_id TEXT NOT NULL REFERENCES accepted_baselines(baseline_id), profile_id TEXT NOT NULL REFERENCES audience_profiles(profile_id), generation_attempt_id TEXT NOT NULL REFERENCES generation_attempts(attempt_id), review_target_event_id TEXT NOT NULL REFERENCES review_events(event_id), audience_review_event_id TEXT NOT NULL REFERENCES review_events(event_id), accepted_text TEXT NOT NULL, accepted_text_sha256 TEXT NOT NULL, baseline_sha256 TEXT NOT NULL, source_sha256 TEXT NOT NULL, integrity_contract_sha256 TEXT NOT NULL, audience_contract_sha256 TEXT NOT NULL, profile_contract_sha256 TEXT NOT NULL, prompt_version TEXT NOT NULL, prompt_sha256 TEXT NOT NULL, model_identifier TEXT NOT NULL, model_digest TEXT NOT NULL, accepted_by TEXT NOT NULL, accepted_at TEXT NOT NULL, acceptance_note TEXT, supersedes_accepted_version_id TEXT REFERENCES accepted_audience_versions(accepted_audience_version_id), created_at TEXT NOT NULL
+    )""")
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS accepted_audience_one_successor_idx ON accepted_audience_versions(supersedes_accepted_version_id) WHERE supersedes_accepted_version_id IS NOT NULL")
+    db.execute("CREATE INDEX IF NOT EXISTS accepted_audience_adaptation_idx ON accepted_audience_versions(adaptation_id,created_at)")
+    _ledger(db, name, commit, before, before_hash)
+
+def _audience_version_immutability(db: sqlite3.Connection, commit: str) -> None:
+    name = "audience-version-immutability-v1"
+    if _migration_applied(db, name): return
+    before, before_hash = _counts(db), _database_hash(db)
+    db.executescript("CREATE TRIGGER IF NOT EXISTS accepted_audience_versions_no_update BEFORE UPDATE ON accepted_audience_versions BEGIN SELECT RAISE(ABORT,'accepted audience versions are immutable'); END; CREATE TRIGGER IF NOT EXISTS accepted_audience_versions_no_delete BEFORE DELETE ON accepted_audience_versions BEGIN SELECT RAISE(ABORT,'accepted audience versions are immutable'); END;")
+    _ledger(db, name, commit, before, before_hash)
+
 
 def apply_migrations(db: sqlite3.Connection, application_commit: str) -> None:
     db.execute("PRAGMA foreign_keys=ON")
@@ -522,3 +584,9 @@ def apply_migrations(db: sqlite3.Connection, application_commit: str) -> None:
     _baseline_review_events(db, application_commit)
     _baseline_immutability(db, application_commit)
     _baseline_supersession(db, application_commit)
+    _audience_profiles(db, application_commit)
+    _audience_adaptations(db, application_commit)
+    _audience_generation_attempts(db, application_commit)
+    _audience_review_events(db, application_commit)
+    _accepted_audience_versions(db, application_commit)
+    _audience_version_immutability(db, application_commit)

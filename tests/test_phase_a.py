@@ -14,7 +14,7 @@ def test_phase_a_ledger_fk_and_idempotence(tmp_path):
     with sqlite3.connect(db_path) as db:
         names = [row[0] for row in db.execute("SELECT migration_name FROM schema_migrations ORDER BY rowid")]
         counts = {table: db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in ("trials", "trial_versions", "generation_attempts", "review_events", "schema_migrations")}
-        assert len(names) == 19
+        assert len(names) == 25
     restarted = DocWriterApp(application.config)
     with sqlite3.connect(db_path) as db:
         assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 0  # raw connections are not the application factory

@@ -6,6 +6,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from .failure_taxonomy import canonical_state
+
 
 @dataclass(frozen=True)
 class Guidance:
@@ -100,7 +102,10 @@ def guidance_for(
 
     attempt_status = _value(attempt, "status", "UNKNOWN")
     error_class = _value(attempt, "error_class", "") or ""
+    failure_state = canonical_state(attempt_status, error_class, _value(attempt, "canonical_failure_class", "") or "")
     technical = f"{error_class or attempt_status} · {_value(attempt, 'attempt_id', 'unknown')}"
+    if failure_state == "QUEUED":
+        return Guidance("QUEUED", "next", "This generation request is queued for execution.", "Your source version and request details are preserved.", "The queued request remains attached to this trial.", "The writer must begin this request before a result can be reviewed.", "View attempt status", f"{base}#generation-attempts", target_section_id="generation-attempts", technical_details=technical)
     if attempt_status == "RUNNING":
         return Guidance(
             "GENERATION_RUNNING", "next", "The writer is working on this attempt.",
@@ -108,7 +113,30 @@ def guidance_for(
             "The request and source-version provenance are preserved.", "The attempt must finish before another one is started.",
             "View attempt status", f"{base}#generation-attempts", target_section_id="generation-attempts", technical_details=technical,
         )
-    if error_class == "OLLAMA_UNAVAILABLE":
+    failure_messages = {
+        "REQUEST_TIMEOUT": ("This attempt ran longer than the allowed time and was stopped.", "The request and any response received are preserved.", "A new attempt can be started without changing this evidence.", "Create new attempt"),
+        "OLLAMA_HTTP_ERROR": ("The local model service returned an unsuccessful response.", "The request and returned response evidence are preserved.", "A new attempt should wait for the service response to be understood.", "Create new attempt"),
+        "EMPTY_RESPONSE": ("The model exchange completed without a usable response body.", "The request and exchange telemetry are preserved.", "A new attempt is separate from this incomplete exchange.", "Create new attempt"),
+        "MALFORMED_JSON": ("The model returned a response, but Doc Writer could not read it as valid JSON.", "The original response is preserved.", "The preserved response can show what the next attempt must avoid.", "View preserved response"),
+        "RESPONSE_SCHEMA_INVALID": ("The model returned JSON, but it did not match Doc Writer's response schema.", "The request and raw response are preserved.", "The response must be schema-valid before it can become a proposal.", "View preserved response"),
+        "PROPOSAL_FIELD_MISSING": ("The structured response did not contain a usable proposal.", "The response and request provenance are preserved.", "A proposal is needed before meaning review can begin.", "View preserved response"),
+        "TASK_ADHERENCE_FAILED": ("The model returned a proposal, but it did not follow the editing contract.", "The response and contract findings are preserved and were not accepted as a revision.", "The next attempt must keep the source as delimited editing input.", "View contract findings"),
+        "NORMALIZATION_FAILURE": ("The model response was received, but Doc Writer could not normalize it deterministically.", "The raw response and request provenance are preserved.", "Normalization must be repeatable before the result can enter review.", "View preserved response"),
+        "PERSISTENCE_FAILURE": ("Doc Writer received a result but could not finish saving it to the normal review record.", "Recovery evidence is preserved locally for reconciliation.", "Review recovery status before starting any new attempt.", "Review recovery status"),
+        "RENDER_FAILURE": ("The result was saved, but Doc Writer could not display the normal review page.", "The writing and provenance remain preserved.", "Use the fallback result view before deciding whether to retry.", "Open fallback result view"),
+        "STALE_SOURCE": ("The source changed before this result could be applied.", "The request and received response remain preserved for this source version.", "A new attempt must use the current source explicitly.", "Create new attempt"),
+        "INTERRUPTED": ("This attempt did not reach a completed result before execution stopped.", "The request and any response received so far are preserved.", "Starting again creates a new attempt and leaves this one intact.", "Create new attempt"),
+    }
+    if failure_state in failure_messages:
+        title, explanation, why, label = failure_messages[failure_state]
+        if failure_state == "OLLAMA_UNAVAILABLE":
+            return Guidance("OLLAMA_UNAVAILABLE", "attention", "Doc Writer could not reach the local model service.", "Your draft and this attempt are preserved. Generation can be tried again after the local model service is available.", "The failed request remains preserved.", "The local service must be available before a new attempt can run.", "Check system status", "/system", "Retry as new attempt", f"{base}#generation-attempts", "generation-attempts", technical)
+        secondary_label = "Create new attempt" if failure_state not in {"PERSISTENCE_FAILURE", "RENDER_FAILURE"} else None
+        secondary_url = f"{base}#generation-attempts" if secondary_label else None
+        return Guidance(failure_state, "attention", title, explanation, explanation, why, label, f"{base}#generation-attempts", secondary_label, secondary_url, "generation-attempts", technical)
+    if failure_state == "COMPLETED" and _value(attempt, "presentation_result", "not_applicable") == "failed":
+        return Guidance("RENDER_FAILURE", "attention", "The result was saved, but Doc Writer could not display the normal review page.", "The writing and provenance remain preserved.", "The completed generation result remains intact.", "The fallback view separates presentation trouble from model failure.", "Open fallback result view", f"{base}/attempt/{_value(attempt, 'attempt_id')}" if _value(attempt, "attempt_id") else f"{base}#generation-attempts", target_section_id="generation-attempts", technical_details=technical)
+    if failure_state == "OLLAMA_UNAVAILABLE":
         return Guidance(
             "OLLAMA_UNAVAILABLE", "attention", "Doc Writer could not reach the local model service.",
             "Your draft and this attempt are preserved. Generation can be tried again after the local model service is available.",

@@ -176,6 +176,34 @@ def verify(db: sqlite3.Connection) -> int:
             linked = [e for e in accepts if e["event_id"] == version["audience_review_event_id"]]
             if len(linked) != 1 or linked[0]["adaptation_id"] != version["adaptation_id"] or linked[0]["output_sha256"] != version["accepted_text_sha256"]: return fail(f"audience_version={version['accepted_audience_version_id']} event_binding")
             if hashlib.sha256(version["accepted_text"].encode()).hexdigest() != version["accepted_text_sha256"]: return fail(f"audience_version={version['accepted_audience_version_id']} text_hash")
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='generation_attempt_reconciliations'").fetchone():
+        reconciliations = db.execute("SELECT * FROM generation_attempt_reconciliations ORDER BY reconciliation_id").fetchall()
+        originals = set()
+        replacements = set()
+        for reconciliation in reconciliations:
+            payload = {key: reconciliation[key] for key in reconciliation.keys() if key != "record_sha256"}
+            if reconciliation["record_sha256"] != hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest():
+                return fail(f"reconciliation={reconciliation['reconciliation_id']} record_hash")
+            if reconciliation["original_attempt_id"] in originals or reconciliation["replacement_attempt_id"] in replacements:
+                return fail(f"reconciliation={reconciliation['reconciliation_id']} duplicate_attempt_link")
+            originals.add(reconciliation["original_attempt_id"])
+            replacements.add(reconciliation["replacement_attempt_id"])
+            original = db.execute("SELECT trial_id,adaptation_id,profile_id,baseline_id,status,canonical_failure_class,prompt_version FROM generation_attempts WHERE attempt_id=?", (reconciliation["original_attempt_id"],)).fetchone()
+            replacement = db.execute("SELECT trial_id,adaptation_id,profile_id,baseline_id,status,canonical_failure_class,prompt_version FROM generation_attempts WHERE attempt_id=?", (reconciliation["replacement_attempt_id"],)).fetchone()
+            if not original or not replacement:
+                return fail(f"reconciliation={reconciliation['reconciliation_id']} missing_attempt")
+            identity = (reconciliation["trial_id"], reconciliation["adaptation_id"], reconciliation["profile_id"], reconciliation["baseline_id"])
+            if tuple(original[:4]) != identity or tuple(replacement[:4]) != identity:
+                return fail(f"reconciliation={reconciliation['reconciliation_id']} identity")
+            if tuple(original[4:]) != ("RESPONSE_SCHEMA_INVALID", "RESPONSE_SCHEMA_INVALID", "audience-adaptation-v1"):
+                return fail(f"reconciliation={reconciliation['reconciliation_id']} original_state")
+            if tuple(replacement[4:]) != ("COMPLETED", "COMPLETED", "audience-adaptation-v2"):
+                return fail(f"reconciliation={reconciliation['reconciliation_id']} replacement_state")
+            if reconciliation["original_contract_version"] != "audience-adaptation-v1" or reconciliation["replacement_contract_version"] != "audience-adaptation-v2":
+                return fail(f"reconciliation={reconciliation['reconciliation_id']} contract_direction")
+            accepted = db.execute("SELECT accepted_audience_version_id FROM accepted_audience_versions WHERE generation_attempt_id=?", (reconciliation["replacement_attempt_id"],)).fetchone()
+            if accepted and reconciliation["profile_id"] == "audience-technical-peer" and accepted["accepted_audience_version_id"] != "audience-version-56c7d5c89c92e637":
+                return fail(f"reconciliation={reconciliation['reconciliation_id']} accepted_version_binding")
     print(f"OK attempts={len(attempts)} attempt_events={sum(map(len, events_by_attempt.values()))} review_events={len(review_ids)} streams={len(streams)}")
     return 0
 

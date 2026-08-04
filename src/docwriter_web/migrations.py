@@ -46,6 +46,7 @@ MIGRATION_NAMES = (
     "audience-version-immutability-v1",
     "audience-request-conflicts-v1",
     "audience-attempt-before-request-v1",
+    "audience-attempt-reconciliation-v1",
 )
 
 
@@ -61,7 +62,7 @@ def _database_hash(db: sqlite3.Connection) -> str:
 
 
 def _counts(db: sqlite3.Connection) -> dict[str, int]:
-    tables = ["projects", "trials", "trial_versions", "generation_attempts", "review_events", "project_migration_events", "accepted_baselines"]
+    tables = ["projects", "trials", "trial_versions", "generation_attempts", "review_events", "project_migration_events", "accepted_baselines", "generation_attempt_reconciliations"]
     return {table: db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in tables if _table_exists(db, table)}
 
 
@@ -613,6 +614,66 @@ def _audience_attempt_before_request(db: sqlite3.Connection, commit: str) -> Non
     """)
     _ledger(db, name, commit, before, before_hash)
 
+def _audience_attempt_reconciliation(db: sqlite3.Connection, commit: str) -> None:
+    name = "audience-attempt-reconciliation-v1"
+    if _migration_applied(db, name): return
+    before, before_hash = _counts(db), _database_hash(db)
+    db.execute("""CREATE TABLE IF NOT EXISTS generation_attempt_reconciliations (
+      reconciliation_id TEXT PRIMARY KEY,
+      trial_id TEXT NOT NULL REFERENCES trials(trial_id),
+      adaptation_id TEXT NOT NULL REFERENCES audience_adaptations(adaptation_id),
+      profile_id TEXT NOT NULL REFERENCES audience_profiles(profile_id),
+      baseline_id TEXT NOT NULL REFERENCES accepted_baselines(baseline_id),
+      original_attempt_id TEXT NOT NULL UNIQUE REFERENCES generation_attempts(attempt_id),
+      replacement_attempt_id TEXT NOT NULL UNIQUE REFERENCES generation_attempts(attempt_id),
+      defect_class TEXT NOT NULL CHECK(defect_class='CONTRACT_MISMATCH'),
+      original_contract_version TEXT NOT NULL CHECK(original_contract_version='audience-adaptation-v1'),
+      replacement_contract_version TEXT NOT NULL CHECK(replacement_contract_version='audience-adaptation-v2'),
+      reconciliation_reason TEXT NOT NULL,
+      operator_authorized INTEGER NOT NULL CHECK(operator_authorized=1),
+      evidence_reference TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      record_sha256 TEXT NOT NULL CHECK(length(record_sha256)=64)
+    )""")
+    db.executescript("""
+    CREATE TRIGGER IF NOT EXISTS generation_attempt_reconciliations_no_update
+    BEFORE UPDATE ON generation_attempt_reconciliations
+    BEGIN SELECT RAISE(ABORT, 'attempt reconciliations are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS generation_attempt_reconciliations_no_delete
+    BEFORE DELETE ON generation_attempt_reconciliations
+    BEGIN SELECT RAISE(ABORT, 'attempt reconciliations are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS generation_attempt_reconciliations_validate_insert
+    BEFORE INSERT ON generation_attempt_reconciliations
+    WHEN NEW.original_attempt_id=NEW.replacement_attempt_id
+      OR NOT EXISTS (SELECT 1 FROM generation_attempts o JOIN generation_attempts r ON r.attempt_id=NEW.replacement_attempt_id WHERE o.attempt_id=NEW.original_attempt_id AND o.trial_id=NEW.trial_id AND r.trial_id=NEW.trial_id AND o.adaptation_id=NEW.adaptation_id AND r.adaptation_id=NEW.adaptation_id AND o.profile_id=NEW.profile_id AND r.profile_id=NEW.profile_id AND o.baseline_id=NEW.baseline_id AND r.baseline_id=NEW.baseline_id AND o.status='RESPONSE_SCHEMA_INVALID' AND o.canonical_failure_class='RESPONSE_SCHEMA_INVALID' AND o.prompt_version='audience-adaptation-v1' AND r.status='COMPLETED' AND r.canonical_failure_class='COMPLETED' AND r.prompt_version='audience-adaptation-v2')
+    BEGIN SELECT RAISE(ABORT, 'invalid audience attempt reconciliation mapping'); END;
+    """)
+    mappings = [
+        ("technical-peer", "generation-ce5f4f7a530acf86", "generation-4753655ca6868aa0", "adaptation-79d01e5fba83fa84"),
+        ("executive", "generation-299bdb88f04dd567", "generation-895c9faffb7cb4bd", "adaptation-c20a1e163421656b"),
+        ("public", "generation-c2cbaa19c5d6ec9a", "generation-bf2d037f6e71b4e6", "adaptation-d7400d1fa76ee1e6"),
+    ]
+    # Disposable test databases do not contain the accepted Phase F evidence.
+    # Create the empty, protected structure there; seed only the explicitly
+    # authorized live mappings after all identity checks below can run.
+    if not all(db.execute("SELECT 1 FROM generation_attempts WHERE attempt_id=?", (attempt,)).fetchone() for _, attempt, _, _ in mappings):
+        _ledger(db, name, commit, before, before_hash)
+        return
+    reason = "Audience contract v1 did not specify the exact integrity-finding structure required by its schema and parser. The original RESPONSE_SCHEMA_INVALID attempt remains preserved. The linked v2 attempt is the corrected operational successor."
+    for slug, original, replacement, adaptation_id in mappings:
+        row = db.execute("SELECT trial_id,baseline_id,profile_id FROM generation_attempts WHERE attempt_id=? AND adaptation_id=?", (original, adaptation_id)).fetchone()
+        new = db.execute("SELECT trial_id,baseline_id,profile_id FROM generation_attempts WHERE attempt_id=? AND adaptation_id=?", (replacement, adaptation_id)).fetchone()
+        adaptation = db.execute("SELECT trial_id,baseline_id,profile_id FROM audience_adaptations WHERE adaptation_id=?", (adaptation_id,)).fetchone()
+        if not row or not new or not adaptation or tuple(row) != tuple(new) or tuple(row) != tuple(adaptation) or row[2] != "audience-" + slug:
+            raise RuntimeError(f"audience reconciliation mapping is inconsistent: {slug}")
+        reconciliation_id = f"reconciliation-{slug}-v1-v2"
+        created_at = _now()
+        payload = {"reconciliation_id": reconciliation_id, "trial_id": row[0], "adaptation_id": adaptation_id, "profile_id": row[2], "baseline_id": row[1], "original_attempt_id": original, "replacement_attempt_id": replacement, "defect_class": "CONTRACT_MISMATCH", "original_contract_version": "audience-adaptation-v1", "replacement_contract_version": "audience-adaptation-v2", "reconciliation_reason": reason, "operator_authorized": 1, "evidence_reference": "phase-f-recovery2-contract-mismatch", "created_at": created_at, "created_by": "operator-authorized-playcall"}
+        record_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        db.execute("INSERT INTO generation_attempt_reconciliations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", tuple(payload.values()) + (record_hash,))
+    _ledger(db, name, commit, before, before_hash)
+
 
 def apply_migrations(db: sqlite3.Connection, application_commit: str) -> None:
     db.execute("PRAGMA foreign_keys=ON")
@@ -644,3 +705,4 @@ def apply_migrations(db: sqlite3.Connection, application_commit: str) -> None:
     _audience_version_immutability(db, application_commit)
     _audience_request_conflicts(db, application_commit)
     _audience_attempt_before_request(db, application_commit)
+    _audience_attempt_reconciliation(db, application_commit)

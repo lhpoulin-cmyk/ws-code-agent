@@ -38,6 +38,7 @@ from .recovery_guidance import Guidance, guidance_for
 from .prompt_contracts import load_phase_b_assets
 from .failure_taxonomy import CLASSIFIER_VERSION, canonical_state, classify_error, ATTENTION_STATES
 from .editorial_state import EditorialState, derive_editorial_state
+from .baselines import eligibility as baseline_eligibility, current_baseline
 
 MAX_SOURCE = 12000
 MAX_FIELD = 12000
@@ -60,6 +61,7 @@ EDITORIAL_OUTCOMES = {
     "INTEGRITY": {"INTEGRITY_ACCEPTED", "INTEGRITY_ISSUE"},
     "REVISION": {"READY_FOR_TONE_REVIEW", "REVISION_REQUIRED", "REJECTED"},
     "TONE": {"TONE_ACCEPTED", "TONE_REVISION_REQUIRED", "TONE_REJECTED"},
+    "BASELINE": {"BASELINE_ACCEPTED"},
 }
 TONE_FINDING_CODES = {"generic_or_assistant_like", "too_formal", "too_casual", "academic", "corporate", "bureaucratic", "consultant_like", "emotionally_flattened", "overpolished", "lost_bluntness", "lost_warmth", "lost_humor", "lost_rhythm", "lost_emphasis", "lost_vulnerability", "other"}
 
@@ -306,7 +308,7 @@ class DocWriterApp:
             return None
         return target, attempt
 
-    def _insert_editorial_event(self, db: sqlite3.Connection, trial_id: str, stage: str, decision: str, note_text: str, related_passage: str, preferred_replacement: str, finding_codes: list[str], private_steering: bool, operator_aside: str, reviewer_identity: str, attempt: sqlite3.Row, source_version_id: int | None = None) -> str:
+    def _insert_editorial_event(self, db: sqlite3.Connection, trial_id: str, stage: str, decision: str, note_text: str, related_passage: str, preferred_replacement: str, finding_codes: list[str], private_steering: bool, operator_aside: str, reviewer_identity: str, attempt: sqlite3.Row, source_version_id: int | None = None, baseline_id: str | None = None) -> str:
         if stage not in EDITORIAL_OUTCOMES or decision not in EDITORIAL_OUTCOMES[stage]:
             raise ValueError("that review outcome does not belong to this editorial stage")
         if decision in {"INTEGRITY_ISSUE", "REVISION_REQUIRED", "REJECTED", "TONE_REVISION_REQUIRED", "TONE_REJECTED"} and not note_text.strip():
@@ -319,12 +321,24 @@ class DocWriterApp:
         prior = db.execute("SELECT event_id,content_hash,sequence_number FROM review_events WHERE stream_id=? ORDER BY sequence_number DESC,event_id DESC LIMIT 1", (stream_id,)).fetchone()
         sequence = (prior["sequence_number"] if prior and "sequence_number" in prior.keys() and prior["sequence_number"] else 0) + 1
         event_id, timestamp = f"review-{secrets.token_hex(8)}", utc_now()
-        event_type = "REVIEW_TARGET_SELECTED" if stage == "TARGET" else stage + "_REVIEW"
-        payload = {"event_id": event_id, "trial_id": trial_id, "generation_attempt_id": attempt["attempt_id"], "source_version_id": source_version_id or attempt["source_version_id"], "source_sha256": attempt["source_sha256"], "proposal_sha256": attempt["proposal_sha256"], "stage": stage, "event_type": event_type, "decision": decision, "note_text": note_text, "related_passage": related_passage, "preferred_replacement": preferred_replacement, "finding_codes": sorted(finding_codes), "private_steering": bool(private_steering), "operator_aside": operator_aside, "reviewer_identity": reviewer_identity, "created_at": timestamp, "stream_id": stream_id, "sequence_number": sequence, "prior_content_hash": prior["content_hash"] if prior else None}
+        event_type = "REVIEW_TARGET_SELECTED" if stage == "TARGET" else "BASELINE_ACCEPT" if stage == "BASELINE" else stage + "_REVIEW"
+        payload = {"event_id": event_id, "trial_id": trial_id, "generation_attempt_id": attempt["attempt_id"], "source_version_id": source_version_id or attempt["source_version_id"], "source_sha256": attempt["source_sha256"], "proposal_sha256": attempt["proposal_sha256"], "stage": stage, "event_type": event_type, "decision": decision, "baseline_id": baseline_id, "note_text": note_text, "related_passage": related_passage, "preferred_replacement": preferred_replacement, "finding_codes": sorted(finding_codes), "private_steering": bool(private_steering), "operator_aside": operator_aside, "reviewer_identity": reviewer_identity, "created_at": timestamp, "stream_id": stream_id, "sequence_number": sequence, "prior_content_hash": prior["content_hash"] if prior else None}
         content_hash = sha256_text(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-        db.execute("INSERT INTO review_events(event_id,trial_id,generation_attempt_id,event_type,decision,note_text,private_steering,related_passage,reviewer_identity,created_at,prior_event_id,content_hash,source_version_id,source_sha256,proposal_sha256,stage,preferred_replacement,finding_codes,operator_aside,stream_id,sequence_number,prior_content_hash,event_content_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (event_id, trial_id, attempt["attempt_id"], event_type, decision, note_text, int(private_steering), related_passage, reviewer_identity, timestamp, prior["event_id"] if prior else None, content_hash, source_version_id or attempt["source_version_id"], attempt["source_sha256"], attempt["proposal_sha256"], stage, preferred_replacement, serialized_json(sorted(finding_codes)), operator_aside, stream_id, sequence, prior["content_hash"] if prior else None, content_hash))
+        db.execute("INSERT INTO review_events(event_id,trial_id,generation_attempt_id,event_type,decision,note_text,private_steering,related_passage,reviewer_identity,created_at,prior_event_id,content_hash,source_version_id,source_sha256,proposal_sha256,stage,preferred_replacement,finding_codes,operator_aside,stream_id,sequence_number,prior_content_hash,event_content_hash,baseline_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (event_id, trial_id, attempt["attempt_id"], event_type, decision, note_text, int(private_steering), related_passage, reviewer_identity, timestamp, prior["event_id"] if prior else None, content_hash, source_version_id or attempt["source_version_id"], attempt["source_sha256"], attempt["proposal_sha256"], stage, preferred_replacement, serialized_json(sorted(finding_codes)), operator_aside, stream_id, sequence, prior["content_hash"] if prior else None, content_hash, baseline_id))
         db.execute("INSERT INTO review_event_chain(event_id,stream_id,sequence_number,prior_content_hash,event_content_hash,authoritative,superseded_event_id) VALUES(?,?,?,?,?,?,NULL)", (event_id, stream_id, sequence, prior["content_hash"] if prior else None, content_hash, 1))
         return event_id
+
+    def _accept_baseline(self, db: sqlite3.Connection, trial: sqlite3.Row, attempts: list[sqlite3.Row], events: list[sqlite3.Row], accepted_by: str, note: str) -> str:
+        baselines = db.execute("SELECT * FROM accepted_baselines WHERE trial_id=? ORDER BY created_at,baseline_id", (trial["trial_id"],)).fetchall()
+        eligible = baseline_eligibility(trial, attempts, events, baselines)
+        attempt = eligible.attempt
+        baseline_id = f"baseline-{secrets.token_hex(8)}"
+        try: contracts = json.loads(attempt["canonical_contract_hashes"] or "{}")
+        except (TypeError, ValueError): contracts = {}
+        accepted_proposal = attempt["normalized_proposal"]
+        db.execute("INSERT INTO accepted_baselines(baseline_id,trial_id,source_version_id,generation_attempt_id,review_target_event_id,integrity_review_event_id,revision_review_event_id,tone_review_event_id,accepted_proposal,proposal_sha256,source_sha256,source_to_proposal_diff_sha256,prompt_version,prompt_sha256,writer_contract_sha256,integrity_contract_sha256,voice_contract_sha256,response_schema_sha256,model_identifier,model_digest,accepted_by,accepted_at,acceptance_note,supersedes_baseline_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (baseline_id, trial["trial_id"], attempt["source_version_id"], attempt["attempt_id"], eligible.target["event_id"], eligible.integrity["event_id"], eligible.revision["event_id"], eligible.tone["event_id"], accepted_proposal, attempt["proposal_sha256"], attempt["source_sha256"], sha256_text(attempt["source_to_proposal_diff"] or ""), attempt["prompt_version"], attempt["prompt_sha256"], contracts.get("writer", ""), contracts.get("integrity", ""), contracts.get("voice", ""), attempt["schema_hash"], attempt["model_identifier"], attempt["model_digest"], accepted_by, utc_now(), note or None, eligible.current["baseline_id"] if eligible.current else None, utc_now()))
+        self._insert_editorial_event(db, trial["trial_id"], "BASELINE", "BASELINE_ACCEPTED", note, "", "", [], False, "", accepted_by, attempt, baseline_id=baseline_id)
+        return baseline_id
 
     def _record_attempt_event(self, db: sqlite3.Connection, attempt_id: str, from_status: str | None, to_status: str, error_class: str | None = None) -> None:
         previous = db.execute("SELECT sequence_number,event_hash FROM generation_attempt_events WHERE attempt_id=? ORDER BY sequence_number DESC LIMIT 1", (attempt_id,)).fetchone()
@@ -571,14 +585,53 @@ class DocWriterApp:
         attempt_rows = "".join(f"<tr><td><code>{html.escape(row['attempt_id'])}</code></td><td>{html.escape(row['status'])}</td><td>{html.escape(row['started_at'])}</td><td>{html.escape(row['completed_at'] or '—')}</td><td>{html.escape(row['source_sha256'])}</td></tr>" for row in attempts)
         restore = "" if provenance else f"<form method='post' action='/trial/{html.escape(trial['trial_id'])}/restore'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button type='submit'>Restore trial</button></form>"
         reason = trial["archive_reason"] or "Archived"
+        with self._db() as db:
+            baselines = db.execute("SELECT * FROM accepted_baselines WHERE trial_id=? ORDER BY created_at,baseline_id", (trial["trial_id"],)).fetchall()
+        baseline_html = self._render_baseline_history(trial, baselines, project)
         body = f"""<p class='meta'><a href='/projects'>Projects</a> → <a href='/project/{html.escape(project['slug'])}'>{html.escape(project['name']) if project else 'History'}</a></p>
 <h1>Archived trial <code>{html.escape(trial['trial_id'])}</code></h1>
 {self._guidance_panel(guidance)}
 <section><h2>Preserved history</h2><p>This trial is archived. Its surviving provenance remains available, but it is not part of the active review queue.</p><p>Status: <strong>{html.escape(trial['lifecycle_state'])}</strong><br>Reason: {html.escape(reason)}<br>Archived at: {html.escape(trial['archived_at'] or 'not recorded')}<br>Source state: {html.escape(trial['source_state'])}</p><p>Source SHA-256: <code>{html.escape(trial['source_sha256'])}</code><br>Model: <code>{html.escape(trial['model_identifier'])}</code><br>Digest: <code>{html.escape(trial['model_digest'])}</code></p></section>
 <section><h2>Surviving generation attempts</h2><table><tr><th>Attempt</th><th>Status</th><th>Started</th><th>Completed</th><th>Source hash</th></tr>{attempt_rows or '<tr><td colspan="5">No attempts recorded.</td></tr>'}</table></section>
 <section><h2>Recovery record</h2><p>{'The original trial content is unavailable. Doc Writer preserved the evidence it can verify without reconstructing prose.' if provenance else 'The trial content is preserved in the archived record.'}</p><p>Recovery state: <code>{html.escape(trial['recovery_state'] or 'NONE')}</code><br>Evidence reference: <code>{html.escape(trial['recovery_evidence_ref'] or 'not recorded')}</code></p></section>
+{baseline_html}
 <div class='actions' id='archive-actions'>{restore}<a class='button secondary' href='/project/{html.escape(project['slug']) if project else ''}'>View history</a></div>"""
         return self._html("Archived trial", body, csrf)
+
+    def _render_baseline_history(self, trial: sqlite3.Row, baselines: list[sqlite3.Row], project: sqlite3.Row | None) -> str:
+        current = current_baseline(baselines) if baselines else None
+        slug = project["slug"] if project else ""
+        if not baselines:
+            return "<section id='baseline-history'><h2>Accepted conversational baseline</h2><p>No conversational baseline has been accepted for this trial.</p></section>"
+        rows = "".join(f"<li>{'<strong>Current baseline</strong> · ' if row['baseline_id'] == current['baseline_id'] else ''}<a href='/project/{html.escape(slug)}/trial/{html.escape(trial['trial_id'])}/baseline/{html.escape(row['baseline_id'])}'><code>{html.escape(row['baseline_id'])}</code></a> · accepted {html.escape(row['accepted_at'])} · proposal <code>{html.escape(row['proposal_sha256'])}</code></li>" for row in baselines)
+        return f"<section id='baseline-history'><h2>Accepted conversational baseline</h2><p>{'The current baseline is preserved with its source and review history.' if current else 'Baseline history is preserved.'}</p><ul>{rows}</ul></section>"
+
+    def _render_baseline_section(self, trial: sqlite3.Row, attempts: list[sqlite3.Row], events: list[sqlite3.Row], csrf: str, project: sqlite3.Row | None) -> str:
+        with self._db() as db:
+            baselines = db.execute("SELECT * FROM accepted_baselines WHERE trial_id=? ORDER BY created_at,baseline_id", (trial["trial_id"],)).fetchall()
+        history = self._render_baseline_history(trial, baselines, project)
+        try:
+            eligible = baseline_eligibility(trial, attempts, events, baselines)
+        except ValueError as exc:
+            return history + f"<section id='baseline-acceptance'><h2>Baseline acceptance</h2><p class='muted'>Baseline acceptance is not available yet. <span class='technical'>{html.escape(str(exc))}</span></p></section>"
+        attempt = eligible.attempt
+        contract_hashes = {}
+        try: contract_hashes = json.loads(attempt["canonical_contract_hashes"] or "{}")
+        except (TypeError, ValueError): pass
+        diff_hash = sha256_text(attempt["source_to_proposal_diff"] or "")
+        project_slug = project["slug"] if project else ""
+        return history + f"""<section id='baseline-acceptance'><h2>Accept conversational baseline</h2>
+<p>Meaning and tone have both been accepted. Accepting this exact proposal will preserve it as the conversational baseline.</p>
+<p>This accepts the exact proposal shown above. It will not publish it or create audience versions.</p>
+<details open><summary>Exact acceptance evidence</summary><p>Attempt <code>{html.escape(attempt['attempt_id'])}</code> · source version <code>{attempt['source_version_id']}</code><br>Source SHA-256 <code>{html.escape(attempt['source_sha256'])}</code><br>Proposal SHA-256 <code>{html.escape(attempt['proposal_sha256'])}</code><br>Diff SHA-256 <code>{html.escape(diff_hash)}</code><br>Prompt <code>{html.escape(attempt['prompt_version'])}</code> · model <code>{html.escape(attempt['model_identifier'])}</code> · digest <code>{html.escape(attempt['model_digest'])}</code><br>Writer contract <code>{html.escape(contract_hashes.get('writer', 'not recorded'))}</code> · integrity <code>{html.escape(contract_hashes.get('integrity', 'not recorded'))}</code> · voice <code>{html.escape(contract_hashes.get('voice', 'not recorded'))}</code></p><pre>{html.escape(attempt['normalized_proposal'])}</pre><pre>{html.escape(attempt['source_to_proposal_diff'] or '(no textual difference)')}</pre></details>
+<form method='post' action='/trial/{html.escape(trial['trial_id'])}/baseline/accept'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='acceptance-note'>Optional acceptance note</label><textarea id='acceptance-note' name='acceptance_note' maxlength='{MAX_NOTES}'></textarea><label><input type='checkbox' name='confirm_baseline' value='1' required> I accept this exact proposal as the conversational baseline.</label><button type='submit'>Accept conversational baseline</button></form></section>"""
+
+    def _render_baseline_detail(self, baseline: sqlite3.Row, csrf: str, project: sqlite3.Row | None) -> str:
+        body = f"""<p class='meta'><a href='/project/{html.escape(project['slug']) if project else ''}/trial/{html.escape(baseline['trial_id'])}'>Return to trial</a></p><h1>Accepted conversational baseline</h1>
+<p>Baseline <code>{html.escape(baseline['baseline_id'])}</code> is immutable and remains preserved as history.</p><pre>{html.escape(baseline['accepted_proposal'])}</pre>
+<p>Accepted by <code>{html.escape(baseline['accepted_by'])}</code> at <code>{html.escape(baseline['accepted_at'])}</code>.</p><p>Source version <code>{baseline['source_version_id']}</code> · attempt <code>{html.escape(baseline['generation_attempt_id'])}</code><br>Proposal SHA-256 <code>{html.escape(baseline['proposal_sha256'])}</code><br>Source SHA-256 <code>{html.escape(baseline['source_sha256'])}</code><br>Diff SHA-256 <code>{html.escape(baseline['source_to_proposal_diff_sha256'])}</code></p>
+<details><summary>Review and model provenance</summary><p>Target event <code>{html.escape(baseline['review_target_event_id'])}</code><br>Integrity event <code>{html.escape(baseline['integrity_review_event_id'])}</code><br>Revision event <code>{html.escape(baseline['revision_review_event_id'])}</code><br>Tone event <code>{html.escape(baseline['tone_review_event_id'])}</code><br>Prompt <code>{html.escape(baseline['prompt_version'])}</code> · model <code>{html.escape(baseline['model_identifier'])}</code> · digest <code>{html.escape(baseline['model_digest'])}</code><br>Acceptance note: {html.escape(baseline['acceptance_note'] or '—')}</p></details>"""
+        return self._html("Accepted conversational baseline", body, csrf)
 
     def _render_editorial_sections(self, trial: sqlite3.Row, attempts: list[sqlite3.Row], review_events: list[sqlite3.Row], csrf: str) -> str:
         state = derive_editorial_state(trial, attempts, review_events)
@@ -737,8 +790,9 @@ class DocWriterApp:
         guidance = guidance_for(trial, attempts, review_events, project_slug=project["slug"] if project else None)
         integrity_block = f"<section id='integrity-findings'><h2>Model integrity findings</h2><pre>{html.escape(trial['integrity_findings'] or '—')}</pre></section>"
         editorial_sections = self._render_editorial_sections(trial, attempts, review_events, csrf)
+        baseline_section = self._render_baseline_section(trial, attempts, review_events, csrf, project)
         body = f"""{breadcrumb}<h1>Trial <code>{html.escape(trial['trial_id'])}</code></h1>{self._guidance_panel(guidance)}<p class='status'>Review status: {review_status}</p><p>Created {html.escape(trial['created_at'])}; updated {html.escape(trial['updated_at'])}; source SHA-256 <code>{html.escape(trial['source_sha256'])}</code></p><p>Model: <code>{html.escape(trial['model_identifier'])}</code><br>Digest: <code>{html.escape(trial['model_digest'])}</code></p>
-{generation}{block('Source paragraph', trial['source_text'])}<section><h2>Conversational proposal</h2><div class='prose'>{html.escape(trial['normalized_output'] or 'No normalized proposal recorded.')}</div></section>{diff_view}{integrity_block}{editorial_sections}{review_form}{no_attempt_view}{attempt_view}
+{generation}{block('Source paragraph', trial['source_text'])}<section><h2>Conversational proposal</h2><div class='prose'>{html.escape(trial['normalized_output'] or 'No normalized proposal recorded.')}</div></section>{diff_view}{integrity_block}{editorial_sections}{baseline_section}{review_form}{no_attempt_view}{attempt_view}
 <section id='revision-review'><h2>Decision</h2><form method='post' action='/trial/{html.escape(trial['trial_id'])}/decision'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='decision'>Decision</label><select id='decision' name='decision'>{''.join(f'<option>{decision}</option>' for decision in sorted(DECISIONS))}</select><label for='decision_reason'>Decision rationale (required for rejection or revision)</label><textarea id='decision_reason' name='decision_reason' maxlength='{MAX_NOTES}' aria-describedby='decision-help'></textarea><p id='decision-help' class='muted'>Add a short reason before marking this revision rejected or requiring revision.</p><button type='submit'>Record decision</button></form></section><section><h2>Generation-attempt history</h2><table><tr><th>Started</th><th>Completed</th><th>Status</th><th>Model</th><th>Source version</th><th>Result</th></tr>{generation_history}</table></section><section><h2>Draft version history</h2><table><tr><th>Version</th><th>When</th><th>Action</th></tr>{history}</table></section><p><a href='/trial/{html.escape(trial['trial_id'])}/artifact'>View artifact/provenance</a> · <a href='/trial/{html.escape(trial['trial_id'])}/edit'>Edit</a></p>{archive_form}"""
         return self._html("Trial", body, csrf)
 
@@ -766,6 +820,13 @@ class DocWriterApp:
                     trial = db.execute("SELECT * FROM trials WHERE trial_id=?", (parts[3],)).fetchone()
                     if not project or not trial or trial["project_id"] != project["project_id"]: raise NotFoundError("trial not found")
                     content = self._render_trial(trial, db.execute("SELECT * FROM trial_versions WHERE trial_id=? ORDER BY version_id", (parts[3],)).fetchall(), db.execute("SELECT * FROM generation_attempts WHERE trial_id=? ORDER BY started_at DESC", (parts[3],)).fetchall(), self._review_events(db, parts[3]), csrf, project=project)
+            elif method == "GET" and path.startswith("/project/") and len(path.strip("/").split("/")) == 6 and path.strip("/").split("/")[2] == "trial" and path.strip("/").split("/")[4] == "baseline":
+                parts = path.strip("/").split("/")
+                with self._db() as db:
+                    project = db.execute("SELECT * FROM projects WHERE slug=? OR project_id=?", (parts[1], parts[1])).fetchone()
+                    baseline = db.execute("SELECT * FROM accepted_baselines WHERE baseline_id=? AND trial_id=?", (parts[5], parts[3])).fetchone()
+                    if not project or not baseline or project["project_id"] != db.execute("SELECT project_id FROM trials WHERE trial_id=?", (parts[3],)).fetchone()[0]: raise NotFoundError("baseline not found")
+                    content = self._render_baseline_detail(baseline, csrf, project)
             elif method == "GET" and path.startswith("/project/"):
                 parts = path.strip("/").split("/")
                 project_key = parts[1]
@@ -832,6 +893,10 @@ class DocWriterApp:
                         attempt = db.execute("SELECT * FROM generation_attempts WHERE trial_id=? AND attempt_id=?", (trial_id, parts[3])).fetchone()
                         if not attempt: raise NotFoundError("attempt not found")
                         content = self._render_attempt_fallback(trial, attempt, csrf, project)
+                    elif len(parts) == 4 and parts[2] == "baseline":
+                        baseline = db.execute("SELECT * FROM accepted_baselines WHERE trial_id=? AND baseline_id=?", (trial_id, parts[3])).fetchone()
+                        if not baseline: raise NotFoundError("baseline not found")
+                        content = self._render_baseline_detail(baseline, csrf, project)
                     elif len(parts) == 3 and parts[2] == "edit": content = self._render_form(csrf, trial, project=project)
                     elif len(parts) == 3 and parts[2] == "artifact":
                         artifact = json.dumps({"trial_id": trial_id, "source_sha256": trial["source_sha256"], "model_identifier": trial["model_identifier"], "model_digest": trial["model_digest"], "generation_parameters": json.loads(trial["generation_parameters"] or "{}"), "review_status": trial["review_status"], "revision_lineage": json.loads(trial["revision_lineage"] or "[]")}, indent=2)
@@ -872,6 +937,10 @@ class DocWriterApp:
                 with self._db() as db:
                     trial = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
                     if not trial: raise LookupError("trial not found")
+                    if len(parts) == 4 and parts[2] == "baseline" and parts[3] == "accept":
+                        if form.get("confirm_baseline") != "1": raise ValueError("Confirm the exact proposal before accepting the baseline.")
+                        baseline_id = self._accept_baseline(db, trial, db.execute("SELECT * FROM generation_attempts WHERE trial_id=? ORDER BY started_at DESC", (trial_id,)).fetchall(), self._review_events(db, trial_id), self._authenticated_user(environ), form.get("acceptance_note", "").strip()[:MAX_NOTES])
+                        start_response("303 See Other", [("Location", f"/trial/{trial_id}/baseline/{baseline_id}")]); return [b""]
                     if len(parts) == 3 and parts[2] == "review-target":
                         attempt = db.execute("SELECT * FROM generation_attempts WHERE attempt_id=? AND trial_id=? AND status='COMPLETED'", (form.get("attempt_id", ""), trial_id)).fetchone()
                         if not attempt or not (attempt["normalized_proposal"] or "").strip(): raise ValueError("Choose a completed proposal before staged review.")

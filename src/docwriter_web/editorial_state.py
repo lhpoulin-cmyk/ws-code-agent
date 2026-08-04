@@ -30,7 +30,7 @@ def _latest(rows: list[Any], stage: str | None = None, event_type: str | None = 
     return sorted(selected, key=lambda r: (_value(r, "created_at", ""), _value(r, "event_id", "")))[-1] if selected else None
 
 
-def derive_editorial_state(trial: Any, attempts: Iterable[Any], events: Iterable[Any]) -> EditorialState:
+def derive_editorial_state(trial: Any, attempts: Iterable[Any], events: Iterable[Any], baselines: Iterable[Any] = ()) -> EditorialState:
     completed = [a for a in attempts if _value(a, "status") == "COMPLETED" and str(_value(a, "normalized_proposal", "") or "").strip()]
     if not completed:
         return EditorialState("GENERATION_REQUIRED", explanation="A completed proposal is required before staged editorial review can begin.")
@@ -64,5 +64,10 @@ def derive_editorial_state(trial: Any, attempts: Iterable[Any], events: Iterable
     if _value(tone, "decision") == "TONE_REJECTED":
         return EditorialState("TONE_REJECTED", base.target_attempt_id, base.target_source_version_id, base.target_source_sha256, base.target_proposal_sha256, "This proposal was rejected as a basis for the operator's voice.")
     if _value(tone, "decision") == "TONE_ACCEPTED":
-        return EditorialState("READY_FOR_BASELINE_ACCEPTANCE", base.target_attempt_id, base.target_source_version_id, base.target_source_sha256, base.target_proposal_sha256, "Meaning and tone have both been accepted; baseline acceptance is not available in this version.")
+        baseline_rows = list(baselines)
+        superseded = {_value(row, "supersedes_baseline_id") for row in baseline_rows if _value(row, "supersedes_baseline_id")}
+        current = next((row for row in baseline_rows if _value(row, "baseline_id") not in superseded), None)
+        if current and _value(current, "generation_attempt_id") == attempt_id:
+            return EditorialState("BASELINE_ACCEPTED", base.target_attempt_id, base.target_source_version_id, base.target_source_sha256, base.target_proposal_sha256, "This proposal is the current accepted conversational baseline.")
+        return EditorialState("READY_FOR_BASELINE_ACCEPTANCE", base.target_attempt_id, base.target_source_version_id, base.target_source_sha256, base.target_proposal_sha256, "Meaning and tone have both been accepted; baseline acceptance is ready.")
     return EditorialState("TONE_REVIEW_REQUIRED", base.target_attempt_id, base.target_source_version_id, base.target_source_sha256, base.target_proposal_sha256, "The tone review record does not contain a recognized outcome.")

@@ -142,6 +142,26 @@ def verify(db: sqlite3.Connection) -> int:
                 if not target:
                     return fail(f"stream={stream_id} missing_superseded_event")
             previous_hash = witness["event_content_hash"]
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='accepted_baselines'").fetchone():
+        baselines = db.execute("SELECT * FROM accepted_baselines ORDER BY trial_id,created_at,baseline_id").fetchall()
+        baseline_ids = {row["baseline_id"] for row in baselines}
+        accepts = db.execute("SELECT * FROM review_events WHERE event_type='BASELINE_ACCEPT'").fetchall()
+        if len(accepts) != len(baselines): return fail("baseline/event coverage mismatch")
+        for baseline in baselines:
+            linked = [event for event in accepts if event["baseline_id"] == baseline["baseline_id"]]
+            if len(linked) != 1 or linked[0]["decision"] != "BASELINE_ACCEPTED": return fail(f"baseline={baseline['baseline_id']} acceptance_event")
+            if hashlib.sha256(baseline["accepted_proposal"].encode()).hexdigest() != baseline["proposal_sha256"]: return fail(f"baseline={baseline['baseline_id']} proposal_hash")
+            if baseline["supersedes_baseline_id"] and baseline["supersedes_baseline_id"] not in baseline_ids: return fail(f"baseline={baseline['baseline_id']} supersedes_missing")
+            if baseline["supersedes_baseline_id"] and db.execute("SELECT trial_id FROM accepted_baselines WHERE baseline_id=?", (baseline["supersedes_baseline_id"],)).fetchone()[0] != baseline["trial_id"]: return fail(f"baseline={baseline['baseline_id']} cross_trial_supersession")
+            for field in ("review_target_event_id", "integrity_review_event_id", "revision_review_event_id", "tone_review_event_id"):
+                event = db.execute("SELECT * FROM review_events WHERE event_id=?", (baseline[field],)).fetchone()
+                if not event or event["trial_id"] != baseline["trial_id"] or event["generation_attempt_id"] != baseline["generation_attempt_id"] or event["stream_id"] != linked[0]["stream_id"]: return fail(f"baseline={baseline['baseline_id']} gate_binding={field}")
+            if linked[0]["proposal_sha256"] != baseline["proposal_sha256"] or linked[0]["source_sha256"] != baseline["source_sha256"]: return fail(f"baseline={baseline['baseline_id']} evidence_hash")
+        for baseline in baselines:
+            seen = set(); cursor = baseline["baseline_id"]
+            while cursor:
+                if cursor in seen: return fail(f"baseline={baseline['baseline_id']} cycle")
+                seen.add(cursor); row = next((r for r in baselines if r["baseline_id"] == cursor), None); cursor = row["supersedes_baseline_id"] if row else None
     print(f"OK attempts={len(attempts)} attempt_events={sum(map(len, events_by_attempt.values()))} review_events={len(review_ids)} streams={len(streams)}")
     return 0
 

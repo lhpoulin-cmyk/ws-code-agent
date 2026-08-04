@@ -34,6 +34,10 @@ MIGRATION_NAMES = (
     "editorial-review-stages-v1",
     "editorial-review-details-v1",
     "editorial-review-streams-v1",
+    "accepted-baselines-v1",
+    "baseline-review-events-v1",
+    "baseline-immutability-v1",
+    "baseline-supersession-v1",
 )
 
 
@@ -49,7 +53,7 @@ def _database_hash(db: sqlite3.Connection) -> str:
 
 
 def _counts(db: sqlite3.Connection) -> dict[str, int]:
-    tables = ["projects", "trials", "trial_versions", "generation_attempts", "review_events", "project_migration_events"]
+    tables = ["projects", "trials", "trial_versions", "generation_attempts", "review_events", "project_migration_events", "accepted_baselines"]
     return {table: db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in tables if _table_exists(db, table)}
 
 
@@ -437,6 +441,65 @@ def _supersession(db: sqlite3.Connection, commit: str) -> None:
     _ledger(db, name, commit, before, before_hash)
 
 
+def _accepted_baselines(db: sqlite3.Connection, commit: str) -> None:
+    name = "accepted-baselines-v1"
+    if _migration_applied(db, name): return
+    before, before_hash = _counts(db), _database_hash(db)
+    db.execute("""CREATE TABLE IF NOT EXISTS accepted_baselines (
+        baseline_id TEXT PRIMARY KEY,
+        trial_id TEXT NOT NULL REFERENCES trials(trial_id),
+        source_version_id INTEGER NOT NULL REFERENCES trial_versions(version_id),
+        generation_attempt_id TEXT NOT NULL REFERENCES generation_attempts(attempt_id),
+        review_target_event_id TEXT NOT NULL REFERENCES review_events(event_id),
+        integrity_review_event_id TEXT NOT NULL REFERENCES review_events(event_id),
+        revision_review_event_id TEXT NOT NULL REFERENCES review_events(event_id),
+        tone_review_event_id TEXT NOT NULL REFERENCES review_events(event_id),
+        accepted_proposal TEXT NOT NULL,
+        proposal_sha256 TEXT NOT NULL, source_sha256 TEXT NOT NULL,
+        source_to_proposal_diff_sha256 TEXT NOT NULL,
+        prompt_version TEXT NOT NULL, prompt_sha256 TEXT NOT NULL,
+        writer_contract_sha256 TEXT NOT NULL, integrity_contract_sha256 TEXT NOT NULL,
+        voice_contract_sha256 TEXT NOT NULL, response_schema_sha256 TEXT NOT NULL,
+        model_identifier TEXT NOT NULL, model_digest TEXT NOT NULL,
+        accepted_by TEXT NOT NULL, accepted_at TEXT NOT NULL,
+        acceptance_note TEXT, supersedes_baseline_id TEXT REFERENCES accepted_baselines(baseline_id),
+        created_at TEXT NOT NULL, CHECK(baseline_id <> supersedes_baseline_id)
+    )""")
+    db.execute("CREATE INDEX IF NOT EXISTS accepted_baselines_trial_idx ON accepted_baselines(trial_id, created_at)")
+    db.execute("CREATE INDEX IF NOT EXISTS accepted_baselines_supersedes_idx ON accepted_baselines(supersedes_baseline_id)")
+    _ledger(db, name, commit, before, before_hash)
+
+
+def _baseline_review_events(db: sqlite3.Connection, commit: str) -> None:
+    name = "baseline-review-events-v1"
+    if _migration_applied(db, name): return
+    before, before_hash = _counts(db), _database_hash(db)
+    _add_column(db, "review_events", "baseline_id", "TEXT REFERENCES accepted_baselines(baseline_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS review_events_baseline_idx ON review_events(baseline_id)")
+    _ledger(db, name, commit, before, before_hash)
+
+
+def _baseline_immutability(db: sqlite3.Connection, commit: str) -> None:
+    name = "baseline-immutability-v1"
+    if _migration_applied(db, name): return
+    before, before_hash = _counts(db), _database_hash(db)
+    db.executescript("""
+    CREATE TRIGGER IF NOT EXISTS accepted_baselines_no_update BEFORE UPDATE ON accepted_baselines
+    BEGIN SELECT RAISE(ABORT, 'accepted baselines are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS accepted_baselines_no_delete BEFORE DELETE ON accepted_baselines
+    BEGIN SELECT RAISE(ABORT, 'accepted baselines are immutable'); END;
+    """)
+    _ledger(db, name, commit, before, before_hash)
+
+
+def _baseline_supersession(db: sqlite3.Connection, commit: str) -> None:
+    name = "baseline-supersession-v1"
+    if _migration_applied(db, name): return
+    before, before_hash = _counts(db), _database_hash(db)
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS accepted_baselines_one_successor_idx ON accepted_baselines(supersedes_baseline_id) WHERE supersedes_baseline_id IS NOT NULL")
+    _ledger(db, name, commit, before, before_hash)
+
+
 def apply_migrations(db: sqlite3.Connection, application_commit: str) -> None:
     db.execute("PRAGMA foreign_keys=ON")
     db.execute("""CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -455,3 +518,7 @@ def apply_migrations(db: sqlite3.Connection, application_commit: str) -> None:
     _review_append_only(db, application_commit)
     _review_chain(db, application_commit)
     _supersession(db, application_commit)
+    _accepted_baselines(db, application_commit)
+    _baseline_review_events(db, application_commit)
+    _baseline_immutability(db, application_commit)
+    _baseline_supersession(db, application_commit)

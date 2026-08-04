@@ -45,7 +45,7 @@ def test_staged_review_sequence_binds_exact_attempt_and_creates_no_baseline(tmp_
         rows = db.execute("select event_type,stage,decision,source_version_id,source_sha256,proposal_sha256 from review_events where trial_id=? and stream_id is not null order by sequence_number", (trial_id,)).fetchall()
         assert [r[0] for r in rows] == ["REVIEW_TARGET_SELECTED", "INTEGRITY_REVIEW", "REVISION_REVIEW", "TONE_REVIEW"]
         assert all(r[3:] == (version_id, source_hash, proposal_hash) for r in rows)
-        assert db.execute("select name from sqlite_master where type='table' and name='accepted_baselines'").fetchone() is None
+        assert db.execute("select count(*) from accepted_baselines where trial_id=?", (trial_id,)).fetchone()[0] == 0
 
 
 def test_private_steering_is_hidden_until_csrf_protected_reveal(tmp_path):

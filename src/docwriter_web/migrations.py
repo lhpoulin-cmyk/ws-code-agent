@@ -30,6 +30,10 @@ MIGRATION_NAMES = (
     "prompt-provenance-v2-v1",
     "generation-failure-taxonomy-v1",
     "generation-failure-taxonomy-v2",
+    "editorial-review-target-v1",
+    "editorial-review-stages-v1",
+    "editorial-review-details-v1",
+    "editorial-review-streams-v1",
 )
 
 
@@ -279,6 +283,30 @@ def _failure_taxonomy_v2(db: sqlite3.Connection, commit: str) -> None:
     _ledger(db, name, commit, before, before_hash)
 
 
+def _editorial_review_schema(db: sqlite3.Connection, commit: str) -> None:
+    names = ("editorial-review-target-v1", "editorial-review-stages-v1", "editorial-review-details-v1", "editorial-review-streams-v1")
+    before, before_hash = _counts(db), _database_hash(db)
+    for column, definition in {
+        "source_version_id": "INTEGER REFERENCES trial_versions(version_id)",
+        "source_sha256": "TEXT",
+        "proposal_sha256": "TEXT",
+        "stage": "TEXT",
+        "preferred_replacement": "TEXT",
+        "finding_codes": "TEXT",
+        "operator_aside": "TEXT",
+        "stream_id": "TEXT",
+        "sequence_number": "INTEGER",
+        "prior_content_hash": "TEXT",
+        "event_content_hash": "TEXT",
+    }.items():
+        _add_column(db, "review_events", column, definition)
+    db.execute("CREATE INDEX IF NOT EXISTS review_events_editorial_stream_idx ON review_events(stream_id, sequence_number)")
+    db.execute("CREATE INDEX IF NOT EXISTS review_events_target_idx ON review_events(trial_id, generation_attempt_id, stage, created_at)")
+    for name in names:
+        if not _migration_applied(db, name):
+            _ledger(db, name, commit, before, before_hash)
+
+
 def _attempt_events(db: sqlite3.Connection, commit: str) -> None:
     name = "generation-attempt-events-v1"
     if _migration_applied(db, name):
@@ -421,6 +449,7 @@ def apply_migrations(db: sqlite3.Connection, application_commit: str) -> None:
     _prompt_provenance_v2(db, application_commit)
     _failure_taxonomy(db, application_commit)
     _failure_taxonomy_v2(db, application_commit)
+    _editorial_review_schema(db, application_commit)
     _attempt_events(db, application_commit)
     _immutability(db, application_commit)
     _review_append_only(db, application_commit)

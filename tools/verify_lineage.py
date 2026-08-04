@@ -111,11 +111,26 @@ def verify(db: sqlite3.Connection) -> int:
                 return fail(f"stream={stream_id} sequence={witness['sequence_number']}")
             if witness["prior_content_hash"] != previous_hash:
                 return fail(f"stream={stream_id} prior_hash")
-            event = db.execute("SELECT content_hash FROM review_events WHERE event_id=?", (witness["event_id"],)).fetchone()
+            event = db.execute("SELECT * FROM review_events WHERE event_id=?", (witness["event_id"],)).fetchone()
             if not event:
                 return fail(f"stream={stream_id} missing_event={witness['event_id']}")
-            if event[0] != witness["event_content_hash"]:
+            if event["content_hash"] != witness["event_content_hash"]:
                 return fail(f"stream={stream_id} content_hash event={witness['event_id']}")
+            if event["stream_id"] and event["stream_id"] != stream_id:
+                return fail(f"stream={stream_id} event_stream={event['event_id']}")
+            if event["sequence_number"] is not None and event["sequence_number"] != witness["sequence_number"]:
+                return fail(f"stream={stream_id} event_sequence={event['event_id']}")
+            if event["event_content_hash"] and event["event_content_hash"] != witness["event_content_hash"]:
+                return fail(f"stream={stream_id} event_content_hash={event['event_id']}")
+            if stream_id.startswith("editorial:"):
+                parts = stream_id.split(":", 2)
+                if len(parts) != 3 or event["trial_id"] != parts[1] or event["generation_attempt_id"] != parts[2]:
+                    return fail(f"stream={stream_id} target_binding={event['event_id']}")
+                attempt = db.execute("SELECT status,source_version_id,source_sha256,proposal_sha256 FROM generation_attempts WHERE attempt_id=?", (event["generation_attempt_id"],)).fetchone()
+                if not attempt or attempt["status"] != "COMPLETED":
+                    return fail(f"stream={stream_id} ineligible_attempt")
+                if event["source_version_id"] != attempt["source_version_id"] or event["source_sha256"] != attempt["source_sha256"] or event["proposal_sha256"] != attempt["proposal_sha256"]:
+                    return fail(f"stream={stream_id} evidence_binding={event['event_id']}")
             if witness["authoritative"]:
                 if witness["sequence_number"] in authoritative_sequences:
                     return fail(f"stream={stream_id} duplicate_authoritative_sequence")

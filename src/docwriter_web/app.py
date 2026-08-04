@@ -857,7 +857,8 @@ class DocWriterApp:
 
     def _render_status_probe(self, probe) -> str:
         details = "".join(f"<dt>{html.escape(str(key))}</dt><dd class='machine'>{html.escape(json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value))}</dd>" for key, value in probe.details.items())
-        detail_block = f"<details class='developer-only'><summary>Evidence details</summary><dl>{details}</dl></details>"
+        open_attribute = " open" if _CURRENT_MODE.get() == DEVELOPER else ""
+        detail_block = f"<details class='developer-only'{open_attribute}><summary>Evidence details</summary><dl>{details}</dl></details>"
         visible_value = "local model service" if probe.probe_id == "ollama" and _CURRENT_MODE.get() == NORMAL else probe.value
         return f"<section class='status-panel status-{html.escape(probe.state.lower())}'><div class='actions'><div><h2>{html.escape(probe.probe_id)}</h2><p class='status-value'>{html.escape(probe.state)} · {html.escape(visible_value)}</p></div><span class='badge'>{html.escape(probe.timestamp)}</span></div><p>{html.escape(probe.detail)}</p><p class='status-source'>Source: {html.escape(probe.source)}</p>{detail_block}</section>"
 

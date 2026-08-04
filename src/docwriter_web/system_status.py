@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -102,7 +104,16 @@ def _network(config: Any) -> Probe:
     try:
         for host in hosts:
             answers[host] = sorted({item[4][0] for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)})
-        return _probe("dns-tls", "OK", ", ".join(f"{host}={answers[host]}" for host in hosts), "getaddrinfo", "Internal hostname resolution completed. Certificate details require the reverse-proxy probe.", canonical_host=config.canonical_host, answers=answers, tls="not probed by application process")
+        tls_fingerprint = "unknown"
+        try:
+            context = ssl._create_unverified_context()
+            with socket.create_connection((config.canonical_host, 443), timeout=1) as raw:
+                with context.wrap_socket(raw, server_hostname=config.canonical_host) as secure:
+                    certificate = secure.getpeercert(binary_form=True)
+                    tls_fingerprint = hashlib.sha256(certificate).hexdigest() if certificate else "unavailable"
+        except OSError:
+            tls_fingerprint = "unavailable"
+        return _probe("dns-tls", "OK", ", ".join(f"{host}={answers[host]}" for host in hosts), "getaddrinfo and bounded TLS socket probe", "Internal hostname resolution completed; certificate identity is represented by a fingerprint only.", canonical_host=config.canonical_host, answers=answers, tls_sha256=tls_fingerprint, tls="certificate subject and validity are proxy-owned and not exposed by this process")
     except OSError as exc:
         return _probe("dns-tls", "UNKNOWN", config.canonical_host, "getaddrinfo", "Internal DNS evidence is unavailable.", error=type(exc).__name__, tls="not probed")
 
@@ -113,12 +124,31 @@ def _contracts(bundle: Any, profiles: dict[str, Any]) -> Probe:
     return _probe("contracts", "OK", bundle.version, "repository contract loader", "Active writing contracts and adapter profiles loaded.", hashes=hashes, audience_profiles={key: value.profile_version for key, value in profiles.items()})
 
 
+def _lineage(config: Any) -> Probe:
+    verifier_path = Path(__file__).parents[2] / "tools" / "verify_lineage.py"
+    try:
+        spec = importlib.util.spec_from_file_location("docwriter_lineage_probe", verifier_path)
+        if not spec or not spec.loader:
+            raise ImportError("verifier unavailable")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        db = sqlite3.connect(f"file:{config.database}?mode=ro", uri=True)
+        db.row_factory = sqlite3.Row
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = module.verify(db)
+        db.close()
+        return _probe("lineage", "OK" if result == 0 else "FAILED", "passing" if result == 0 else "failed", "tools/verify_lineage.py read-only invocation", "The application-owned lineage verifier completed without exposing row bodies.", verifier_output=output.getvalue().strip())
+    except (OSError, ImportError, sqlite3.Error, AttributeError) as exc:
+        return _probe("lineage", "UNKNOWN", "unavailable", "tools/verify_lineage.py", "The lineage verifier could not be invoked from the bounded status process.", error=type(exc).__name__)
+
+
 def collect(config: Any, bundle: Any, profiles: dict[str, Any], refresh: bool = False) -> dict[str, Probe]:
     key = str(config.database)
     now = time.monotonic()
     cached = _CACHE.get(key)
     if cached and not refresh and now - cached[0] < CACHE_SECONDS:
         return cached[1]
-    probes = {probe.probe_id: probe for probe in (_service(config), _storage(config), _database(config), _ollama(config), _network(config), _contracts(bundle, profiles))}
+    probes = {probe.probe_id: probe for probe in (_service(config), _storage(config), _database(config), _lineage(config), _ollama(config), _network(config), _contracts(bundle, profiles))}
     _CACHE[key] = (now, probes)
     return probes

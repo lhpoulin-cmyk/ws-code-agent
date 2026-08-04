@@ -537,7 +537,7 @@ class DocWriterApp:
         if status_filter in DECISIONS or status_filter == "REVIEW_REQUIRED":
             conditions.append("t.review_status=?"); params.append(status_filter)
         elif status_filter == "needs_review":
-            conditions.append("(t.review_status IN ('REVIEW_REQUIRED','REVISION_REQUIRED') OR (t.review_status IN ('REJECTED','REVISION_REQUIRED') AND NOT EXISTS (SELECT 1 FROM review_events rn WHERE rn.trial_id=t.trial_id AND rn.event_type='REVIEW_NOTE' AND trim(COALESCE(rn.note_text,''))<>'')) OR EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND COALESCE(gf.canonical_failure_class,'') IN ('INTERRUPTED','REQUEST_TIMEOUT','OLLAMA_UNAVAILABLE','OLLAMA_HTTP_ERROR','EMPTY_RESPONSE','MALFORMED_JSON','RESPONSE_SCHEMA_INVALID','PROPOSAL_FIELD_MISSING','TASK_ADHERENCE_FAILED','NORMALIZATION_FAILURE','PERSISTENCE_FAILURE','RENDER_FAILURE','STALE_SOURCE')))")
+            conditions.append("(NOT EXISTS (SELECT 1 FROM accepted_baselines ab WHERE ab.trial_id=t.trial_id AND ab.generation_attempt_id=(SELECT rt.generation_attempt_id FROM review_events rt WHERE rt.trial_id=t.trial_id AND rt.event_type='REVIEW_TARGET_SELECTED' ORDER BY rt.created_at DESC,rt.event_id DESC LIMIT 1)) AND (t.review_status IN ('REVIEW_REQUIRED','REVISION_REQUIRED') OR (t.review_status IN ('REJECTED','REVISION_REQUIRED') AND NOT EXISTS (SELECT 1 FROM review_events rn WHERE rn.trial_id=t.trial_id AND rn.event_type='REVIEW_NOTE' AND trim(COALESCE(rn.note_text,''))<>'')) OR EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND COALESCE(gf.canonical_failure_class,'') IN ('INTERRUPTED','REQUEST_TIMEOUT','OLLAMA_UNAVAILABLE','OLLAMA_HTTP_ERROR','EMPTY_RESPONSE','MALFORMED_JSON','RESPONSE_SCHEMA_INVALID','PROPOSAL_FIELD_MISSING','TASK_ADHERENCE_FAILED','NORMALIZATION_FAILURE','PERSISTENCE_FAILURE','RENDER_FAILURE','STALE_SOURCE')) OR (EXISTS (SELECT 1 FROM review_events te WHERE te.trial_id=t.trial_id AND te.stage='TONE' AND te.decision='TONE_ACCEPTED') AND NOT EXISTS (SELECT 1 FROM accepted_baselines ab WHERE ab.trial_id=t.trial_id))))")
         elif status_filter == "generation_failed":
             conditions.append("EXISTS (SELECT 1 FROM generation_attempts gf WHERE gf.trial_id=t.trial_id AND COALESCE(gf.canonical_failure_class,'') IN ('INTERRUPTED','REQUEST_TIMEOUT','OLLAMA_UNAVAILABLE','OLLAMA_HTTP_ERROR','EMPTY_RESPONSE','MALFORMED_JSON','RESPONSE_SCHEMA_INVALID','PROPOSAL_FIELD_MISSING','TASK_ADHERENCE_FAILED','NORMALIZATION_FAILURE','PERSISTENCE_FAILURE','RENDER_FAILURE','STALE_SOURCE'))")
         elif status_filter == "rationale_missing":
@@ -565,6 +565,7 @@ class DocWriterApp:
         if row["has_notes"]: flags.append("notes")
         if row["has_private"]: flags.append("private steering")
         if row["has_failed"]: flags.append("generation failed")
+        if row["latest_decision"] == "TONE_ACCEPTED": flags.append("ready for baseline")
         flag_text = " · ".join(flags) if flags else "no reviewer notes"
         attempt_state = row["latest_attempt_state"] or "REQUEST_NOT_STARTED"
         if attempt_state == "COMPLETED" and not (row["normalized_output"] or "").strip(): attempt_state = "COMPLETED_WITHOUT_NORMALIZATION"
@@ -575,18 +576,22 @@ class DocWriterApp:
         if editorial_events is None:
             with self._db() as db:
                 editorial_events = db.execute("SELECT * FROM review_events WHERE trial_id=? AND stream_id IS NOT NULL ORDER BY created_at,event_id", (row["trial_id"],)).fetchall()
-        guidance = guidance_for(row, [attempt] if row["latest_attempt_state"] else [], review_events + list(editorial_events), project_slug=row["project_slug"])
+                baseline_rows = db.execute("SELECT * FROM accepted_baselines WHERE trial_id=? ORDER BY created_at,baseline_id", (row["trial_id"],)).fetchall()
+        else:
+            with self._db() as db:
+                baseline_rows = db.execute("SELECT * FROM accepted_baselines WHERE trial_id=? ORDER BY created_at,baseline_id", (row["trial_id"],)).fetchall()
+        guidance = guidance_for(row, [attempt] if row["latest_attempt_state"] else [], review_events + list(editorial_events), project_slug=row["project_slug"], baselines=baseline_rows)
         action = f"<a class='button' href='{html.escape(guidance.primary_action_url)}'>{html.escape(guidance.primary_action_label)}</a>" if guidance.primary_action_url and guidance.primary_action_label else ""
         return f"<article class='trial-card'><div><h3>{html.escape(excerpt or 'Untitled trial')}</h3><div class='meta'><code>{html.escape(row['trial_id'])}</code> · created {html.escape(row['created_at'])} · updated {html.escape(row['updated_at'])}</div><p>{self._status_badge(row['review_status'], rationale_missing)} <span class='meta'>{html.escape(row['model_identifier'])} · {row['attempt_count']} generation attempt(s) · {html.escape(attempt_state)} · {html.escape(flag_text)}</span></p><p class='guidance-summary'>{html.escape(guidance.title)}</p></div><div class='actions'>{action}<a class='button secondary' href='/trial/{html.escape(row['trial_id'])}'>Open</a></div></article>"
 
     def _render_archived_trial(self, trial: sqlite3.Row, attempts: list[sqlite3.Row], versions: list[sqlite3.Row], csrf: str, project: sqlite3.Row | None) -> str:
         provenance = trial["source_state"] != "PRESENT" or trial["recovery_state"] == "PROVENANCE_ONLY"
-        guidance = guidance_for(trial, attempts, project_slug=project["slug"] if project else None)
         attempt_rows = "".join(f"<tr><td><code>{html.escape(row['attempt_id'])}</code></td><td>{html.escape(row['status'])}</td><td>{html.escape(row['started_at'])}</td><td>{html.escape(row['completed_at'] or '—')}</td><td>{html.escape(row['source_sha256'])}</td></tr>" for row in attempts)
         restore = "" if provenance else f"<form method='post' action='/trial/{html.escape(trial['trial_id'])}/restore'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button type='submit'>Restore trial</button></form>"
         reason = trial["archive_reason"] or "Archived"
         with self._db() as db:
             baselines = db.execute("SELECT * FROM accepted_baselines WHERE trial_id=? ORDER BY created_at,baseline_id", (trial["trial_id"],)).fetchall()
+        guidance = guidance_for(trial, attempts, project_slug=project["slug"] if project else None, baselines=baselines)
         baseline_html = self._render_baseline_history(trial, baselines, project)
         body = f"""<p class='meta'><a href='/projects'>Projects</a> → <a href='/project/{html.escape(project['slug'])}'>{html.escape(project['name']) if project else 'History'}</a></p>
 <h1>Archived trial <code>{html.escape(trial['trial_id'])}</code></h1>
@@ -787,7 +792,9 @@ class DocWriterApp:
         no_attempt_view = "<section><h2>Generation attempt</h2><p class='status'>REQUEST_NOT_STARTED</p><p>This trial has a saved source paragraph, but the writer has not been run yet. Your draft is safe.</p></section>" if not attempt else ""
         archive_form = f"<form method='post' action='/trial/{html.escape(trial['trial_id'])}/archive'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><button class='secondary' type='submit'>Archive trial</button></form>"
         breadcrumb = f"<p class='meta'><a href='/projects'>Projects</a> → <a href='/project/{html.escape(project['slug'])}'>{html.escape(project['name'])}</a> → {html.escape(trial['trial_id'])}</p>" if project else f"<p class='meta'><a href='/projects'>Projects</a> → {html.escape(trial['trial_id'])}</p>"
-        guidance = guidance_for(trial, attempts, review_events, project_slug=project["slug"] if project else None)
+        with self._db() as db:
+            guidance_baselines = db.execute("SELECT * FROM accepted_baselines WHERE trial_id=? ORDER BY created_at,baseline_id", (trial["trial_id"],)).fetchall()
+        guidance = guidance_for(trial, attempts, review_events, project_slug=project["slug"] if project else None, baselines=guidance_baselines)
         integrity_block = f"<section id='integrity-findings'><h2>Model integrity findings</h2><pre>{html.escape(trial['integrity_findings'] or '—')}</pre></section>"
         editorial_sections = self._render_editorial_sections(trial, attempts, review_events, csrf)
         baseline_section = self._render_baseline_section(trial, attempts, review_events, csrf, project)

@@ -24,3 +24,6 @@ benchmark is authorized by this decision.
 Capability authority is frozen as state-bound: authority for one immutable
 repository snapshot does not silently extend to later state. Model claims and
 executor-observed facts are likewise structurally distinct provenance classes.
+
+`docs/contracts/CODING_DOMAIN_CONTRACTS.md` records the accepted conceptual
+contracts for coding-domain objects without authorizing their implementation.

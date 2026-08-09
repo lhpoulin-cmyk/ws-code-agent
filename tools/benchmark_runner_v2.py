@@ -15,13 +15,15 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+import sys
 
 import yaml
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 from tools import benchmark_runner as v1
 from docwriter_web.backends import Backend, load_backends
 
-ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = Path(os.environ.get("WS_DOC_WRITER_RUNTIME", "/srv/ws-doc-writer"))
 RUNNER_VERSION = "ws-doc-writer-benchmark-runner/v2"
 MODELS = [("qwen3:14b-q4_K_M", "sha256:bdbd181c33f2ed1b31c972991882db3cf4d192569092138a7d29e973cd9debe8", "blind-amber"), ("gemma3:12b-it-q4_K_M", "sha256:f4031aab637d1ffa37b42570452ae0e4fad0314754d17ded67322e4b95836f8a", "blind-cobalt"), ("mistral-nemo:12b-instruct-2407-q4_K_M", "sha256:daf6737417121831e572a9c482e92a221ee0c33537f35f1f857c7b4f7191df55", "blind-verdant")]

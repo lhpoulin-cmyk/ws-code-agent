@@ -1,229 +1,52 @@
 #!/usr/bin/env python3
-"""Read-only structural verifier for generation and review evidence streams."""
+"""Read-only verification of this repository's recorded Git lineage."""
 
 from __future__ import annotations
 
-import argparse
-import hashlib
-import json
-import os
-import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
-STATES = {
-    "REQUEST_NOT_STARTED", "QUEUED", "RUNNING", "COMPLETED", "INTERRUPTED",
-    "REQUEST_TIMEOUT", "OLLAMA_UNAVAILABLE", "OLLAMA_HTTP_ERROR", "EMPTY_RESPONSE",
-    "MALFORMED_JSON", "RESPONSE_SCHEMA_INVALID", "PROPOSAL_FIELD_MISSING",
-    "TASK_ADHERENCE_FAILED", "NORMALIZATION_FAILURE", "PERSISTENCE_FAILURE",
-    "RENDER_FAILURE", "STALE_SOURCE",
-}
-TERMINAL_STATES = STATES - {"REQUEST_NOT_STARTED", "QUEUED", "RUNNING"}
-LEGACY = {"FAILED:REQUEST_TIMEOUT":"REQUEST_TIMEOUT", "FAILED:OLLAMA_UNAVAILABLE":"OLLAMA_UNAVAILABLE", "FAILED:OLLAMA_HTTP_ERROR":"OLLAMA_HTTP_ERROR", "FAILED:EMPTY_RESPONSE":"EMPTY_RESPONSE", "FAILED:RESPONSE_SCHEMA_INVALID":"RESPONSE_SCHEMA_INVALID", "FAILED:PROPOSAL_FIELD_MISSING":"PROPOSAL_FIELD_MISSING", "FAILED:TASK_ADHERENCE_FAILED":"TASK_ADHERENCE_FAILED", "FAILED:":"INTERRUPTED", "STALE_SOURCE:":"STALE_SOURCE", "INTERRUPTED:":"INTERRUPTED", "REQUEST_TIMEOUT:REQUEST_TIMEOUT":"REQUEST_TIMEOUT", "COMPLETED:":"COMPLETED", "RUNNING:":"RUNNING", "QUEUED:":"QUEUED"}
 
-def canonical_state(status, error_class="", explicit=""):
-    if explicit in STATES: return explicit
-    if status in STATES: return status
-    return LEGACY.get(f"{status}:{error_class}", LEGACY.get(f"{status}:", "INTERRUPTED"))
+FORK_SOURCE = "dfb759afb7826a2b849fa95bf40ce6f06cd3cd05"
+VERIFIED_CHECKPOINT = "7ae3d5794691fd769446702015f331367344df9d"
+CONTRACT = Path("docs/contracts/CODING_AGENT_FOUNDATION_CONTRACT.md")
 
 
-TERMINAL = TERMINAL_STATES
-ALLOWED = {
-    (None, "REQUEST_NOT_STARTED"),
-    (None, "QUEUED"),
-    ("REQUEST_NOT_STARTED", "QUEUED"),
-    (None, "RUNNING"),
-    (None, "COMPLETED"),
-    (None, "FAILED"),
-    (None, "STALE_SOURCE"),
-    (None, "INTERRUPTED"),
-    (None, "REQUEST_TIMEOUT"),
-    ("QUEUED", "RUNNING"),
-    ("RUNNING", "COMPLETED"),
-    ("RUNNING", "FAILED"),
-    ("RUNNING", "STALE_SOURCE"),
-    ("RUNNING", "INTERRUPTED"),
-    ("RUNNING", "REQUEST_TIMEOUT"),
-}
-for _source in STATES:
-    for _target in STATES:
-        if _source == "QUEUED" and _target in {"RUNNING", "INTERRUPTED"}:
-            ALLOWED.add((_source, _target))
-        if _source == "RUNNING" and _target in TERMINAL_STATES:
-            ALLOWED.add((_source, _target))
+def git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(("git", *args), cwd=cwd, text=True, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, check=False)
 
 
-def digest(payload: dict) -> str:
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+def report(name: str, passed: bool) -> bool:
+    print(f"{'PASS' if passed else 'FAIL'} {name}")
+    return passed
 
 
-def fail(message: str) -> int:
-    print(f"FAIL {message}")
-    return 1
+def main() -> int:
+    root_result = git("rev-parse", "--show-toplevel")
+    in_repository = root_result.returncode == 0
+    ok = report("inside_git_repository", in_repository)
+    if not in_repository:
+        return 1
 
+    root = Path(root_result.stdout.strip())
+    source_exists = git("cat-file", "-e", f"{FORK_SOURCE}^{{commit}}", cwd=root).returncode == 0
+    ok = report("fork_source_exists", source_exists) and ok
+    source_ancestor = source_exists and git("merge-base", "--is-ancestor", FORK_SOURCE, "HEAD", cwd=root).returncode == 0
+    ok = report("fork_source_is_head_ancestor", source_ancestor) and ok
 
-def verify(db: sqlite3.Connection) -> int:
-    db.execute("PRAGMA foreign_keys=ON")
-    if db.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
-        return fail("foreign_keys=0")
-    fk = db.execute("PRAGMA foreign_key_check").fetchall()
-    if fk:
-        return fail(f"foreign_key_check rows={len(fk)}")
+    checkpoint_exists = git("cat-file", "-e", f"{VERIFIED_CHECKPOINT}^{{commit}}", cwd=root).returncode == 0
+    ok = report("verified_checkpoint_exists", checkpoint_exists) and ok
+    checkpoint_ancestor = checkpoint_exists and source_exists and git(
+        "merge-base", "--is-ancestor", VERIFIED_CHECKPOINT, FORK_SOURCE, cwd=root
+    ).returncode == 0
+    ok = report("verified_checkpoint_is_fork_source_ancestor", checkpoint_ancestor) and ok
 
-    attempts = {row["attempt_id"]: row for row in db.execute("SELECT * FROM generation_attempts")}
-    events_by_attempt: dict[str, list[sqlite3.Row]] = {}
-    for row in db.execute("SELECT * FROM generation_attempt_events ORDER BY attempt_id,sequence_number"):
-        events_by_attempt.setdefault(row["attempt_id"], []).append(row)
-    if set(events_by_attempt) != set(attempts):
-        return fail("generation attempt/event coverage mismatch")
-    for attempt_id, rows in events_by_attempt.items():
-        previous_hash = None
-        previous_status = None
-        for expected, row in enumerate(rows, 1):
-            if row["sequence_number"] != expected:
-                return fail(f"attempt={attempt_id} sequence={row['sequence_number']}")
-            if row["prior_event_hash"] != previous_hash:
-                return fail(f"attempt={attempt_id} prior_hash")
-            event_status = canonical_state(row["to_status"], row["error_class"])
-            previous_canonical = canonical_state(previous_status, rows[-1]["error_class"] if rows else "") if previous_status else None
-            if (previous_canonical, event_status) not in ALLOWED:
-                return fail(f"attempt={attempt_id} transition={previous_canonical}->{event_status}")
-            payload = {key: row[key] for key in ("event_id", "attempt_id", "sequence_number", "from_status", "to_status", "error_class", "created_at", "prior_event_hash")}
-            if row["event_hash"] != digest(payload):
-                return fail(f"attempt={attempt_id} event_hash")
-            previous_hash = row["event_hash"]
-            previous_status = row["to_status"]
-        status = canonical_state(attempts[attempt_id]["status"], attempts[attempt_id]["error_class"], attempts[attempt_id].get("canonical_failure_class", "") if hasattr(attempts[attempt_id], "get") else "")
-        last_event = canonical_state(previous_status, rows[-1]["error_class"] if rows else "")
-        if status != last_event and not (status == "RUNNING" and last_event == "RUNNING"):
-            return fail(f"attempt={attempt_id} terminal_status={status}")
-
-    streams: dict[str, list[sqlite3.Row]] = {}
-    for row in db.execute("SELECT * FROM review_event_chain ORDER BY stream_id,sequence_number"):
-        streams.setdefault(row["stream_id"], []).append(row)
-    review_ids = {row["event_id"] for row in db.execute("SELECT event_id FROM review_events")}
-    if {row["event_id"] for rows in streams.values() for row in rows} != review_ids:
-        return fail("review event/witness coverage mismatch")
-    for stream_id, rows in streams.items():
-        previous_hash = None
-        authoritative_sequences = set()
-        for expected, witness in enumerate(rows, 1):
-            if witness["sequence_number"] != expected:
-                return fail(f"stream={stream_id} sequence={witness['sequence_number']}")
-            if witness["prior_content_hash"] != previous_hash:
-                return fail(f"stream={stream_id} prior_hash")
-            event = db.execute("SELECT * FROM review_events WHERE event_id=?", (witness["event_id"],)).fetchone()
-            if not event:
-                return fail(f"stream={stream_id} missing_event={witness['event_id']}")
-            if event["content_hash"] != witness["event_content_hash"]:
-                return fail(f"stream={stream_id} content_hash event={witness['event_id']}")
-            if event["stream_id"] and event["stream_id"] != stream_id:
-                return fail(f"stream={stream_id} event_stream={event['event_id']}")
-            if event["sequence_number"] is not None and event["sequence_number"] != witness["sequence_number"]:
-                return fail(f"stream={stream_id} event_sequence={event['event_id']}")
-            if event["event_content_hash"] and event["event_content_hash"] != witness["event_content_hash"]:
-                return fail(f"stream={stream_id} event_content_hash={event['event_id']}")
-            if stream_id.startswith("editorial:"):
-                parts = stream_id.split(":", 2)
-                if len(parts) != 3 or event["trial_id"] != parts[1] or event["generation_attempt_id"] != parts[2]:
-                    return fail(f"stream={stream_id} target_binding={event['event_id']}")
-                attempt = db.execute("SELECT status,source_version_id,source_sha256,proposal_sha256 FROM generation_attempts WHERE attempt_id=?", (event["generation_attempt_id"],)).fetchone()
-                if not attempt or attempt["status"] != "COMPLETED":
-                    return fail(f"stream={stream_id} ineligible_attempt")
-                if event["source_version_id"] != attempt["source_version_id"] or event["source_sha256"] != attempt["source_sha256"] or event["proposal_sha256"] != attempt["proposal_sha256"]:
-                    return fail(f"stream={stream_id} evidence_binding={event['event_id']}")
-            if stream_id.startswith("audience:"):
-                parts = stream_id.split(":", 2)
-                if len(parts) != 3 or event["adaptation_id"] != parts[1] or event["generation_attempt_id"] != parts[2]: return fail(f"stream={stream_id} audience_binding={event['event_id']}")
-                adaptation = db.execute("SELECT adaptation_id,trial_id,baseline_id,profile_id FROM audience_adaptations WHERE adaptation_id=?", (event["adaptation_id"],)).fetchone()
-                attempt = db.execute("SELECT status,proposal_sha256,adaptation_id,baseline_id,profile_id FROM generation_attempts WHERE attempt_id=?", (event["generation_attempt_id"],)).fetchone()
-                if not adaptation or not attempt or attempt["status"] != "COMPLETED": return fail(f"stream={stream_id} audience_attempt")
-                if event["trial_id"] != adaptation["trial_id"] or event["baseline_id"] != adaptation["baseline_id"] or event["profile_id"] != adaptation["profile_id"] or attempt["adaptation_id"] != adaptation["adaptation_id"] or event["output_sha256"] != attempt["proposal_sha256"]: return fail(f"stream={stream_id} audience_evidence={event['event_id']}")
-            if witness["authoritative"]:
-                if witness["sequence_number"] in authoritative_sequences:
-                    return fail(f"stream={stream_id} duplicate_authoritative_sequence")
-                authoritative_sequences.add(witness["sequence_number"])
-            elif not witness["superseded_event_id"]:
-                return fail(f"stream={stream_id} nonauthoritative_without_link={witness['event_id']}")
-            if witness["superseded_event_id"]:
-                target = db.execute("SELECT 1 FROM review_events WHERE event_id=?", (witness["superseded_event_id"],)).fetchone()
-                if not target:
-                    return fail(f"stream={stream_id} missing_superseded_event")
-            previous_hash = witness["event_content_hash"]
-    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='accepted_baselines'").fetchone():
-        baselines = db.execute("SELECT * FROM accepted_baselines ORDER BY trial_id,created_at,baseline_id").fetchall()
-        baseline_ids = {row["baseline_id"] for row in baselines}
-        accepts = db.execute("SELECT * FROM review_events WHERE event_type='BASELINE_ACCEPT'").fetchall()
-        if len(accepts) != len(baselines): return fail("baseline/event coverage mismatch")
-        for baseline in baselines:
-            linked = [event for event in accepts if event["baseline_id"] == baseline["baseline_id"]]
-            if len(linked) != 1 or linked[0]["decision"] != "BASELINE_ACCEPTED": return fail(f"baseline={baseline['baseline_id']} acceptance_event")
-            if hashlib.sha256(baseline["accepted_proposal"].encode()).hexdigest() != baseline["proposal_sha256"]: return fail(f"baseline={baseline['baseline_id']} proposal_hash")
-            if baseline["supersedes_baseline_id"] and baseline["supersedes_baseline_id"] not in baseline_ids: return fail(f"baseline={baseline['baseline_id']} supersedes_missing")
-            if baseline["supersedes_baseline_id"] and db.execute("SELECT trial_id FROM accepted_baselines WHERE baseline_id=?", (baseline["supersedes_baseline_id"],)).fetchone()[0] != baseline["trial_id"]: return fail(f"baseline={baseline['baseline_id']} cross_trial_supersession")
-            for field in ("review_target_event_id", "integrity_review_event_id", "revision_review_event_id", "tone_review_event_id"):
-                event = db.execute("SELECT * FROM review_events WHERE event_id=?", (baseline[field],)).fetchone()
-                if not event or event["trial_id"] != baseline["trial_id"] or event["generation_attempt_id"] != baseline["generation_attempt_id"] or event["stream_id"] != linked[0]["stream_id"]: return fail(f"baseline={baseline['baseline_id']} gate_binding={field}")
-            if linked[0]["proposal_sha256"] != baseline["proposal_sha256"] or linked[0]["source_sha256"] != baseline["source_sha256"]: return fail(f"baseline={baseline['baseline_id']} evidence_hash")
-        for baseline in baselines:
-            seen = set(); cursor = baseline["baseline_id"]
-            while cursor:
-                if cursor in seen: return fail(f"baseline={baseline['baseline_id']} cycle")
-                seen.add(cursor); row = next((r for r in baselines if r["baseline_id"] == cursor), None); cursor = row["supersedes_baseline_id"] if row else None
-    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='accepted_audience_versions'").fetchone():
-        versions = db.execute("SELECT * FROM accepted_audience_versions").fetchall(); accepts = db.execute("SELECT * FROM review_events WHERE event_type='AUDIENCE_REVIEW' AND decision='AUDIENCE_ACCEPTED'").fetchall()
-        for version in versions:
-            linked = [e for e in accepts if e["event_id"] == version["audience_review_event_id"]]
-            if len(linked) != 1 or linked[0]["adaptation_id"] != version["adaptation_id"] or linked[0]["output_sha256"] != version["accepted_text_sha256"]: return fail(f"audience_version={version['accepted_audience_version_id']} event_binding")
-            if hashlib.sha256(version["accepted_text"].encode()).hexdigest() != version["accepted_text_sha256"]: return fail(f"audience_version={version['accepted_audience_version_id']} text_hash")
-    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='generation_attempt_reconciliations'").fetchone():
-        reconciliations = db.execute("SELECT * FROM generation_attempt_reconciliations ORDER BY reconciliation_id").fetchall()
-        originals = set()
-        replacements = set()
-        for reconciliation in reconciliations:
-            payload = {key: reconciliation[key] for key in reconciliation.keys() if key != "record_sha256"}
-            if reconciliation["record_sha256"] != hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest():
-                return fail(f"reconciliation={reconciliation['reconciliation_id']} record_hash")
-            if reconciliation["original_attempt_id"] in originals or reconciliation["replacement_attempt_id"] in replacements:
-                return fail(f"reconciliation={reconciliation['reconciliation_id']} duplicate_attempt_link")
-            originals.add(reconciliation["original_attempt_id"])
-            replacements.add(reconciliation["replacement_attempt_id"])
-            original = db.execute("SELECT trial_id,adaptation_id,profile_id,baseline_id,status,canonical_failure_class,prompt_version FROM generation_attempts WHERE attempt_id=?", (reconciliation["original_attempt_id"],)).fetchone()
-            replacement = db.execute("SELECT trial_id,adaptation_id,profile_id,baseline_id,status,canonical_failure_class,prompt_version FROM generation_attempts WHERE attempt_id=?", (reconciliation["replacement_attempt_id"],)).fetchone()
-            if not original or not replacement:
-                return fail(f"reconciliation={reconciliation['reconciliation_id']} missing_attempt")
-            identity = (reconciliation["trial_id"], reconciliation["adaptation_id"], reconciliation["profile_id"], reconciliation["baseline_id"])
-            if tuple(original[:4]) != identity or tuple(replacement[:4]) != identity:
-                return fail(f"reconciliation={reconciliation['reconciliation_id']} identity")
-            if tuple(original[4:]) != ("RESPONSE_SCHEMA_INVALID", "RESPONSE_SCHEMA_INVALID", "audience-adaptation-v1"):
-                return fail(f"reconciliation={reconciliation['reconciliation_id']} original_state")
-            if tuple(replacement[4:]) != ("COMPLETED", "COMPLETED", "audience-adaptation-v2"):
-                return fail(f"reconciliation={reconciliation['reconciliation_id']} replacement_state")
-            if reconciliation["original_contract_version"] != "audience-adaptation-v1" or reconciliation["replacement_contract_version"] != "audience-adaptation-v2":
-                return fail(f"reconciliation={reconciliation['reconciliation_id']} contract_direction")
-            accepted = db.execute("SELECT accepted_audience_version_id,adaptation_id,trial_id,baseline_id,profile_id,generation_attempt_id FROM accepted_audience_versions WHERE generation_attempt_id=?", (reconciliation["replacement_attempt_id"],)).fetchall()
-            for version in accepted:
-                if (version["adaptation_id"], version["trial_id"], version["baseline_id"], version["profile_id"], version["generation_attempt_id"]) != (reconciliation["adaptation_id"], reconciliation["trial_id"], reconciliation["baseline_id"], reconciliation["profile_id"], reconciliation["replacement_attempt_id"]):
-                    return fail(f"reconciliation={reconciliation['reconciliation_id']} accepted_version_binding")
-    print(f"OK attempts={len(attempts)} attempt_events={sum(map(len, events_by_attempt.values()))} review_events={len(review_ids)} streams={len(streams)}")
-    return 0
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--database", default=os.environ.get("DOCWRITER_DATABASE", "/srv/ws-doc-writer/app/state/docwriter.sqlite3"))
-    args = parser.parse_args(argv)
-    path = Path(args.database).resolve()
-    if not path.is_file():
-        return fail("database_not_found")
-    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    db.row_factory = sqlite3.Row
-    try:
-        return verify(db)
-    except sqlite3.Error as exc:
-        return fail(f"sqlite={type(exc).__name__}")
-    finally:
-        db.close()
+    contract = root / CONTRACT
+    contract_records_source = contract.is_file() and FORK_SOURCE in contract.read_text(encoding="utf-8")
+    ok = report("foundation_contract_records_fork_source", contract_records_source) and ok
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

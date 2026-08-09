@@ -170,7 +170,7 @@ def v2_system_prompt(bundle: ContractBundle, profile: AdapterProfile) -> str:
 
 def request_payload_v2(bundle: ContractBundle, profile: AdapterProfile, source: str) -> dict[str, Any]:
     options = {"num_ctx": profile.generation_settings["context"], "temperature": profile.generation_settings["temperature"], "top_p": profile.generation_settings["top_p"], "seed": profile.generation_settings["seed"]}
-    return {"model": profile.model_identifier, "messages": [{"role": "system", "content": v2_system_prompt(bundle, profile)}, {"role": "user", "content": delimited_source_payload(source)}], "stream": False, "format": bundle.schema, "think": False, "options": options}
+    return {"model": profile.model_identifier, "messages": [{"role": "system", "content": v2_system_prompt(bundle, profile)}, {"role": "user", "content": delimited_source_payload(source)}], "stream": False, "format": response_format(profile, bundle.schema), "think": False, "options": options}
 
 
 def setup_response_schema() -> dict[str, Any]:
@@ -183,6 +183,15 @@ def setup_schema_hash() -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def response_format(profile: AdapterProfile, schema: dict[str, Any]) -> dict[str, Any] | str:
+    """Use the adapter's declared Ollama format capability, then validate locally."""
+    if profile.response_schema_support == "native_format":
+        return schema
+    if profile.response_schema_support == "json_mode_post_validated":
+        return "json"
+    raise RuntimeError(f"unsupported response schema mode: {profile.response_schema_support}")
+
+
 def delimited_setup_payload(setup: WritingSetup, clarification_answer: str = "") -> str:
     serialized = serialize_setup(setup)
     answer = f"\n\nCLARIFICATION_ANSWER_BEGIN\n{clarification_answer}\nCLARIFICATION_ANSWER_END" if clarification_answer else ""
@@ -193,7 +202,7 @@ def request_payload_with_setup(bundle: ContractBundle, profile: AdapterProfile, 
     options = {"num_ctx": profile.generation_settings["context"], "temperature": profile.generation_settings["temperature"], "top_p": profile.generation_settings["top_p"], "seed": profile.generation_settings["seed"]}
     user = delimited_setup_payload(setup, clarification_answer) + f"\n\nSOURCE_PARAGRAPH_BEGIN\n{source}\nSOURCE_PARAGRAPH_END\n\nReturn only the required structured response."
     system = "\n\n".join((bundle.composed_text, f"Adapter instructions ({profile.adapter_id}): {profile.adapter_instructions}", "Use the writing setup as operator intent for this edit. Return exactly conversational-proposal-v3. The result must be either one proposal or one focused clarification question, never both. Do not emit commentary outside the schema."))
-    return {"model": profile.model_identifier, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}], "stream": False, "format": setup_response_schema(), "think": False, "options": options}
+    return {"model": profile.model_identifier, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}], "stream": False, "format": response_format(profile, setup_response_schema()), "think": False, "options": options}
 
 
 def parse_response_v2(raw_response: str) -> tuple[list[dict[str, Any]], str]:

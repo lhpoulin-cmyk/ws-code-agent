@@ -1,4 +1,4 @@
-profile_version: writer-adapter/v1
+profile_version: writer-adapter/v2
 adapter_id: qwen3-14b
 model_identifier: qwen3:14b-q4_K_M
 expected_digest: sha256:bdbd181c33f2ed1b31c972991882db3cf4d192569092138a7d29e973cd9debe8
@@ -6,10 +6,10 @@ transport: chat
 supported_message_roles: [system, user]
 system_role_support: true
 request_serializer_version: ollama-chat-v1
-response_schema_support: native_format
+response_schema_support: json_mode_post_validated
 generation_settings: {context: 8192, temperature: 0.2, top_p: 0.9, seed: 42, streaming: false, thinking: false}
 stop: []
-known_failure_patterns: []
+known_failure_patterns: [native-schema-grammar]
 regression_fixture_ids: [first-person-role-boundary-v1]
 benchmark_standing: accepted-gpu-resident-benchmark-candidate
 operational_status: no-production-role

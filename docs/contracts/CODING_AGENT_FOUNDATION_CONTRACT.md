@@ -291,10 +291,13 @@ remain historical lineage material only. This repository performs no model-drive
 code execution, live database mutation, deployment, push, or external
 repository mutation under this contract.
 
-The current inherited `docwriter_web` implementation, prompt contracts,
+At foundation creation, the `docwriter_web` implementation, prompt contracts,
 writing schemas, model adapter settings, test names, and integration documents
-are deliberately left unchanged. They are not evidence that a coding executor
-exists. A later, explicitly reviewed coding design must decide which portions
+were inherited from `ws-doc-writer`. The subsequent operator-approved skeleton
+reduction removed them from the live `ws-code-agent` tree. Historical and
+reusable material retained for provenance or reference lives under `lineage/`;
+no inherited Doc Writer implementation is current coding-agent runtime
+authority. A later, explicitly reviewed coding design must decide which portions
 are reusable and what coding-specific replacements are required.
 
 ## L. Fork provenance and baseline record

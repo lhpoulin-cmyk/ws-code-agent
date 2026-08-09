@@ -1,6 +1,6 @@
-# Runtime endpoint configuration. Install as /etc/ws-doc-writer/backends.yaml;
+# Runtime endpoint configuration. Install as /etc/ws-code-agent/backends.yaml;
 # do not put credentials or SSH private keys in this file or Git.
-schema: ws-doc-writer-backends/v1
+schema: ws-code-agent-backends/v1
 backends:
   - id: local
     display_name: Local Ollama

@@ -20,7 +20,7 @@ mutate infrastructure, repositories, or Git history.
 ## Provenance
 
 This contract is inherited from the architectural lineage recorded in
-`evidence/helix-mail-core-voice-study.md`, especially its separation of
+`lineage/evidence/helix-mail-core-voice-study.md`, especially its separation of
 narrative, policy, runbooks, packets, and historical evidence. The mail
 repository remains an independent peer and precedent, not a subordinate or
 source of authority for this application.

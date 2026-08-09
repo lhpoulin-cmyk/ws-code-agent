@@ -1,4 +1,4 @@
-profile_version: writer-adapter/v1
+profile_version: writer-adapter/v2
 adapter_id: mistral-nemo-12b
 model_identifier: mistral-nemo:12b-instruct-2407-q4_K_M
 expected_digest: sha256:daf6737417121831e572a9c482e92a221ee0c33537f35f1f857c7b4f7191df55
@@ -6,10 +6,10 @@ transport: chat
 supported_message_roles: [system, user]
 system_role_support: true
 request_serializer_version: ollama-chat-v1
-response_schema_support: native_format
+response_schema_support: json_mode_post_validated
 generation_settings: {context: 8192, temperature: 0.2, top_p: 0.9, seed: 42, streaming: false, thinking: false}
 stop: []
-known_failure_patterns: [author-directed-conversation]
+known_failure_patterns: [author-directed-conversation, native-schema-grammar]
 regression_fixture_ids: [first-person-role-boundary-v1]
 benchmark_standing: preferred-frozen-benchmark-observation-period
 operational_status: observation-period-execution-choice

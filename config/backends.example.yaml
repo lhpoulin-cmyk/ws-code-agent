@@ -1,0 +1,14 @@
+# Runtime endpoint configuration. Install as /etc/ws-doc-writer/backends.yaml;
+# do not put credentials or SSH private keys in this file or Git.
+schema: ws-doc-writer-backends/v1
+backends:
+  - id: local
+    display_name: Local Ollama
+    base_url: http://127.0.0.1:11434
+    enabled: true
+  - id: katra-5070ti
+    display_name: Katra RTX 5070 Ti
+    base_url: http://127.0.0.1:11435
+    enabled: false
+    accelerator_family: NVIDIA
+    host_label: cuda-compute-katra

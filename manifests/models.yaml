@@ -1,5 +1,5 @@
-schema: ws-doc-writer-models/v1
-status: proposed-not-pulled
+schema: ws-doc-writer-models/v2
+status: frozen-benchmark-candidates
 target_workstation: ws-matriarch
 common_benchmark:
   context: 8192
@@ -10,7 +10,7 @@ common_benchmark:
   thinking: disabled
 candidates:
   - tag: qwen3:14b-q4_K_M
-    digest: unresolved-until-pull
+    digest: sha256:bdbd181c33f2ed1b31c972991882db3cf4d192569092138a7d29e973cd9debe8
     publisher: unresolved
     license: unresolved
     quantization: q4_K_M
@@ -25,7 +25,7 @@ candidates:
     benchmark_score: unresolved
     operator_disposition: unresolved
   - tag: gemma3:12b-it-q4_K_M
-    digest: unresolved-until-pull
+    digest: sha256:f4031aab637d1ffa37b42570452ae0e4fad0314754d17ded67322e4b95836f8a
     publisher: unresolved
     license: unresolved
     quantization: q4_K_M
@@ -40,7 +40,7 @@ candidates:
     benchmark_score: unresolved
     operator_disposition: unresolved
   - tag: mistral-nemo:12b-instruct-2407-q4_K_M
-    digest: unresolved-until-pull
+    digest: sha256:daf6737417121831e572a9c482e92a221ee0c33537f35f1f857c7b4f7191df55
     publisher: unresolved
     license: unresolved
     quantization: q4_K_M

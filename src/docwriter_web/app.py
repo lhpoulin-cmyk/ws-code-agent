@@ -48,6 +48,7 @@ from .audience import AUDIENCE_VERSION, derived_state as audience_state, profile
 from .system_status import collect as collect_system_status
 from .ui_state import DEVELOPER, NORMAL, mode_cookie, mode_from_cookie
 from .writing_setup import WritingSetup, from_form as setup_from_form, from_row as setup_from_row, serialize as serialize_setup, sha256_serialized, missing_labels
+from .backends import Backend, load_backends
 
 
 _CURRENT_MODE: contextvars.ContextVar[str] = contextvars.ContextVar("docwriter_mode", default=NORMAL)
@@ -92,6 +93,7 @@ class AppConfig:
     canonical_host: str = "docwriter.home.arpa"
     version: str = "generation-v1"
     ollama_url: str = "http://127.0.0.1:11434"
+    backends_file: Path | None = None
 
     @property
     def state_dir(self) -> Path:
@@ -111,7 +113,8 @@ class AppConfig:
         secret = secret_file.read_bytes().strip()
         if len(secret) < 32:
             raise RuntimeError("session secret is too short")
-        return cls(runtime, os.environ.get("DOCWRITER_OPERATOR_USER", "operator"), password_file, secret, canonical_host=os.environ.get("DOCWRITER_CANONICAL_HOST", "docwriter.home.arpa"), version=os.environ.get("DOCWRITER_APP_VERSION", "generation-v1"), ollama_url=os.environ.get("DOCWRITER_OLLAMA_URL", "http://127.0.0.1:11434"))
+        configured_backends = os.environ.get("WS_DOC_WRITER_BACKENDS_FILE")
+        return cls(runtime, os.environ.get("DOCWRITER_OPERATOR_USER", "operator"), password_file, secret, canonical_host=os.environ.get("DOCWRITER_CANONICAL_HOST", "docwriter.home.arpa"), version=os.environ.get("DOCWRITER_APP_VERSION", "generation-v1"), ollama_url=os.environ.get("DOCWRITER_OLLAMA_URL", "http://127.0.0.1:11434"), backends_file=Path(configured_backends) if configured_backends else None)
 
 
 def utc_now() -> str:
@@ -134,6 +137,7 @@ def process_start_identity(pid: int) -> str:
 class DocWriterApp:
     def __init__(self, config: AppConfig):
         self.config = config
+        self.backends = load_backends(config.backends_file)
         self.ollama_client = OllamaClient(config.ollama_url)
         self.contract_bundle, self.adapter_profiles = load_phase_b_assets()
         self._generation_lock = threading.Lock()
@@ -194,6 +198,8 @@ class DocWriterApp:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(generation_attempts)")}
             if "error_class" not in columns:
                 db.execute("ALTER TABLE generation_attempts ADD COLUMN error_class TEXT NOT NULL DEFAULT ''")
+            if "backend_id" not in columns:
+                db.execute("ALTER TABLE generation_attempts ADD COLUMN backend_id TEXT NOT NULL DEFAULT 'local'")
             trial_columns = {row["name"] for row in db.execute("PRAGMA table_info(trials)")}
             if "project_id" not in trial_columns:
                 db.execute("ALTER TABLE trials ADD COLUMN project_id TEXT REFERENCES projects(project_id)")
@@ -526,7 +532,7 @@ class DocWriterApp:
     def _latest_attempt(self, db: sqlite3.Connection, trial_id: str) -> sqlite3.Row | None:
         return db.execute("SELECT * FROM generation_attempts WHERE trial_id=? ORDER BY started_at DESC LIMIT 1", (trial_id,)).fetchone()
 
-    def _generate_trial(self, trial_id: str, requested_model: str | None = None, clarification_question_id: str | None = None, clarification_answer_id: str | None = None) -> tuple[str, str]:
+    def _generate_trial(self, trial_id: str, requested_model: str | None = None, backend_id: str = "local", clarification_question_id: str | None = None, clarification_answer_id: str | None = None) -> tuple[str, str]:
         if not self._generation_lock.acquire(blocking=False):
             raise RuntimeError("another generation is already running")
         try:
@@ -568,17 +574,24 @@ class DocWriterApp:
                 setup_serialized = serialize_setup(setup) if setup else ""
                 setup_hash = sha256_serialized(setup_serialized) if setup else ""
                 started_at = utc_now()
-                attempt_columns = ("attempt_id", "trial_id", "source_version_id", "source_text", "source_sha256", "prompt_version", "prompt_text", "prompt_sha256", "request_json", "model_identifier", "model_digest", "generation_settings", "started_at", "completed_at", "raw_ollama_response", "response_sha256", "integrity_findings", "normalized_proposal", "proposal_sha256", "source_to_proposal_diff", "telemetry", "application_version", "status", "error", "error_class", "transport_type", "transport_endpoint", "adapter_id", "adapter_version", "request_serializer_version", "message_roles", "canonical_contract_hashes", "composed_contract_hash", "schema_version", "schema_hash", "response_schema", "task_adherence_result", "canonical_failure_class", "classifier_version", "last_state_at", "worker_pid", "worker_start_identity", "writing_setup_version_id", "writing_setup_sha256", "serialized_writing_setup", "primary_audience", "tone", "purpose", "preservation_instructions", "clarification_policy", "clarification_question_id", "clarification_answer_id", "result_kind")
-                attempt_values = (attempt_id, trial_id, version["version_id"], trial["source_text"], trial["source_sha256"], CONVERSATIONAL_V3_VERSION if setup else self.contract_bundle.version, self.contract_bundle.composed_text, self.contract_bundle.composed_hash, request_json, profile.model_identifier, profile.expected_digest, serialized_json(profile.generation_settings), started_at, "", "", "", "[]", "", "", "", "{}", self.config.version, "RUNNING", "", "", profile.transport, "/api/chat", profile.adapter_id, profile.profile_version, profile.request_serializer_version, serialized_json(profile.supported_message_roles), serialized_json(self.contract_bundle.contract_hashes), self.contract_bundle.composed_hash, CONVERSATIONAL_V3_VERSION if setup else self.contract_bundle.version, setup_schema_hash() if setup else self.contract_bundle.schema_hash, serialized_json(setup_response_schema()) if setup else serialized_json(self.contract_bundle.schema), "not_run", "RUNNING", CLASSIFIER_VERSION, started_at, os.getpid(), process_start_identity(os.getpid()), setup_row["setup_version_id"] if setup_row else None, setup_hash, setup_serialized, setup.primary_audience if setup else "", setup.tone if setup else "", setup.purpose if setup else "", setup.preservation_instructions if setup else "", setup.clarification_policy if setup else "", clarification_question_id, clarification_answer_id, "PROPOSAL")
+                backend = self.backends.get(backend_id)
+                if not backend or not backend.enabled:
+                    raise ValueError("the selected backend is unavailable")
+                attempt_columns = ("attempt_id", "trial_id", "source_version_id", "source_text", "source_sha256", "prompt_version", "prompt_text", "prompt_sha256", "request_json", "model_identifier", "model_digest", "generation_settings", "started_at", "completed_at", "raw_ollama_response", "response_sha256", "integrity_findings", "normalized_proposal", "proposal_sha256", "source_to_proposal_diff", "telemetry", "application_version", "status", "error", "error_class", "transport_type", "transport_endpoint", "adapter_id", "adapter_version", "request_serializer_version", "message_roles", "canonical_contract_hashes", "composed_contract_hash", "schema_version", "schema_hash", "response_schema", "task_adherence_result", "canonical_failure_class", "classifier_version", "last_state_at", "worker_pid", "worker_start_identity", "writing_setup_version_id", "writing_setup_sha256", "serialized_writing_setup", "primary_audience", "tone", "purpose", "preservation_instructions", "clarification_policy", "clarification_question_id", "clarification_answer_id", "result_kind", "backend_id")
+                attempt_values = (attempt_id, trial_id, version["version_id"], trial["source_text"], trial["source_sha256"], CONVERSATIONAL_V3_VERSION if setup else self.contract_bundle.version, self.contract_bundle.composed_text, self.contract_bundle.composed_hash, request_json, profile.model_identifier, profile.expected_digest, serialized_json(profile.generation_settings), started_at, "", "", "", "[]", "", "", "", "{}", self.config.version, "RUNNING", "", "", profile.transport, "/api/chat", profile.adapter_id, profile.profile_version, profile.request_serializer_version, serialized_json(profile.supported_message_roles), serialized_json(self.contract_bundle.contract_hashes), self.contract_bundle.composed_hash, CONVERSATIONAL_V3_VERSION if setup else self.contract_bundle.version, setup_schema_hash() if setup else self.contract_bundle.schema_hash, serialized_json(setup_response_schema()) if setup else serialized_json(self.contract_bundle.schema), "not_run", "RUNNING", CLASSIFIER_VERSION, started_at, os.getpid(), process_start_identity(os.getpid()), setup_row["setup_version_id"] if setup_row else None, setup_hash, setup_serialized, setup.primary_audience if setup else "", setup.tone if setup else "", setup.purpose if setup else "", setup.preservation_instructions if setup else "", setup.clarification_policy if setup else "", clarification_question_id, clarification_answer_id, "PROPOSAL", backend.backend_id)
                 db.execute(f"INSERT INTO generation_attempts({','.join(attempt_columns)}) VALUES({','.join('?' for _ in attempt_columns)})", attempt_values)
                 self._record_attempt_event(db, attempt_id, None, "RUNNING")
             try:
-                if setup and hasattr(self.ollama_client, "generate_with_setup"):
-                    result = self.ollama_client.generate_with_setup(trial["source_text"], setup, self.contract_bundle, profile, answer_row["answer_text"] if answer_row else "")
-                elif hasattr(self.ollama_client, "generate_v2"):
-                    result = self.ollama_client.generate_v2(trial["source_text"], self.contract_bundle, profile)
+                # Preserve the injected local client used by the single-backend
+                # application and tests; all other logical targets get their
+                # own explicitly selected transport.
+                client = self.ollama_client if backend.base_url == self.config.ollama_url else OllamaClient(backend.base_url)
+                if setup and hasattr(client, "generate_with_setup"):
+                    result = client.generate_with_setup(trial["source_text"], setup, self.contract_bundle, profile, answer_row["answer_text"] if answer_row else "")
+                elif hasattr(client, "generate_v2"):
+                    result = client.generate_v2(trial["source_text"], self.contract_bundle, profile)
                 else:
-                    result = self.ollama_client.generate(trial["source_text"])
+                    result = client.generate(trial["source_text"])
             except OllamaError as exc:
                 with self._db() as db:
                     classification = classify_error(exc.error_class, str(exc))
@@ -995,8 +1008,9 @@ class DocWriterApp:
         setup_state = setup_from_row(setup_for_generation).completion_state if setup_for_generation else "DRAFT"
         generation_ready = bool(setup_for_generation and setup_from_row(setup_for_generation).explicit_complete)
         model_options = "".join(f"<option {'selected' if profile.model_identifier == trial['model_identifier'] else ''}>{html.escape(profile.model_identifier)}</option>" for profile in self.adapter_profiles.values())
+        backend_options = "".join(f"<option value='{html.escape(item.backend_id)}'>{html.escape(item.display_name)}</option>" for item in self.backends.values() if item.enabled)
         if generation_ready:
-            generation = f"""<section id='generation-attempts'><h2>Generate conversational proposal</h2><p>Setup-aware drafts use <code>conversational-proposal-v3</code>; historical attempts retain their original contract.<br>Controlled settings: context 8192, temperature 0.2, top-p 0.9, seed 42, streaming disabled, thinking disabled</p><p class='muted'>Execution uses local Ollama only. The result remains <code>REVIEW_REQUIRED</code> and is never accepted automatically.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/generate' onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Generating…';"><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='generation-model'>Server-owned model adapter</label><select id='generation-model' name='model_identifier'>{model_options}</select><button type='submit'>Generate conversational proposal</button></form></section>"""
+            generation = f"""<section id='generation-attempts'><h2>Generate conversational proposal</h2><p>Setup-aware drafts use <code>conversational-proposal-v3</code>; historical attempts retain their original contract.<br>Controlled settings: context 8192, temperature 0.2, top-p 0.9, seed 42, streaming disabled, thinking disabled</p><p class='muted'>The result remains <code>REVIEW_REQUIRED</code> and is never accepted automatically.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/generate' onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Generating…';"><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='generation-backend'>Backend</label><select id='generation-backend' name='backend_id'>{backend_options}</select><label for='generation-model'>Server-owned model adapter</label><select id='generation-model' name='model_identifier'>{model_options}</select><button type='submit'>Generate conversational proposal</button></form></section>"""
         else:
             generation = "<section id='generation-attempts'><h2>Generation unavailable</h2><p>The source is saved, but the writing setup is not complete yet. Decide who this is for, how it should sound, what it should accomplish, what must be preserved, and how ambiguity should be handled. Generation will become available after those choices are confirmed.</p><p class='status'>Writing setup state: " + html.escape(setup_state) + "</p><a class='button' href='#writing-setup'>Finish writing setup</a></section>"
         attempt_view = ""
@@ -1239,7 +1253,7 @@ class DocWriterApp:
                 parts, trial_id, form = path.strip("/").split("/"), path.strip("/").split("/")[1], self._parse_form(environ)
                 if not self._csrf_valid(environ, form): raise PermissionError("CSRF validation failed")
                 if len(parts) == 3 and parts[2] == "generate":
-                    self._generate_trial(trial_id, form.get("model_identifier") or None)
+                    self._generate_trial(trial_id, form.get("model_identifier") or None, form.get("backend_id") or "local")
                     start_response("303 See Other", [("Location", f"/trial/{trial_id}")]); return [b""]
                 if len(parts) == 3 and parts[2] == "confirm-setup":
                     self._confirm_writing_setup(trial_id, self._authenticated_user(environ) or "operator")

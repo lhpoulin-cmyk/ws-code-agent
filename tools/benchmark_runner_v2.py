@@ -52,6 +52,9 @@ def expected_models() -> dict[str, str]:
 
 def validate_contract() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     manifest, fixtures = v1.validate_frozen()
+    v2_manifest = yaml.safe_load((ROOT / "benchmarks/fixture-manifest-v2.yaml").read_text(encoding="utf-8"))
+    if not isinstance(v2_manifest, dict) or v2_manifest.get("runner_version") != RUNNER_VERSION or v2_manifest.get("v1_fixture_manifest_sha256") != sha256((ROOT / "benchmarks/fixture-manifest.yaml").read_bytes()) or v2_manifest.get("expected_outputs") != 30:
+        raise RuntimeError("v2 fixture manifest contract mismatch")
     models = yaml.safe_load((ROOT / "manifests/models.yaml").read_text(encoding="utf-8"))
     observed = {entry["tag"]: entry["digest"] for entry in models["candidates"]}
     if observed != expected_models() or models.get("common_benchmark") != {"context": 8192, "temperature": 0.2, "top_p": 0.9, "seed": 42, "streaming": False, "thinking": "disabled"}:

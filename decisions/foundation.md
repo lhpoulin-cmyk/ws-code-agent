@@ -1,15 +1,22 @@
 # Foundation decision
 
-Status: **accepted for repository foundation; application not deployed**.
+Status: **accepted for repository foundation; no executor, no deployment**.
 
-The application owns writing behavior and review artifacts. `ws-cp` and
-`gpu-cp` remain peer infrastructure authorities. The initial model set is
-closed to the three tags in the manifest until a later operator decision.
+`ws-code-agent` is founded as governance and evaluation architecture for a
+bounded coding agent: task/intent capture, provenance, review lifecycle, and a
+future frozen evaluation. It is not a coding executor and claims no coding
+capability, autonomous safety, or repository-general competence.
 
-No final model, Ollama version, GPU acceptance, or production disposition is
-claimed.
+`ws-cp` and `gpu-cp` remain peer infrastructure authorities. This repository
+holds no authority over them and declares no disk, model, GPU, Ollama, or
+deployment state. The prior inherited model-storage allocation belonged to
+`ws-doc-writer` and has been removed from this repository.
 
-The application requirement for model storage is a dedicated 128 GB allocation
-on the Crucial Gen5 NVMe, carved only from the unpartitioned gap. The remaining
-gap stays unassigned. This records intended state only; it authorizes no disk
-mutation.
+On 2026-08-09 a skeleton reduction removed the inherited Doc Writer
+implementation, prompts, writing schemas, benchmark, and phase tests from the
+live tree. Witnessed evidence and reusable references were relocated under
+`lineage/`. Nothing was rewritten out of Git history. What survives in the live
+tree is the coding-agent contract and chosen governance only.
+
+No coding-specific schema, capability-lease implementation, executor, or
+benchmark is authorized by this decision.

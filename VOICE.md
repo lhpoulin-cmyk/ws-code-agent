@@ -1,7 +1,7 @@
-# ws-doc-writer voice contract
+# ws-code-agent voice contract
 
 This defines how the application communicates. It does not grant authority to
-mutate infrastructure.
+mutate infrastructure, repositories, or Git history.
 
 - Write direct, readable technical prose. Put evidence before conclusion.
 - Keep **observed**, **intended**, **proposed**, **prepared**, **deployed**,
@@ -19,7 +19,7 @@ mutate infrastructure.
 
 ## Provenance
 
-This contract is informed by the read-only study recorded in
+This contract is inherited from the architectural lineage recorded in
 `evidence/helix-mail-core-voice-study.md`, especially its separation of
 narrative, policy, runbooks, packets, and historical evidence. The mail
 repository remains an independent peer and precedent, not a subordinate or

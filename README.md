@@ -1,8 +1,35 @@
-# ws-doc-writer
+# ws-code-agent
 
-`ws-doc-writer` is the application control plane for evidence-led technical
-document writing. It turns approved source material into reviewable proposed
-documents; it does not own workstation or accelerator infrastructure.
+`ws-code-agent` is an operator-authorized foundation for a locally governed,
+bounded coding-agent capability. It is a separate application authority derived
+architecturally from `ws-doc-writer`; it is not a conversion of Doc Writer into
+an autonomous coding agent.
+
+The foundation preserves governance, provenance, prompting, clarification,
+review, and evaluation patterns that proved useful in Doc Writer. Its future
+scope is bounded repository observation, patch proposals, sandbox validation,
+and explicitly authorized Git actions. It does not yet provide a general shell
+executor, autonomous Git action, deployment authority, or production service.
+
+The governing foundation contract is
+[`docs/contracts/CODING_AGENT_FOUNDATION_CONTRACT.md`](docs/contracts/CODING_AGENT_FOUNDATION_CONTRACT.md).
+
+## Foundation provenance
+
+This repository was independently cloned with preserved Git history from
+`/home/louis/src/ws-doc-writer` at source HEAD
+`dfb759afb7826a2b849fa95bf40ce6f06cd3cd05` on 2026-08-09. It also records the
+independent Doc Writer verification checkpoint
+`7ae3d5794691fd769446702015f331367344df9d`. The inherited implementation
+remains visibly writing-specific until a coding equivalent receives explicit
+design and review; it is not silently relabeled as a coding executor.
+
+## Inherited material boundary
+
+The content below is historical lineage, not the current authority or runtime
+identity of `ws-code-agent`. No inherited runtime database, cache, credentials,
+TLS material, host configuration, deployment state, or generated model output
+was copied into this foundation.
 
 ## Peer boundary
 
@@ -36,6 +63,7 @@ all generated prose remains `REVIEW_REQUIRED`.
 
 ## Layout
 
+- `docs/contracts/` operator-authorized architectural contracts
 - `docs/` lifecycle and integration contracts
 - `prompts/` model-neutral prompt contracts
 - `benchmarks/` frozen cases and evaluation design

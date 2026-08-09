@@ -1,9 +1,14 @@
-# ws-doc-writer agent contract
+# ws-code-agent agent contract
 
-`ws-doc-writer` is the application authority for document-writing behavior:
-portfolio voice implementation, prompts, templates, source normalization,
-model adapters, benchmarking, blinded evaluation, scoring, review states,
-provenance, and generated-document safety.
+`ws-code-agent` is the separate application authority for the bounded
+coding-agent foundation described in
+`docs/contracts/CODING_AGENT_FOUNDATION_CONTRACT.md`. It may derive governance
+patterns from `ws-doc-writer`, but it does not gain authority over Doc Writer,
+peer repositories, infrastructure, or a repository merely by observing it.
+
+The inherited Doc Writer implementation is lineage material, not an implicitly
+renamed coding executor. Until an explicitly reviewed coding design replaces a
+writing-specific component, retain its original terminology and semantics.
 
 `ws-cp` and `gpu-cp` are independent peer infrastructure authorities. ws-cp
 owns workstation/Ollama mechanics; gpu-cp owns RX 9070 XT identity,
@@ -17,9 +22,10 @@ be invented. Historical evidence is corrected through an explicit addendum,
 never rewritten to hide later changes. Prefer small, diff-friendly edits and
 preserve exact terminology and authority boundaries.
 
-Model output is proposed text until factual, voice, authority, and operator
-review are complete. No model may commit, publish, or execute infrastructure
-changes without explicit authority.
+Model output is proposed text until task, factual, authority, and operator
+review are complete. No model may execute general shell commands, commit,
+publish, deploy, or mutate infrastructure without an explicit, task-bounded
+capability and the authority transition required by the foundation contract.
 
 This foundation task authorizes no live Ollama, GPU, workstation, firewall, or
 service mutation.

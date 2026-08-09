@@ -20,3 +20,7 @@ tree is the coding-agent contract and chosen governance only.
 
 No coding-specific schema, capability-lease implementation, executor, or
 benchmark is authorized by this decision.
+
+Capability authority is frozen as state-bound: authority for one immutable
+repository snapshot does not silently extend to later state. Model claims and
+executor-observed facts are likewise structurally distinct provenance classes.

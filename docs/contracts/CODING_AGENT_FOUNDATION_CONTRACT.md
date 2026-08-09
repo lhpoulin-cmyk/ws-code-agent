@@ -188,6 +188,25 @@ git:
 
 No production capability-lease implementation is part of this foundation.
 
+### D1. Authority binds to repository state
+
+A capability lease must authorize action against an immutable
+`RepositorySnapshot` identity, not merely a repository path or name. That
+identity must conceptually account for repository identity, HEAD commit, index
+state, tracked modifications, untracked-file set, and submodule state where
+applicable. Tool, dependency, and environment identity may be additional
+execution provenance; this contract does not define their complete schema.
+
+If a repository no longer matches the state against which authority was granted,
+that authority is stale and cannot silently continue. A wall-clock expiry may be
+a secondary backstop, but is not sufficient by itself. This is a structural
+protection against stale authority and TOCTOU behavior:
+
+```text
+authority granted to state X
+    ≠ authority over later state Y
+```
+
 ## G. Execution evidence
 
 Tool execution must become provenance. An eventual command record must be able
@@ -209,6 +228,26 @@ Execution classes must eventually distinguish read/search, validation/test,
 bounded working-tree write, Git write, and external/network action. A model may
 report evidence but may not manufacture it; actual executor results are
 authoritative for execution.
+
+### D2. Model claims and executor facts
+
+A statement produced by a model is never authoritative evidence that an
+external action occurred. Claims such as “tests should pass,” “this patch only
+changes one file,” “the command succeeded,” or “the repository is clean” remain
+model-originated claims. Executor-observed evidence includes the command
+actually invoked, working directory, exit code, captured output or hash,
+filesystem mutation observed, Git state before and after, and the validation
+result produced by the actual tool.
+
+Future provenance and artifact design must preserve the origin of evidence so
+that model-originated information and executor-originated facts cannot silently
+become indistinguishable. An untrusted model claim must not be stored or
+interpreted as an executor fact without explicit provenance:
+
+```text
+model claim
+    ≠ executor-observed fact
+```
 
 ## H. Review philosophy
 

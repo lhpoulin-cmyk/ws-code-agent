@@ -192,6 +192,12 @@ def response_format(profile: AdapterProfile, schema: dict[str, Any]) -> dict[str
     raise RuntimeError(f"unsupported response schema mode: {profile.response_schema_support}")
 
 
+def schema_instruction(profile: AdapterProfile, schema: dict[str, Any]) -> str:
+    if profile.response_schema_support == "json_mode_post_validated":
+        return "The JSON object must validate exactly against this schema; do not rename or omit fields:\n" + serialized_json(schema)
+    return "Return only the required structured response."
+
+
 def delimited_setup_payload(setup: WritingSetup, clarification_answer: str = "") -> str:
     serialized = serialize_setup(setup)
     answer = f"\n\nCLARIFICATION_ANSWER_BEGIN\n{clarification_answer}\nCLARIFICATION_ANSWER_END" if clarification_answer else ""
@@ -201,8 +207,9 @@ def delimited_setup_payload(setup: WritingSetup, clarification_answer: str = "")
 def request_payload_with_setup(bundle: ContractBundle, profile: AdapterProfile, source: str, setup: WritingSetup, clarification_answer: str = "") -> dict[str, Any]:
     options = {"num_ctx": profile.generation_settings["context"], "temperature": profile.generation_settings["temperature"], "top_p": profile.generation_settings["top_p"], "seed": profile.generation_settings["seed"]}
     user = delimited_setup_payload(setup, clarification_answer) + f"\n\nSOURCE_PARAGRAPH_BEGIN\n{source}\nSOURCE_PARAGRAPH_END\n\nReturn only the required structured response."
-    system = "\n\n".join((bundle.composed_text, f"Adapter instructions ({profile.adapter_id}): {profile.adapter_instructions}", "Use the writing setup as operator intent for this edit. Return exactly conversational-proposal-v3. The result must be either one proposal or one focused clarification question, never both. Do not emit commentary outside the schema."))
-    return {"model": profile.model_identifier, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}], "stream": False, "format": response_format(profile, setup_response_schema()), "think": False, "options": options}
+    schema = setup_response_schema()
+    system = "\n\n".join((bundle.composed_text, f"Adapter instructions ({profile.adapter_id}): {profile.adapter_instructions}", "Use the writing setup as operator intent for this edit. Return exactly conversational-proposal-v3. The result must be either one proposal or one focused clarification question, never both. Do not emit commentary outside the schema.", schema_instruction(profile, schema)))
+    return {"model": profile.model_identifier, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}], "stream": False, "format": response_format(profile, schema), "think": False, "options": options}
 
 
 def parse_response_v2(raw_response: str) -> tuple[list[dict[str, Any]], str]:

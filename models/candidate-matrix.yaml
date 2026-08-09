@@ -1,0 +1,269 @@
+matrix: ws-code-agent-coding-candidates/v1
+status: evaluation-policy-only
+verified_at: 2026-08-09
+selection_rule: No candidate is a selected default. Helix Code Agent Alpha must
+  evaluate capability and obedience before any operator disposition.
+
+katra:
+  role: KATRA_TORTURE
+  normal_fit_claim: none
+  hardware_authority:
+    repository: infrastructure
+    paths:
+      - nodes/hv-katra/README.md
+      - nodes/hv-katra/HARDWARE.md
+  discovered_endpoint_reference:
+    path: nodes/ws-matriarch/config/docwriter-backends.yaml
+    value: Katra RTX 5070 Ti
+    authority_note: This is a discovered Doc Writer endpoint reference, not a
+      current hardware observation.
+  required_before_execution: Observe peer-authoritative Katra hardware, RAM,
+    VRAM, driver/runtime, Ollama version, and host health immediately before run.
+
+tiers:
+  tier_a_16gb:
+    purpose: Accessible constrained baseline and control comparison.
+  tier_b_24gb:
+    purpose: Serious daily-driver candidates with useful context headroom or an
+      explicitly constrained configuration.
+  tier_c_32gb:
+    purpose: Higher-fidelity variants for controlled VRAM-versus-quality comparison.
+
+candidates:
+  - id: qwen25-coder-14b-q4
+    status: CANDIDATE
+    source_verified_at: 2026-08-09
+    normal_target_tiers: [tier_a_16gb]
+    katra_torture: false
+    model_family: Qwen2.5-Coder
+    canonical_upstream_model: Qwen/Qwen2.5-Coder-14B-Instruct
+    ollama:
+      display_tag: qwen2.5-coder:14b
+      resolved_identity: ollama-manifest-prefix:9ec8897f747e
+      identity_note: Re-resolve the full digest immediately before a future pull.
+    parameter_class: 14.8B
+    architecture: dense
+    quantization: Q4_K_M
+    artifact_size: 9.0GB
+    advertised_context: 32K
+    specialization: code generation, code reasoning, code repair
+    tool_agent_support: Ollama library marks the family tools-capable.
+    license: Apache-2.0
+    runtime_requirements: No minimum Ollama version stated by the consulted page.
+    source_references:
+      - https://ollama.com/library/qwen2.5-coder:14b
+
+  - id: gpt-oss-20b-mxfp4
+    status: CONTROL
+    source_verified_at: 2026-08-09
+    normal_target_tiers: [tier_a_16gb]
+    katra_torture: false
+    model_family: gpt-oss
+    canonical_upstream_model: openai/gpt-oss-20b
+    ollama:
+      display_tag: gpt-oss:20b
+      resolved_identity: ollama-manifest-prefix:17052f91a42e
+      identity_note: Re-resolve the full digest immediately before a future pull.
+    parameter_class: 20.9B
+    architecture: MoE
+    quantization: MXFP4
+    artifact_size: 14GB
+    advertised_context: 128K
+    specialization: reasoning and agentic developer use; retained as a control,
+      not a code-specialized default.
+    tool_agent_support: Native function calling, structured outputs, and tool-use
+      features are documented by the Ollama entry.
+    license: Apache-2.0
+    runtime_requirements: Requires an Ollama release supporting native MXFP4;
+      exact version must be resolved before execution.
+    source_references:
+      - https://ollama.com/library/gpt-oss:20b
+
+  - id: qwen3-coder-30b-q4
+    status: CANDIDATE
+    source_verified_at: 2026-08-09
+    normal_target_tiers: [tier_b_24gb]
+    katra_torture: true
+    model_family: Qwen3-Coder
+    canonical_upstream_model: Qwen/Qwen3-Coder-30B-A3B-Instruct
+    ollama:
+      display_tag: qwen3-coder:30b-a3b-q4_K_M
+      resolved_identity: ollama-manifest-prefix:06c1097efce0
+      identity_note: Re-resolve the full digest immediately before a future pull.
+    parameter_class: 30.5B total / 3.3B activated
+    architecture: MoE
+    quantization: Q4_K_M
+    artifact_size: 19GB
+    advertised_context: 256K native; up to 1M by extrapolation
+    specialization: agentic coding and repository-scale software engineering
+    tool_agent_support: Ollama library marks the family tools-capable.
+    license: Apache-2.0
+    runtime_requirements: No minimum Ollama version stated by the consulted page.
+    source_references:
+      - https://ollama.com/library/qwen3-coder:30b-a3b-q4_K_M
+      - https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct
+
+  - id: qwen36-27b-q4
+    status: CANDIDATE
+    source_verified_at: 2026-08-09
+    normal_target_tiers: [tier_b_24gb]
+    katra_torture: true
+    model_family: Qwen3.6
+    canonical_upstream_model: Qwen/Qwen3.6-27B
+    ollama:
+      display_tag: qwen3.6:27b
+      resolved_identity: ollama-manifest-prefix:a50eda8ed977
+      identity_note: Re-resolve the full digest immediately before a future pull.
+    parameter_class: 27.8B
+    architecture: dense multimodal causal language model
+    quantization: Q4_K_M
+    artifact_size: 17GB
+    advertised_context: 256K
+    specialization: agentic coding, repository-level reasoning, and thinking preservation
+    tool_agent_support: Ollama library marks the family tools-capable; upstream
+      documentation describes tool-call serving support.
+    license: Apache-2.0
+    runtime_requirements: No minimum Ollama version stated by the consulted page.
+    source_references:
+      - https://ollama.com/library/qwen3.6:27b
+      - https://huggingface.co/Qwen/Qwen3.6-27B
+
+  - id: devstral-small-2-q4
+    status: CANDIDATE
+    source_verified_at: 2026-08-09
+    normal_target_tiers: [tier_b_24gb]
+    katra_torture: true
+    model_family: Devstral Small 2
+    canonical_upstream_model: mistralai/Devstral-Small-2-24B-Instruct-2512
+    ollama:
+      display_tag: devstral-small-2:24b-instruct-2512-q4_K_M
+      resolved_identity: ollama-manifest-prefix:24277f07f62d
+      identity_note: Re-resolve the full digest immediately before a future pull.
+    parameter_class: 24B
+    architecture: dense multimodal Mistral3
+    quantization: Q4_K_M
+    artifact_size: 15GB
+    advertised_context: 384K in Ollama; upstream model card describes 256K.
+    specialization: agentic software engineering, tool-assisted codebase exploration,
+      and multi-file editing
+    tool_agent_support: Explicitly agentic and tools-capable in the Ollama entry.
+    license: Apache-2.0
+    runtime_requirements: Ollama 0.13.3 or later.
+    source_references:
+      - https://ollama.com/library/devstral-small-2:24b-instruct-2512-q4_K_M
+      - https://huggingface.co/mistralai/Devstral-Small-2-24B-Instruct-2512
+
+  - id: qwen25-coder-32b-q4
+    status: CANDIDATE
+    source_verified_at: 2026-08-09
+    normal_target_tiers: [tier_b_24gb]
+    katra_torture: true
+    model_family: Qwen2.5-Coder
+    canonical_upstream_model: Qwen/Qwen2.5-Coder-32B-Instruct
+    ollama:
+      display_tag: qwen2.5-coder:32b
+      resolved_identity: ollama-manifest-prefix:b92d6a0bd47e
+      identity_note: Re-resolve the full digest immediately before a future pull.
+    parameter_class: 32.8B
+    architecture: dense
+    quantization: Q4_K_M
+    artifact_size: 20GB
+    advertised_context: 32K
+    specialization: code generation, repair, and reasoning
+    tool_agent_support: Ollama library marks the family tools-capable.
+    license: Apache-2.0
+    runtime_requirements: No minimum Ollama version stated by the consulted page.
+    source_references:
+      - https://ollama.com/library/qwen2.5-coder:32b
+
+  - id: qwen3-coder-30b-q8
+    status: CANDIDATE
+    source_verified_at: 2026-08-09
+    normal_target_tiers: [tier_c_32gb]
+    katra_torture: true
+    comparison_with: qwen3-coder-30b-q4
+    model_family: Qwen3-Coder
+    canonical_upstream_model: Qwen/Qwen3-Coder-30B-A3B-Instruct
+    ollama:
+      display_tag: qwen3-coder:30b-a3b-q8_0
+      resolved_identity: ollama-manifest-prefix:7b438a19895a
+      identity_note: Re-resolve the full digest immediately before a future pull.
+    parameter_class: 30.5B total / 3.3B activated
+    architecture: MoE
+    quantization: Q8_0
+    artifact_size: 32GB
+    advertised_context: 256K native; up to 1M by extrapolation
+    specialization: agentic coding and repository-scale software engineering
+    tool_agent_support: Ollama library marks the family tools-capable.
+    license: Apache-2.0
+    runtime_requirements: No minimum Ollama version stated by the consulted page.
+    source_references:
+      - https://ollama.com/library/qwen3-coder:30b-a3b-q8_0
+
+  - id: devstral-small-2-q8
+    status: CANDIDATE
+    source_verified_at: 2026-08-09
+    normal_target_tiers: [tier_c_32gb]
+    katra_torture: true
+    comparison_with: devstral-small-2-q4
+    model_family: Devstral Small 2
+    canonical_upstream_model: mistralai/Devstral-Small-2-24B-Instruct-2512
+    ollama:
+      display_tag: devstral-small-2:24b-instruct-2512-q8_0
+      resolved_identity: ollama-manifest-prefix:691a8e03a6dd
+      identity_note: Re-resolve the full digest immediately before a future pull.
+    parameter_class: 24B
+    architecture: dense multimodal Mistral3
+    quantization: Q8_0
+    artifact_size: 26GB
+    advertised_context: 384K in Ollama; upstream model card describes 256K.
+    specialization: agentic software engineering and tool-assisted multi-file editing
+    tool_agent_support: Explicitly agentic and tools-capable in the Ollama entry.
+    license: Apache-2.0
+    runtime_requirements: Ollama 0.13.3 or later.
+    source_references:
+      - https://ollama.com/library/devstral-small-2:24b-instruct-2512-q8_0
+
+  - id: qwen25-coder-32b-q6
+    status: CANDIDATE
+    source_verified_at: 2026-08-09
+    normal_target_tiers: [tier_c_32gb]
+    katra_torture: true
+    comparison_with: qwen25-coder-32b-q4
+    model_family: Qwen2.5-Coder
+    canonical_upstream_model: Qwen/Qwen2.5-Coder-32B-Instruct
+    ollama:
+      display_tag: qwen2.5-coder:32b-instruct-q6_K
+      resolved_identity: ollama-manifest-prefix:f9fb728566cf
+      identity_note: Re-resolve the full digest immediately before a future pull.
+    parameter_class: 32.8B
+    architecture: dense
+    quantization: Q6_K
+    artifact_size: 27GB
+    advertised_context: 32K
+    specialization: code generation, repair, and reasoning
+    tool_agent_support: Ollama library marks the family tools-capable.
+    license: Apache-2.0
+    runtime_requirements: No minimum Ollama version stated by the consulted page.
+    source_references:
+      - https://ollama.com/library/qwen2.5-coder:32b-instruct-q6_K
+
+exclusions:
+  - candidate: qwen3-coder:480b
+    status: EXCLUDED
+    reason: Official Ollama entry lists a 290GB Q4 artifact and a 250GB minimum
+      memory claim; it does not answer a 16/24/32GB-tier question.
+  - candidate: gpt-oss:120b
+    status: EXCLUDED
+    reason: Official Ollama entry lists a 65GB artifact; it is outside normal
+      target tiers and adds no controlled comparison here.
+
+katra_torture_outcomes:
+  - FULL_GPU
+  - PARTIAL_OFFLOAD_USABLE
+  - PARTIAL_OFFLOAD_PAINFUL
+  - CPU_DOMINATED
+  - OOM_OR_LOAD_FAILURE
+  - HOST_PRESSURE_ABORT
+  - RUNTIME_INCOMPATIBLE
+outcome_rule: These are evidence classifications, not model-quality pass/fail judgments.

@@ -1,0 +1,65 @@
+# Coding Model Evaluation Policy
+
+Status: **future evaluation policy; no model selected or pulled**
+
+## Candidate tiers
+
+The live [candidate matrix](../models/candidate-matrix.yaml) defines a small
+experimental set for 16 GB, 24 GB, and 32 GB accelerator-memory tiers. The tier
+is an intended memory class, not a parameter-count label and not a fit guarantee.
+Every entry is `CANDIDATE` or `CONTROL`; no `SELECTED_DEFAULT` status exists.
+
+The 16 GB tier establishes an accessible constrained baseline. The 24 GB tier is
+the serious daily-driver candidate set. The 32 GB tier favors higher-fidelity
+versions of the same families so that quantization, not unrelated model choice,
+is the experimental variable.
+
+## Capability and Helix obedience
+
+Public coding evidence informs capability: repository understanding, correct
+patches, repair, cross-file reasoning, and tool use. It does not determine
+fitness for this application.
+
+`Helix Code Agent Alpha` must later measure obedience separately: path scope,
+unrelated dirty-work preservation, proposal/execution separation, clarification,
+unauthorized-Git refusal, dependency restraint, lease boundaries, and accurate
+executor-evidence reporting. A strong coding model can still be unacceptable if
+it fails this discipline.
+
+## Identity and controlled comparison
+
+An Ollama display tag is a convenient name, not immutable proof. The matrix
+records the upstream-observed manifest prefix separately as `resolved_identity`.
+Before an eventual authorized pull, the owning Ollama/storage peer must resolve
+and retain the complete actual artifact identity with the verification time.
+
+Each `comparison_with` pair is evaluated with the same model family, prompt,
+task, context, executor, and coding-domain contract; only quantization/memory
+footprint changes. It answers whether additional VRAM bought meaningful quality.
+
+## Katra torture lane
+
+`KATRA_TORTURE` is a future stress-test destination, not a fourth quality tier.
+Every Tier B and Tier C candidate is designated for an attempted Katra run unless
+a hard technical incompatibility makes execution impossible. Katra is not
+optimized to make a candidate look good, and a torture outcome does not redefine
+the candidate's normal-fit tier or model quality.
+
+Before a future run, record peer-authoritative Katra hardware identity, available
+RAM, VRAM, driver/runtime, Ollama version, model's resolved identity/artifact
+size, context, and relevant settings. During the run capture load result, CPU,
+RAM, GPU/VRAM, observable offload behavior, time-to-first-token, throughput,
+errors, and host responsiveness. Afterwards capture unload state, recovered
+resources, host health, errors, and any intervention/restart. One returned token
+does not establish that a model runs on Katra.
+
+Expected classifications are `FULL_GPU`, `PARTIAL_OFFLOAD_USABLE`,
+`PARTIAL_OFFLOAD_PAINFUL`, `CPU_DOMINATED`, `OOM_OR_LOAD_FAILURE`,
+`HOST_PRESSURE_ABORT`, and `RUNTIME_INCOMPATIBLE`. They are evidence, not pass or
+fail judgments about model quality.
+
+## No execution authority
+
+This matrix authorizes no pull, model execution, benchmark fixture, executor,
+Ollama change, or infrastructure mutation. Any eventual model pull follows
+authority to the peer owning Ollama and model storage.

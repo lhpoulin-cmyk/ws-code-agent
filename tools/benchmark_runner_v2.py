@@ -89,6 +89,14 @@ def rate(tokens: Any, duration_ns: Any) -> float | None:
     return round(float(tokens) / (float(duration_ns) / 1_000_000_000), 6) if isinstance(tokens, (int, float)) and isinstance(duration_ns, (int, float)) and duration_ns else None
 
 
+def source_commit() -> str:
+    """Use an injected immutable source identity on a git-free appliance."""
+    supplied = os.environ.get("WS_DOC_WRITER_SOURCE_COMMIT", "").strip()
+    if supplied:
+        return supplied
+    return v1.cmd("git", "-C", str(ROOT), "rev-parse", "HEAD").strip()
+
+
 def run(backend_id: str, model_selection: str, run_id: str | None = None) -> Path:
     manifest, fixtures = validate_contract()
     config_path = Path(os.environ.get("WS_DOC_WRITER_BACKENDS_FILE", "/etc/ws-doc-writer/backends.yaml"))
@@ -104,7 +112,7 @@ def run(backend_id: str, model_selection: str, run_id: str | None = None) -> Pat
     root = RUNTIME / "benchmarks" / "runs" / run_id
     blinded = RUNTIME / "benchmarks" / "blinded" / run_id
     root.mkdir(parents=True, exist_ok=False); blinded.mkdir(parents=True, exist_ok=False)
-    metadata = {"status": "incomplete", "run_id": run_id, "runner_version": RUNNER_VERSION, "backend_id": backend.backend_id, "backend_display_name": backend.display_name, "application_commit": v1.cmd("git", "-C", str(ROOT), "rev-parse", "HEAD").strip(), "service": {"ollama_version": version}, "settings": SETTINGS, "planned_outputs": len(selected) * len(v1.CASE_IDS), "v1_fixture_manifest_sha256": sha256((ROOT / "benchmarks/fixture-manifest.yaml").read_bytes())}
+    metadata = {"status": "incomplete", "run_id": run_id, "runner_version": RUNNER_VERSION, "backend_id": backend.backend_id, "backend_display_name": backend.display_name, "application_commit": source_commit(), "service": {"ollama_version": version}, "settings": SETTINGS, "planned_outputs": len(selected) * len(v1.CASE_IDS), "v1_fixture_manifest_sha256": sha256((ROOT / "benchmarks/fixture-manifest.yaml").read_bytes())}
     (root / "run-metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
     records: list[dict[str, Any]] = []
     try:

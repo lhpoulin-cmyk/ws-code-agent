@@ -543,7 +543,10 @@ class DocWriterApp:
                 version = db.execute("SELECT * FROM trial_versions WHERE trial_id=? ORDER BY version_id DESC LIMIT 1", (trial_id,)).fetchone()
                 if not version:
                     raise ValueError("source version is unavailable")
-                setup_row = db.execute("SELECT * FROM writing_setup_versions WHERE source_version_id=?", (version["version_id"],)).fetchone()
+                # A GENERATED version records the attempt, not a new source or
+                # setup.  Sibling attempts therefore inherit the most recent
+                # setup at or before the current version.
+                setup_row = db.execute("SELECT * FROM writing_setup_versions WHERE trial_id=? AND source_version_id<=? ORDER BY source_version_id DESC, setup_version_id DESC LIMIT 1", (trial_id, version["version_id"])).fetchone()
                 setup = setup_from_row(setup_row) if setup_row else None
                 if not setup or not setup.explicit_complete:
                     if not setup:
@@ -1004,7 +1007,7 @@ class DocWriterApp:
         review_form = f"""<section id='review-rationale'><h2>Operator review record</h2>{review_error_html}<p>Review notes are durable review material, not publishable document prose. Private steering is stored and displayed separately.</p><form method='post' action='/trial/{html.escape(trial['trial_id'])}/review'><input type='hidden' name='csrf' value='{html.escape(csrf)}'><label for='review_note'>Current reviewer note / rationale</label><textarea id='review_note' name='note_text' maxlength='{MAX_NOTES}' aria-describedby='review-help'>{html.escape(current_note)}</textarea><p id='review-help' class='muted'>Describe what sounded generic, what did not sound like the operator, exact rejected passages, and preferred replacement wording.</p><label for='related_passage'>Exact phrase or passage, if applicable</label><textarea id='related_passage' name='related_passage' maxlength='{MAX_NOTES}'></textarea><label><input type='checkbox' name='private_steering' value='1'> Private operator aside / steering note (never publishable prose)</label><button type='submit'>Save review note</button></form><h3>Review history</h3><table><tr><th>Timestamp</th><th>Reviewer</th><th>Event</th><th>Decision</th><th>Note</th><th>Visibility</th></tr>{review_history or '<tr><td colspan="6">No review events recorded.</td></tr>'}</table></section>"""
         with self._db() as db:
             current_version = db.execute("SELECT * FROM trial_versions WHERE trial_id=? ORDER BY version_id DESC LIMIT 1", (trial["trial_id"],)).fetchone()
-            setup_for_generation = db.execute("SELECT * FROM writing_setup_versions WHERE source_version_id=?", (current_version["version_id"],)).fetchone() if current_version else None
+            setup_for_generation = db.execute("SELECT * FROM writing_setup_versions WHERE trial_id=? AND source_version_id<=? ORDER BY source_version_id DESC, setup_version_id DESC LIMIT 1", (trial["trial_id"], current_version["version_id"])).fetchone() if current_version else None
         setup_state = setup_from_row(setup_for_generation).completion_state if setup_for_generation else "DRAFT"
         generation_ready = bool(setup_for_generation and setup_from_row(setup_for_generation).explicit_complete)
         model_options = "".join(f"<option {'selected' if profile.model_identifier == trial['model_identifier'] else ''}>{html.escape(profile.model_identifier)}</option>" for profile in self.adapter_profiles.values())

@@ -1,4 +1,4 @@
-profile_version: writer-adapter/v1
+profile_version: writer-adapter/v2
 adapter_id: gemma3-12b
 model_identifier: gemma3:12b-it-q4_K_M
 expected_digest: sha256:f4031aab637d1ffa37b42570452ae0e4fad0314754d17ded67322e4b95836f8a
@@ -6,10 +6,10 @@ transport: chat
 supported_message_roles: [system, user]
 system_role_support: true
 request_serializer_version: ollama-chat-v1
-response_schema_support: native_format
+response_schema_support: json_mode_post_validated
 generation_settings: {context: 8192, temperature: 0.2, top_p: 0.9, seed: 42, streaming: false, thinking: false}
 stop: []
-known_failure_patterns: []
+known_failure_patterns: [native-schema-grammar]
 regression_fixture_ids: [first-person-role-boundary-v1]
 benchmark_standing: stable-accepted-benchmark-alternative
 operational_status: no-production-role

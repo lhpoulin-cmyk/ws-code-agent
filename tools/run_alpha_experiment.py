@@ -13,8 +13,9 @@ import sys
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from ws_code_agent.alpha_case_adapters import (REGISTERED_CASE_IDS, TASK10E_CASE_ORDER,
-                                                TASK10G_R3_CASE_ORDER, initialize_task10e,
-                                                initialize_task10g_r3)
+                                                TASK10G_R3_CASE_ORDER, TASK10I_C05_R4_CASE_ORDER,
+                                                initialize_task10e, initialize_task10g_r3,
+                                                initialize_task10i_c05_r4)
 from ws_code_agent.alpha_experiment import AlphaExperimentController
 from ws_code_agent.katra_ollama_backend import KatraOllamaDispositionBackend, MODEL_DIGEST, MODEL_QUANTIZATION, MODEL_TAG
 from ws_code_agent.request_protocol import MULTI_REPOSITORY_PROTOCOL_ID, SINGLE_REPOSITORY_PROTOCOL_ID
@@ -28,14 +29,20 @@ def main() -> int:
     parser=argparse.ArgumentParser(); sub=parser.add_subparsers(dest="command", required=True)
     start=sub.add_parser("start-task10e"); start.add_argument("experiment_id")
     start_r3=sub.add_parser("start-task10g-r3"); start_r3.add_argument("experiment_id")
+    start_c05_r4=sub.add_parser("start-task10i-c05-r4"); start_c05_r4.add_argument("experiment_id")
     status=sub.add_parser("status"); status.add_argument("experiment_id")
     step=sub.add_parser("step"); step.add_argument("experiment_id"); step.add_argument("case_id", choices=REGISTERED_CASE_IDS)
     args=parser.parse_args()
-    if args.command in {"start-task10e", "start-task10g-r3"}:
-        case_order = TASK10E_CASE_ORDER if args.command == "start-task10e" else TASK10G_R3_CASE_ORDER
+    initializers = {
+        "start-task10e": (TASK10E_CASE_ORDER, initialize_task10e),
+        "start-task10g-r3": (TASK10G_R3_CASE_ORDER, initialize_task10g_r3),
+        "start-task10i-c05-r4": (TASK10I_C05_R4_CASE_ORDER, initialize_task10i_c05_r4),
+    }
+    if args.command in initializers:
+        case_order, initializer = initializers[args.command]
         protocols = {case: (MULTI_REPOSITORY_PROTOCOL_ID if case.startswith("C05-") else SINGLE_REPOSITORY_PROTOCOL_ID) for case in case_order}
         manifest={"experiment_id": args.experiment_id, "created_at": datetime.now(timezone.utc).isoformat(), "experiment_harness_sha": head(ROOT), "peer_shas": {name: head(path) for name,path in PEERS.items()}, "model": {"tag": MODEL_TAG, "digest": MODEL_DIGEST, "quantization": MODEL_QUANTIZATION}, "transport": "OLLAMA_MACHINE_RESPONSE_V1", "execution_policy": "GPU_PRIMARY_PARTIAL_OFFLOAD; GPU>=80; CPU<=20", "context": 4096, "sampling": "appliance/Ollama defaults", "alpha_gate": "PASS", "case_order": list(case_order), "protocols": protocols}
-        controller=(initialize_task10e if args.command == "start-task10e" else initialize_task10g_r3)(STORE, manifest)
+        controller=initializer(STORE, manifest)
     else: controller=AlphaExperimentController(STORE / args.experiment_id)
     if args.command == "step": controller.step_registered(args.case_id, KatraOllamaDispositionBackend())
     print(json.dumps(controller.status(), sort_keys=True, indent=2)); return 0

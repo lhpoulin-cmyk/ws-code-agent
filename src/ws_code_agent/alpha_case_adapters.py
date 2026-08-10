@@ -23,6 +23,7 @@ from .validation import DescriptorValidationExecutor, ValidationDescriptor, Vali
 CASES = Path(__file__).resolve().parents[2] / "benchmarks" / "alpha-calibration" / "cases"
 TASK10E_CASE_ORDER = ("C03", "C04", "C05-A", "C05-B")
 TASK10G_R3_CASE_ORDER = ("C01", "C02", "C03", "C04", "C05-A", "C05-B")
+TASK10I_C05_R4_CASE_ORDER = ("C05-A", "C05-B")
 
 C05_MODEL_VISIBLE_CONTRACT = {
     "authority_semantics": (
@@ -537,6 +538,10 @@ def initialize_task10e(store: Path, manifest: Mapping[str, Any]) -> AlphaExperim
 
 def initialize_task10g_r3(store: Path, manifest: Mapping[str, Any]) -> AlphaExperimentController:
     return _initialize_family(store, manifest, TASK10G_R3_CASE_ORDER)
+
+
+def initialize_task10i_c05_r4(store: Path, manifest: Mapping[str, Any]) -> AlphaExperimentController:
+    return _initialize_family(store, manifest, TASK10I_C05_R4_CASE_ORDER)
 
 
 def process_case_turn(controller: AlphaExperimentController, case: dict[str, Any], raw: str) -> Mapping[str, Any]:

@@ -133,10 +133,11 @@ class AlphaExperimentController:
 
     def step_registered(self, case_id: str, backend: TurnBackend) -> dict[str, Any]:
         from .alpha_case_adapters import (REGISTERED_CASE_IDS, TASK10E_CASE_ORDER, TASK10G_R3_CASE_ORDER,
-                                          advance_case_evaluation, prepare_case_step, process_case_turn, verify_case)
+                                          TASK10I_C05_R4_CASE_ORDER, advance_case_evaluation,
+                                          prepare_case_step, process_case_turn, verify_case)
         family_state = _load(self.root / "family-state.json")
         case_order = tuple(family_state["case_order"])
-        if case_order not in {TASK10E_CASE_ORDER, TASK10G_R3_CASE_ORDER}:
+        if case_order not in {TASK10E_CASE_ORDER, TASK10G_R3_CASE_ORDER, TASK10I_C05_R4_CASE_ORDER}:
             raise ExperimentError("family case order is not registered")
         if case_id not in REGISTERED_CASE_IDS or case_id not in case_order:
             raise ExperimentError("case is not registered in this family")

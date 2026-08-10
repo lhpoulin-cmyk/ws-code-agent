@@ -18,7 +18,11 @@ authority mappings rather than recalculating them from a live filesystem.
 
 The fixed registry in `alpha_case_adapters.py` contains C01 through C05-B.
 Task 10E retains its four-case C03/C04/C05-A/C05-B order; the Task 10G R3
-initializer uses C01/C02/C03/C04/C05-A/C05-B. Each family owns fresh case
+initializer uses C01/C02/C03/C04/C05-A/C05-B. The Task 10I C05 R4 initializer
+is a distinct evaluation family containing exactly C05-A followed by C05-B.
+It exists for a fresh evaluation of both inverted C05 variants against the
+Task 10H explicit effect, replay, authority, and termination feedback; earlier
+evaluation generations remain immutable. Each family owns fresh case
 workspaces. Serialized snapshots are verified against live workspaces before
 inference; committed successful patches are replayed by the executor to
 reconstruct isolated effects. C01 persists its accepted effect and advances
@@ -38,7 +42,8 @@ The protocol ID is included in durable inference intent so a restart cannot
 silently render a different request surface.
 
 The bounded operator entrypoint is `tools/run_alpha_experiment.py` with
-`start-task10e`, `start-task10g-r3`, `status`, and one-turn `step` commands.
+`start-task10e`, `start-task10g-r3`, `start-task10i-c05-r4`, `status`, and
+one-turn `step` commands.
 Unknown cases are not loadable and each registered family order is enforced by
 committed case status. A scoreable terminal result permits progression; an
 evaluating or infrastructure-invalidated case does not.

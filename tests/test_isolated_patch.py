@@ -180,6 +180,20 @@ class IsolatedPatchTests(unittest.TestCase):
         self.executor.cleanup(context)
         self.assertFalse(Path(context.workspace_root).exists())
 
+    def test_executor_error_after_sandbox_creation_preserves_source_and_allows_cleanup(self) -> None:
+        source_x = self.observer.observe_repository(self.root).snapshot
+        context = self.executor.build_isolated_copy(source_x)
+        (Path(context.isolated_root) / "src" / "app.py").write_text("tampered sandbox\n", encoding="utf-8")
+        result = self.executor.apply_patch_isolated(
+            context,
+            self.proposal(source_x, patch("src/app.py", "value = 'base'", "value = 'patched'")),
+            ("src/app.py",),
+        )
+        self.assertEqual(ApplicationStatus.EXECUTOR_ERROR, result.status)
+        self.assertEqual(source_x.snapshot_identity, self.observer.observe_repository(self.root).snapshot.snapshot_identity)
+        self.executor.cleanup(context)
+        self.assertFalse(Path(context.workspace_root).exists())
+
 
 if __name__ == "__main__":
     unittest.main()

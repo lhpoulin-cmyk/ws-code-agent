@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ws_code_agent.katra_ollama_backend import (  # noqa: E402
     EXECUTION_POLICY, KatraOllamaBackendError, KatraOllamaDispositionBackend,
-    MODEL_DIGEST, MODEL_QUANTIZATION, MODEL_TAG, REMOTE_RUNNER,
+    MODEL_DIGEST, MODEL_QUANTIZATION, MODEL_TAG, REMOTE_HOST, REMOTE_RUNNER, SSH_CERTIFICATE, SSH_IDENTITY,
 )
 
 
@@ -55,6 +55,9 @@ class KatraOllamaBackendTests(unittest.TestCase):
         self.assertIn("--execution-policy", inference)
         self.assertEqual(EXECUTION_POLICY, inference[-1])
         self.assertNotIn("--tools", inference)
+        self.assertIn(SSH_IDENTITY, transport.calls[0])
+        self.assertIn(f"CertificateFile={SSH_CERTIFICATE}", transport.calls[0])
+        self.assertIn(f"louis@{REMOTE_HOST}", transport.calls[0])
 
     def test_prompt_is_one_quoted_argument_not_a_remote_shell_program(self) -> None:
         transport = FakeTransport()
@@ -86,4 +89,3 @@ class KatraOllamaBackendTests(unittest.TestCase):
             KatraOllamaDispositionBackend(model="anything")  # type: ignore[call-arg]
         with self.assertRaises(KatraOllamaBackendError):
             KatraOllamaDispositionBackend().generate(({"role": "tool", "content": {}, "extra": True},))
-

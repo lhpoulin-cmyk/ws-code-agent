@@ -22,7 +22,12 @@ MODEL_TAG = "qwen3-coder:30b"
 MODEL_DIGEST = "06c1097efce0431c2045fe7b2e5108366e43bee1b4603a7aded8f21689e90bca"
 MODEL_QUANTIZATION = "Q4_K_M"
 EXECUTION_POLICY = "gpu-primary-partial"
-REMOTE_HOST = "cuda-compute-katra"
+# The retained VM hostname is not presently resolvable from ws-matriarch.  The
+# approved operator path is the documented VM 320 address plus the vault-backed
+# SSH certificate; neither is model-controlled.
+REMOTE_HOST = "192.168.10.92"
+SSH_IDENTITY = "/home/louis/lab-root-trust/ssh-ca/lab-operator-ed25519"
+SSH_CERTIFICATE = "/home/louis/lab-root-trust/ssh-ca/lab-operator-ed25519-cert.pub"
 REMOTE_RUNNER = "/srv/gpu-compute/bin/run"
 REMOTE_EVIDENCE_ROOT = "/srv/gpu-compute/evidence"
 REMOTE_TEMP_ROOT = "/tmp"
@@ -100,7 +105,8 @@ class KatraOllamaDispositionBackend:
         command = (
             "/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=yes",
             "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no", "-o", "ClearAllForwardings=yes",
-            "-o", "RequestTTY=no", REMOTE_HOST, self._remote_command(remote_arguments),
+            "-o", "RequestTTY=no", "-i", SSH_IDENTITY, "-o", f"CertificateFile={SSH_CERTIFICATE}",
+            f"louis@{REMOTE_HOST}", self._remote_command(remote_arguments),
         )
         result = self._run_process(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
         if required and result.returncode != 0:

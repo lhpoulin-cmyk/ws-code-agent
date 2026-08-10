@@ -10,9 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
-from pathlib import PurePath
 import re
-import secrets
 import shlex
 import subprocess
 from typing import Any, Callable, Protocol
@@ -29,6 +27,7 @@ REMOTE_HOST = "192.168.10.92"
 SSH_IDENTITY = "/home/louis/lab-root-trust/ssh-ca/lab-operator-ed25519"
 SSH_CERTIFICATE = "/home/louis/lab-root-trust/ssh-ca/lab-operator-ed25519-cert.pub"
 REMOTE_RUNNER = "/srv/gpu-compute/bin/run"
+REMOTE_STATUS = "/srv/gpu-compute/bin/run-status"
 REMOTE_EVIDENCE_ROOT = "/srv/gpu-compute/evidence"
 REMOTE_TEMP_ROOT = "/tmp"
 _JOB_ID = re.compile(r"\[?(job-[0-9]{8}T[0-9]{6}Z-[0-9]+)\]?")
@@ -73,6 +72,12 @@ class ResponseEvidenceSink(Protocol):
     def capture_response(self, raw_response: str, evidence: RuntimeTurnEvidence) -> None: ...
 
 
+@dataclass(frozen=True)
+class InferenceInvocation:
+    invocation_id: str
+    prompt_sha256: str
+
+
 class KatraOllamaDispositionBackend:
     """Text-only, exact-artifact backend for a single accepted Katra profile."""
 
@@ -81,12 +86,14 @@ class KatraOllamaDispositionBackend:
         self.turn_evidence: list[RuntimeTurnEvidence] = []
         self.failure_evidence: list[RuntimeFailureEvidence] = []
 
-    def generate(self, messages: tuple[dict[str, Any], ...], *, evidence_sink: ResponseEvidenceSink | None = None) -> str:
+    def generate(self, messages: tuple[dict[str, Any], ...], *, invocation: InferenceInvocation, evidence_sink: ResponseEvidenceSink | None = None) -> str:
         prompt = self._render_prompt(messages)
-        output = f"{REMOTE_TEMP_ROOT}/ws-code-agent-disposition-{secrets.token_hex(16)}.txt"
-        local_durable = evidence_sink is None
+        if not re.fullmatch(r"alpha-[A-Za-z0-9][A-Za-z0-9._-]{15,119}", invocation.invocation_id):
+            raise KatraOllamaBackendError("invalid durable invocation identity")
+        if hashlib.sha256(prompt.encode()).hexdigest() != invocation.prompt_sha256:
+            raise KatraOllamaBackendError("durable invocation prompt mismatch")
+        run = self._ssh(self._runner_command(prompt, invocation.invocation_id), required=False)
         try:
-            run = self._ssh(self._runner_command(prompt, output), required=False)
             if run.returncode != 0:
                 self.failure_evidence.append(RuntimeFailureEvidence(
                     "controlled-run", run.returncode, run.stdout.decode("utf-8", errors="replace"),
@@ -97,7 +104,7 @@ class KatraOllamaDispositionBackend:
                     stdout=run.stdout, stderr=run.stderr,
                 )
             job_id = self._job_id(run.stdout)
-            raw = self._ssh(("/usr/bin/cat", "--", output))
+            raw = self._ssh(("/usr/bin/cat", "--", f"{REMOTE_EVIDENCE_ROOT}/invocations/{invocation.invocation_id}/response.txt"))
             if raw.returncode != 0:
                 raise KatraOllamaBackendError("controlled inference output retrieval failed")
             evidence = self._fetch_evidence(job_id)
@@ -107,16 +114,16 @@ class KatraOllamaDispositionBackend:
             # has durably accepted the exact bytes and runtime evidence.
             if evidence_sink is not None:
                 evidence_sink.capture_response(text, turn_evidence)
-                local_durable = True
             self.turn_evidence.append(turn_evidence)
             return text
         except UnicodeDecodeError as error:
             raise KatraOllamaBackendError("model response was not UTF-8 text") from error
         finally:
-            # On persistence failure leave the only raw-output copy available
-            # for operator recovery; an evidence sink owns later bounded cleanup.
-            if local_durable:
-                self._ssh(("/usr/bin/rm", "-f", "--", output), required=False)
+            pass
+
+    @classmethod
+    def invocation_for(cls, messages: tuple[dict[str, Any], ...], invocation_id: str) -> InferenceInvocation:
+        return InferenceInvocation(invocation_id, hashlib.sha256(cls._render_prompt(messages).encode()).hexdigest())
 
     @staticmethod
     def _render_prompt(messages: tuple[dict[str, Any], ...]) -> str:
@@ -154,10 +161,8 @@ class KatraOllamaDispositionBackend:
         return result
 
     @staticmethod
-    def _runner_command(prompt: str, output: str) -> tuple[str, ...]:
-        if not output.startswith(REMOTE_TEMP_ROOT + "/") or PurePath(output).name != output.rsplit("/", 1)[-1]:
-            raise KatraOllamaBackendError("unsafe fixed response path")
-        return (REMOTE_RUNNER, "--model", MODEL_TAG, "--prompt", prompt, "--output", output,
+    def _runner_command(prompt: str, invocation_id: str) -> tuple[str, ...]:
+        return (REMOTE_RUNNER, "--invocation-id", invocation_id, "--model", MODEL_TAG, "--prompt", prompt,
                 "--execution-policy", EXECUTION_POLICY)
 
     @staticmethod

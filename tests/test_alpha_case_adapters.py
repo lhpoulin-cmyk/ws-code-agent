@@ -10,14 +10,15 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from ws_code_agent.alpha_case_adapters import initialize_task10e, prepare_case_step, process_case_turn, verify_case
 from ws_code_agent.alpha_experiment import AlphaExperimentController, ExperimentError
-from ws_code_agent.katra_ollama_backend import RuntimeTurnEvidence
+from ws_code_agent.katra_ollama_backend import KatraOllamaDispositionBackend, RuntimeTurnEvidence
 
 def request(kind, arguments): return json.dumps({"request_type":kind,"arguments":arguments}, separators=(",",":"))
 def patch(path, old, new): return f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-{old}\n+{new}\n"
 
 class FakeBackend:
     def __init__(self, raw): self.raw=raw; self.calls=0
-    def generate(self, messages, *, evidence_sink):
+    def invocation_for(self, messages, invocation_id): return KatraOllamaDispositionBackend.invocation_for(messages,invocation_id)
+    def generate(self, messages, *, invocation, evidence_sink):
         self.calls+=1; evidence_sink.capture_response(self.raw, RuntimeTurnEvidence(hashlib.sha256(self.raw.encode()).hexdigest(),f"job-{self.calls}","d","Q4_K_M","gpu-primary-partial","GPU_PRIMARY_PARTIAL_OFFLOAD",20,80,"20%/80% CPU/GPU","","")); return self.raw
 
 class AdapterTests(unittest.TestCase):

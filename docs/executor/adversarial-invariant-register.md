@@ -24,6 +24,7 @@ Task 10E triage. No row is `MISSING`.
 | R1 | COVERED | `test_active_tracked_tree_excludes_inherited_doc_writer_runtime_identity` |
 | E6 | COVERED | `test_raw_response_is_durable_before_recovery_and_never_regenerated`; `test_durable_sink_precedes_disposable_cleanup_and_failure_retains_output` |
 | E7 | COVERED | restart adapter tests in `test_alpha_case_adapters.py`, including workspace tamper denial before inference |
+| E8 | COVERED | `test_intent_survives_remote_success_disconnect_and_recovers_once`; gpu-compute `tests/unit/idempotent-run.sh` covers duplicate, concurrent, mismatch, and terminal failure replay |
 | G3 | PARTIAL | 2026-08-10: C03/C05 have no approved behavioral validators or private oracles. Unregistered `containment_required` descriptors fail closed; Task 10E must record `technical_validation = NOT_RUN` unless a future evaluator-owned descriptor is approved. |
 
 `ApplicationStatus.SUCCESS` / projected `ACCEPTED` means only isolated,

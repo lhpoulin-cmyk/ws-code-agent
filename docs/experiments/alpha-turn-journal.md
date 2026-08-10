@@ -4,8 +4,8 @@ Real Alpha families use the repository-owned `AlphaExperimentController`.
 `start` creates an immutable family manifest and per-case state; `status` is
 read-only; each `step` performs at most one inference.
 
-Each turn moves through `TURN_STARTED`, `RAW_RESPONSE_DURABLE`,
-`HARNESS_RESULT_DURABLE`, and `TURN_COMMITTED`. Raw text, its hash, job ID,
+Each turn moves through `TURN_STARTED`, `INFERENCE_INTENT_DURABLE`,
+`RAW_RESPONSE_DURABLE`, `HARNESS_RESULT_DURABLE`, and `TURN_COMMITTED`. Raw text, its hash, job ID,
 and runtime evidence are atomically written and fsynced by the backend evidence
 sink before the Katra disposable output can be removed. A committed turn also
 has a small previous-turn digest chain.
@@ -26,3 +26,10 @@ from variant names during resume.
 The bounded operator entrypoint is `tools/run_alpha_experiment.py` with
 `start-task10e`, `status`, and one-turn `step` commands. Unknown cases are not
 loadable and case progression is enforced by committed case status.
+
+Before any remote call, the controller also commits
+`INFERENCE_INTENT_DURABLE` with a deterministic turn-bound invocation ID and
+the exact rendered-prompt digest. gpu-compute uses that ID as an idempotent
+execution key. Re-presenting it returns the existing running, failed, or
+successful invocation; it never creates a second model execution. A retained
+successful remote response can therefore be captured after client restart.

@@ -39,10 +39,14 @@ class FakeTransport:
 
 
 class KatraOllamaBackendTests(unittest.TestCase):
+    @staticmethod
+    def generate(backend, messages, **kwargs):
+        invocation=backend.invocation_for(messages,"alpha-test-family-C01-t0001-abcdef")
+        return backend.generate(messages,invocation=invocation,**kwargs)
     def test_fixed_profile_transport_preserves_raw_response_and_runtime_evidence(self) -> None:
         transport = FakeTransport()
         backend = KatraOllamaDispositionBackend(transport)
-        raw = backend.generate(({"role": "user", "content": {"case": "C01"}},))
+        raw = self.generate(backend,({"role": "user", "content": {"case": "C01"}},))
         self.assertEqual('{"request_type":"NO_CHANGE","arguments":{}}\n', raw)
         self.assertEqual(1, len(backend.turn_evidence))
         evidence = backend.turn_evidence[0]
@@ -51,7 +55,8 @@ class KatraOllamaBackendTests(unittest.TestCase):
         self.assertEqual(EXECUTION_POLICY, evidence.execution_policy)
         self.assertEqual((20, 80), (evidence.observed_cpu_percent, evidence.observed_gpu_percent))
         inference = shlex.split(transport.calls[0][-1])
-        self.assertEqual((REMOTE_RUNNER, "--model", MODEL_TAG), tuple(inference[:3]))
+        self.assertEqual((REMOTE_RUNNER, "--invocation-id"), tuple(inference[:2]))
+        self.assertIn(MODEL_TAG,inference)
         self.assertIn("--execution-policy", inference)
         self.assertEqual(EXECUTION_POLICY, inference[-1])
         self.assertNotIn("--tools", inference)
@@ -63,7 +68,7 @@ class KatraOllamaBackendTests(unittest.TestCase):
         transport = FakeTransport()
         backend = KatraOllamaDispositionBackend(transport)
         injected = "'; touch /tmp/escaped; #"
-        backend.generate(({"role": "user", "content": injected},))
+        self.generate(backend,({"role": "user", "content": injected},))
         remote = shlex.split(transport.calls[0][-1])
         prompt = remote[remote.index("--prompt") + 1]
         self.assertIn(injected, prompt)
@@ -73,7 +78,7 @@ class KatraOllamaBackendTests(unittest.TestCase):
     def test_transport_failure_and_profile_violation_fail_closed(self) -> None:
         failed = KatraOllamaDispositionBackend(FakeTransport(fail_first=True))
         with self.assertRaises(KatraOllamaBackendError) as captured:
-            failed.generate(({"role": "user", "content": {}},))
+            self.generate(failed,({"role": "user", "content": {}},))
         self.assertEqual(255, captured.exception.exit_code)
         self.assertEqual("transport failed", captured.exception.stderr)
         self.assertEqual(1, len(failed.failure_evidence))
@@ -87,13 +92,13 @@ class KatraOllamaBackendTests(unittest.TestCase):
                 return result
 
         with self.assertRaises(KatraOllamaBackendError):
-            KatraOllamaDispositionBackend(BadEvidence()).generate(({"role": "user", "content": {}},))
+            self.generate(KatraOllamaDispositionBackend(BadEvidence()),({"role": "user", "content": {}},))
 
     def test_no_caller_model_or_policy_override_exists(self) -> None:
         with self.assertRaises(TypeError):
             KatraOllamaDispositionBackend(model="anything")  # type: ignore[call-arg]
         with self.assertRaises(KatraOllamaBackendError):
-            KatraOllamaDispositionBackend().generate(({"role": "tool", "content": {}, "extra": True},))
+            self.generate(KatraOllamaDispositionBackend(),({"role": "tool", "content": {}, "extra": True},))
 
     def test_durable_sink_precedes_disposable_cleanup_and_failure_retains_output(self) -> None:
         events: list[str] = []
@@ -101,15 +106,14 @@ class KatraOllamaBackendTests(unittest.TestCase):
             def capture_response(self, raw_response, evidence):
                 events.append("durable:" + evidence.raw_sha256)
         transport = FakeTransport()
-        KatraOllamaDispositionBackend(transport).generate(({"role": "user", "content": {}},), evidence_sink=Sink())
-        cleanup = next(index for index, call in enumerate(transport.calls) if shlex.split(call[-1])[0] == "/usr/bin/rm")
+        self.generate(KatraOllamaDispositionBackend(transport),({"role": "user", "content": {}},),evidence_sink=Sink())
         self.assertTrue(events)
-        self.assertGreater(cleanup, 0)
+        self.assertFalse(any(shlex.split(call[-1])[0] == "/usr/bin/rm" for call in transport.calls))
 
         class FailingSink:
             def capture_response(self, raw_response, evidence):
                 raise OSError("durable store unavailable")
         transport = FakeTransport()
         with self.assertRaises(OSError):
-            KatraOllamaDispositionBackend(transport).generate(({"role": "user", "content": {}},), evidence_sink=FailingSink())
+            self.generate(KatraOllamaDispositionBackend(transport),({"role": "user", "content": {}},),evidence_sink=FailingSink())
         self.assertFalse(any(shlex.split(call[-1])[0] == "/usr/bin/rm" for call in transport.calls))

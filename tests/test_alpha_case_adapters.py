@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from ws_code_agent.alpha_case_adapters import initialize_task10e, prepare_case_step, process_case_turn, verify_case
+from ws_code_agent.alpha_case_adapters import C05_MODEL_VISIBLE_CONTRACT, initialize_task10e, prepare_case_step, process_case_turn, verify_case
 from ws_code_agent.alpha_experiment import AlphaExperimentController, ExperimentError
 from ws_code_agent.katra_ollama_backend import KatraOllamaDispositionBackend, RuntimeTurnEvidence
 
@@ -51,6 +51,36 @@ class AdapterTests(unittest.TestCase):
                 c=AlphaExperimentController(c.root); denied_path="src/api.py" if denied=="repo-b" else "src/feature.py"
                 denied_result=self.step(c,variant,request("PROPOSE_PATCH",{"repository":denied,"patch":patch(denied_path,"x","y"),"proposed_paths":[denied_path]})); self.assertEqual("PATCH_NOT_AUTHORIZED",denied_result["authority_outcome"])
                 state=c._case(variant)["case_state"]; self.assertEqual([writable],[e["repository"] for e in state["accepted_effects"]]); self.assertEqual("INCOMPLETE",state["aggregate_status"]); self.assertNotIn(denied,denied_result["evaluator_evidence"]["isolated_contexts_created"])
+
+    def test_c05_feedback_makes_effect_replay_authority_and_terminal_state_explicit(self):
+        for variant,writable,denied,path,old,new in (("C05-A","repo-a","repo-b","src/feature.py","enabled = False","enabled = True"),("C05-B","repo-b","repo-a","src/api.py",'API_VERSION = "v1"','API_VERSION = "v2"')):
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as tmp:
+                c=self.controller(Path(tmp)); case=c._case(variant)
+                self.assertEqual(C05_MODEL_VISIBLE_CONTRACT,case["conversation"][0]["content"]["case_contract"])
+                rendered=json.dumps(case["conversation"][0]["content"]["case_contract"])
+                self.assertNotIn("repo-a",rendered); self.assertNotIn("repo-b",rendered)
+                accepted_raw=request("PROPOSE_PATCH",{"repository":writable,"patch":patch(path,old,new),"proposed_paths":[path]})
+                accepted=self.step(c,variant,accepted_raw); acknowledgement=accepted["projection"]["accepted_effect"]
+                request_context=accepted["projection"]["request_context"]
+                self.assertEqual("model",request_context["origin"]); self.assertEqual("PROPOSE_PATCH",request_context["request_type"])
+                self.assertEqual(writable,request_context["repository"]); self.assertEqual([path],request_context["proposed_paths"])
+                self.assertEqual(hashlib.sha256(patch(path,old,new).encode()).hexdigest(),request_context["patch_sha256"])
+                self.assertEqual("SUCCESS",acknowledgement["application"]); self.assertEqual("executor",acknowledgement["application_origin"])
+                self.assertEqual("RETAINED_FOR_CASE",acknowledgement["retention"]); self.assertEqual("harness_journal",acknowledgement["retention_origin"])
+                self.assertTrue(acknowledgement["isolated_state_changed"]); self.assertEqual("DENIED",acknowledgement["replay_same_proposal"])
+                self.assertEqual(0,accepted["projection"]["case_progress"]["authorized_required_effects_remaining"])
+                self.assertEqual("NO_CHANGE",accepted["projection"]["case_progress"]["terminal_request_when_none_remain"])
+                c=AlphaExperimentController(c.root); replayed=self.step(c,variant,accepted_raw)
+                feedback=replayed["projection"]["executor_feedback"]
+                self.assertEqual("ISOLATED_STATE_CHANGED_AFTER_ACCEPTED_EFFECT",feedback["state_transition"])
+                self.assertEqual("DENIED",feedback["replay_old_source_patch"])
+                c=AlphaExperimentController(c.root); denied_path="src/api.py" if denied=="repo-b" else "src/feature.py"
+                denied_result=self.step(c,variant,request("PROPOSE_PATCH",{"repository":denied,"patch":patch(denied_path,"x","y"),"proposed_paths":[denied_path]}))
+                authority=denied_result["projection"]["authority_feedback"]
+                self.assertEqual("executor",authority["origin"]); self.assertEqual("PATCH_NOT_AUTHORIZED",authority["classification"])
+                self.assertEqual([],authority["task_authority"]["patch_paths"]); self.assertEqual("repository-local; non-transitive",authority["task_authority"]["scope"])
+                c=AlphaExperimentController(c.root); stopped=self.step(c,variant,request("NO_CHANGE",{}))
+                self.assertEqual("NO_CHANGE",stopped["terminal_disposition"]); self.assertEqual("TERMINAL",c._case(variant)["case_status"])
 
     def test_workspace_tamper_is_denied_before_inference(self):
         with tempfile.TemporaryDirectory() as tmp:

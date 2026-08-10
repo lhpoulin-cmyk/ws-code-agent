@@ -174,9 +174,20 @@ class MultiRepositoryDispositionHarness:
 
     @staticmethod
     def _denied(request_type: str, repository: DeclaredRepository, classification: str) -> MultiRepositoryStep:
-        return MultiRepositoryStep(request_type, repository.alias, classification, None, {
+        projection: dict[str, Any] = {
             "status": "DENIED", "error": classification, **_repository_projection(repository),
-        })
+        }
+        if request_type == "PROPOSE_PATCH":
+            projection["authority_feedback"] = {
+                "origin": "executor",
+                "classification": classification,
+                "task_authority": {
+                    "repository": repository.alias,
+                    "patch_paths": list(repository.allowed_patch_paths),
+                    "scope": "repository-local; non-transitive",
+                },
+            }
+        return MultiRepositoryStep(request_type, repository.alias, classification, None, projection)
 
 
 def _parse_multi_repository_request(raw_response: str) -> tuple[str, dict[str, Any]]:

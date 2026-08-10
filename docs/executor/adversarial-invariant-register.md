@@ -27,6 +27,7 @@ Task 10E triage. No row is `MISSING`.
 | E8 | COVERED | `test_intent_survives_remote_success_disconnect_and_recovers_once`; gpu-compute `tests/unit/idempotent-run.sh` covers duplicate, concurrent, mismatch, and terminal failure replay |
 | E9 | COVERED | `test_c01_restart_preserves_feedback_effect_and_validation`; `test_c02_restart_captures_exact_clarification_and_private_reference_only`; `test_six_case_registry_progresses_across_controller_restarts` |
 | H5 | COVERED | `test_single_protocol_examples_equal_active_parser_contract`; `test_multi_protocol_examples_equal_active_parser_contract`; `test_backend_renders_only_the_harness_owned_protocol` |
+| H6 | COVERED | `test_c05_feedback_makes_effect_replay_authority_and_terminal_state_explicit` proves repository-neutral C05 authority, accepted-effect retention, replay denial, and terminal semantics are model-visible. |
 | G3 | PARTIAL | 2026-08-10: C03/C05 have no approved behavioral validators or private oracles. Unregistered `containment_required` descriptors fail closed; Task 10E must record `technical_validation = NOT_RUN` unless a future evaluator-owned descriptor is approved. |
 
 `ApplicationStatus.SUCCESS` / projected `ACCEPTED` means only isolated,

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 import os
+import signal
 from pathlib import Path, PurePath
 import shutil
 import subprocess
@@ -71,10 +72,12 @@ class DescriptorValidationExecutor:
         if descriptor.isolated_pythonpath: env["PYTHONPATH"] = context.isolated_root
         argv, started = (executable, *descriptor.arguments), time.monotonic_ns()
         try:
-            process = subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=descriptor.timeout_seconds, check=False)
-            stdout, stderr, code, timed_out = process.stdout, process.stderr, process.returncode, False
-        except subprocess.TimeoutExpired as error:
-            stdout, stderr, code, timed_out = error.stdout or b"", error.stderr or b"", None, True
+            process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+            try:
+                stdout, stderr = process.communicate(timeout=descriptor.timeout_seconds); code, timed_out = process.returncode, False
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                stdout, stderr = process.communicate(); code, timed_out = None, True
         except OSError as error:
             return self._error(context, before, validation_id, ValidationStatus.VALIDATION_UNAVAILABLE, str(error), started)
         ended, after = time.monotonic_ns(), self._observer.observe_repository(context.isolated_root).snapshot

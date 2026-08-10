@@ -128,24 +128,32 @@ class AlphaExperimentController:
             except (ImportError, KeyError):
                 pass
             summaries.append(summary)
-        active=next((c["case_id"] for c in cases if c["case_status"] in {"READY", "ACTIVE"}), None)
+        active=next((c["case_id"] for c in cases if c["case_status"] in {"READY", "ACTIVE", "EVALUATING"}), None)
         return {"family_status": family["status"], "current_or_next_case": active, "cases": summaries}
 
     def step_registered(self, case_id: str, backend: TurnBackend) -> dict[str, Any]:
-        from .alpha_case_adapters import CASE_ORDER, prepare_case_step, process_case_turn, verify_case
-        if case_id not in CASE_ORDER: raise ExperimentError("case is not registered")
+        from .alpha_case_adapters import (REGISTERED_CASE_IDS, TASK10E_CASE_ORDER, TASK10G_R3_CASE_ORDER,
+                                          advance_case_evaluation, prepare_case_step, process_case_turn, verify_case)
+        family_state = _load(self.root / "family-state.json")
+        case_order = tuple(family_state["case_order"])
+        if case_order not in {TASK10E_CASE_ORDER, TASK10G_R3_CASE_ORDER}:
+            raise ExperimentError("family case order is not registered")
+        if case_id not in REGISTERED_CASE_IDS or case_id not in case_order:
+            raise ExperimentError("case is not registered in this family")
         cases={item["case_id"]: item for item in (_load(path) for path in (self.root / "cases").glob("*/case.json"))}
-        preceding=CASE_ORDER[:CASE_ORDER.index(case_id)]
+        preceding=case_order[:case_order.index(case_id)]
         if any(cases[item]["case_status"] not in {"TERMINAL", "TURN_LIMIT"} for item in preceding):
             raise ExperimentError("preceding case is not complete")
         verify_case(self, cases[case_id])
+        if cases[case_id]["case_status"] == "EVALUATING":
+            return dict(advance_case_evaluation(self, cases[case_id]))
         prepare_case_step(self, cases[case_id])
         result=self.step(case_id, backend, lambda case, raw: process_case_turn(self, case, raw))
         case=self._case(case_id)
         if case["turn_committed"] >= case["turn_limit"] and case["case_status"] == "ACTIVE":
             case["case_status"]="TURN_LIMIT"; case["terminal_disposition"]="TURN_LIMIT"; self._write_case(case)
-        if case_id == CASE_ORDER[-1] and case["case_status"] in {"TERMINAL", "TURN_LIMIT"}:
-            _atomic_json(self.root / "family-state.json", {"status": "COMPLETE", "case_order": list(CASE_ORDER)})
+        if case_id == case_order[-1] and case["case_status"] in {"TERMINAL", "TURN_LIMIT"}:
+            _atomic_json(self.root / "family-state.json", {"status": "COMPLETE", "case_order": list(case_order)})
         return result
 
     def step(self, case_id: str, backend: TurnBackend, processor: Processor) -> dict[str, Any]:
@@ -218,7 +226,8 @@ class AlphaExperimentController:
         case["turn_committed"] = pending["turn"]; case["previous_turn_digest"] = digest; case["pending_turn"] = None
         case["conversation"].append({"role": "tool", "content": result["projection"]})
         if result.get("terminal_disposition"):
-            case["terminal_disposition"] = result["terminal_disposition"]; case["case_status"] = "TERMINAL"
+            case["terminal_disposition"] = result["terminal_disposition"]
+            case["case_status"] = result.get("case_status", "TERMINAL")
         self._write_case(case)
         return result
 

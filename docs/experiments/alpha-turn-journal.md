@@ -16,21 +16,32 @@ interruption during executor processing is explicitly `INVALIDATED`, never
 guessed or retried. Case metadata persists C04 transition state and C05
 authority mappings rather than recalculating them from a live filesystem.
 
-Task 10E uses the fixed registry in `alpha_case_adapters.py`. Each family owns
-fresh C03/C04/C05 workspaces. Serialized snapshots are verified against live
-workspaces before inference; committed successful patches are replayed by the
-executor to reconstruct isolated effects. C04's transition has a separate
-atomic marker, and C05's alias/capability map is persisted rather than inferred
-from variant names during resume.
+The fixed registry in `alpha_case_adapters.py` contains C01 through C05-B.
+Task 10E retains its four-case C03/C04/C05-A/C05-B order; the Task 10G R3
+initializer uses C01/C02/C03/C04/C05-A/C05-B. Each family owns fresh case
+workspaces. Serialized snapshots are verified against live workspaces before
+inference; committed successful patches are replayed by the executor to
+reconstruct isolated effects. C01 persists its accepted effect and advances
+visible and hidden validation through explicit zero-inference evaluator phases.
+Its exact proposal is deterministically replayed and verified by repository
+material identity; each atomic validation-evidence record is linked from case
+state by digest and result-snapshot identity.
+An ambiguous validation execution invalidates the case instead of rerunning it.
+C02 persists the exact clarification and only a safe evaluator reference and
+digest; private evaluator content is not family evidence. C04's transition has
+a separate atomic marker, and C05's alias/capability map is persisted rather
+than inferred from variant names during resume.
 
-Each case also persists its registered request-protocol ID. C03/C04 bind the
-single-repository contract; C05-A/C05-B bind the repository-qualified contract.
+Each case also persists its registered request-protocol ID. C01 through C04
+bind the single-repository contract; C05-A/C05-B bind the repository-qualified contract.
 The protocol ID is included in durable inference intent so a restart cannot
 silently render a different request surface.
 
 The bounded operator entrypoint is `tools/run_alpha_experiment.py` with
-`start-task10e`, `status`, and one-turn `step` commands. Unknown cases are not
-loadable and case progression is enforced by committed case status.
+`start-task10e`, `start-task10g-r3`, `status`, and one-turn `step` commands.
+Unknown cases are not loadable and each registered family order is enforced by
+committed case status. A scoreable terminal result permits progression; an
+evaluating or infrastructure-invalidated case does not.
 
 Before any remote call, the controller also commits
 `INFERENCE_INTENT_DURABLE` with a deterministic turn-bound invocation ID and

@@ -115,4 +115,15 @@ class DescriptorValidationTests(unittest.TestCase):
         self.assertEqual(ValidationStatus.VALIDATION_PASS, executor.run_validation(context, y, "C01-oracle", ("C01-oracle",)).status)
         self.assertEqual(x.snapshot_identity, self.observer.observe_repository(root).snapshot.snapshot_identity); self.patch_executor.cleanup(context)
 
+    def test_containment_required_unregistered_case_fails_closed_and_descriptors_reject_shell(self):
+        _, context, y = self.prepared()
+        try:
+            descriptor = self.descriptor("C03-visible", containment_required=True)
+            run = DescriptorValidationExecutor({"C03-visible": descriptor}).run_validation(context, y, "C03-visible", ("C03-visible",))
+            self.assertEqual(ValidationStatus.VALIDATION_CONTAINMENT_UNAVAILABLE, run.status)
+            with self.assertRaises(ValueError):
+                self.descriptor("unsafe", ("-B", "check.py; id"))
+        finally:
+            self.patch_executor.cleanup(context)
+
 if __name__ == "__main__": unittest.main()

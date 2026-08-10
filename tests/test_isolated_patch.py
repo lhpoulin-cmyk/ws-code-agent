@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from pathlib import Path
 import shutil
 import subprocess
@@ -163,6 +164,59 @@ class IsolatedPatchTests(unittest.TestCase):
         self.assertEqual(ApplicationStatus.PATCH_REJECTED, bad.status)
         self.assertEqual(context.initial_snapshot.snapshot_identity, self.observer.observe_repository(context.isolated_root).snapshot.snapshot_identity)
         self.executor.cleanup(context)
+
+    def test_dangling_symlink_and_git_metadata_targets_are_denied(self) -> None:
+        os.symlink("missing-target", self.root / "src" / "dangling.py")
+        git(self.root, "add", "src/dangling.py")
+        commit_all(self.root, "dangling symlink")
+        source_x = self.observer.observe_repository(self.root).snapshot
+        context = self.executor.build_isolated_copy(source_x)
+        try:
+            dangling = self.executor.apply_patch_isolated(
+                context, self.proposal(source_x, patch("src/dangling.py", "x", "y"), ("src/dangling.py",)), ("src/dangling.py",)
+            )
+            self.assertEqual(ApplicationStatus.SYMLINK_DENIED, dangling.status)
+            git_config = self.executor.apply_patch_isolated(
+                context, self.proposal(source_x, patch(".git/config", "x", "y"), (".git/config",)), (".git/config",)
+            )
+            self.assertEqual(ApplicationStatus.PATH_ESCAPE_DENIED, git_config.status)
+        finally:
+            self.executor.cleanup(context)
+
+    def test_header_target_mismatch_scope_and_repository_binding_are_denied(self) -> None:
+        source_x = self.observer.observe_repository(self.root).snapshot
+        context = self.executor.build_isolated_copy(source_x)
+        try:
+            mismatch = (
+                b"diff --git a/src/app.py b/src/app.py\n--- a/src/app.py\n+++ b/operator.txt\n"
+                b"@@ -1 +1 @@\n-operator base\n+bad\n"
+            )
+            result = self.executor.apply_patch_isolated(context, self.proposal(source_x, mismatch, ("src/app.py",)), ("src/app.py",))
+            self.assertEqual(ApplicationStatus.PATCH_REJECTED, result.status)
+            valid = self.proposal(source_x, patch("src/app.py", "value = 'base'", "value = 'patched'"))
+            foreign = replace(valid, target_repository_identity="another-repository")
+            self.assertEqual(ApplicationStatus.REPOSITORY_MISMATCH, self.executor.apply_patch_isolated(context, foreign, ("src/app.py",)).status)
+        finally:
+            self.executor.cleanup(context)
+
+    def test_ambiguous_cleanup_and_reconstruction_mismatch_fail_closed(self) -> None:
+        source_x = self.observer.observe_repository(self.root).snapshot
+        context = self.executor.build_isolated_copy(source_x)
+        try:
+            with self.assertRaises(Exception):
+                self.executor.cleanup(replace(context, isolated_root=str(self.root / "not-the-workspace-child")))
+        finally:
+            self.executor.cleanup(context)
+
+        class CorruptingExecutor(IsolatedPatchExecutor):
+            @staticmethod
+            def _copy_material_path(source, destination, relative):
+                target = destination / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"corrupt\n")
+
+        with self.assertRaises(Exception):
+            CorruptingExecutor(self.observer).build_isolated_copy(source_x)
 
     def test_c03_dirty_index_and_untracked_state_reconstruct_and_survive_patch(self) -> None:
         (self.root / "operator.txt").write_bytes(b"staged operator work\n")

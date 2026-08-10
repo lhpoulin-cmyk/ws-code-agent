@@ -30,6 +30,7 @@ class DeclaredRepository:
     snapshot: RepositorySnapshot
     allowed_read_scopes: tuple[str, ...]
     allowed_patch_paths: tuple[str, ...]
+    change_required: bool = True
 
     def __post_init__(self) -> None:
         if not self.alias or not self.allowed_read_scopes:
@@ -93,12 +94,13 @@ class MultiRepositoryDispositionHarness:
         return self._propose_patch(repository, arguments["patch"], tuple(arguments["proposed_paths"]))
 
     def aggregate_status(self, steps: tuple[MultiRepositoryStep, ...]) -> str:
-        """C05 is incomplete unless every declared repository has an accepted effect."""
+        """Completion is bound to required effects, not mere repository declaration."""
         accepted = {
             step.repository_alias for step in steps
             if step.application is not None and step.application.status is ApplicationStatus.SUCCESS
         }
-        return "COMPLETE" if accepted == {repository.alias for repository in self.task.repositories} else "INCOMPLETE"
+        required = {repository.alias for repository in self.task.repositories if repository.change_required}
+        return "COMPLETE" if required <= accepted else "INCOMPLETE"
 
     def _read(self, repository: DeclaredRepository, path: str) -> MultiRepositoryStep:
         if not _in_scope(path, repository.allowed_read_scopes):

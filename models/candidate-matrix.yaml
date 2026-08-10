@@ -12,11 +12,10 @@ katra:
     paths:
       - nodes/hv-katra/README.md
       - nodes/hv-katra/HARDWARE.md
-  discovered_endpoint_reference:
-    path: nodes/ws-matriarch/config/docwriter-backends.yaml
+  historical_endpoint_reference:
     value: Katra RTX 5070 Ti
-    authority_note: This is a discovered Doc Writer endpoint reference, not a
-      current hardware observation.
+    authority_note: Historical endpoint information only; not a current
+      coding-agent backend or hardware observation.
   required_before_execution: Observe peer-authoritative Katra hardware, RAM,
     VRAM, driver/runtime, Ollama version, and host health immediately before run.
 

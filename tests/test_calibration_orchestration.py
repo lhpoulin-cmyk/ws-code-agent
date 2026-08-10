@@ -231,6 +231,29 @@ class CalibrationOrchestrationTests(unittest.TestCase):
         finally:
             harness.close()
 
+    def test_aggregate_uses_required_change_set_and_never_claims_correctness(self) -> None:
+        harness, _ = self.c05_harness("C05-A")
+        try:
+            repo_a = harness.task.repository("repo-a")
+            repo_b = harness.task.repository("repo-b")
+            task = MultiRepositoryTask("only-a-required", (
+                DeclaredRepository("repo-a", repo_a.snapshot, (".",), ("src/feature.py",), change_required=True),
+                DeclaredRepository("repo-b", repo_b.snapshot, (".",), (), change_required=False),
+            ))
+            only_a = MultiRepositoryDispositionHarness(task, self.observer, self.patcher)
+            try:
+                accepted = only_a.step(request("PROPOSE_PATCH", {
+                    "repository": "repo-a", "patch": patch("src/feature.py", "enabled = False", "enabled = True"), "proposed_paths": ["src/feature.py"],
+                }))
+                self.assertEqual("COMPLETE", only_a.aggregate_status((accepted,)))
+                rendered = json.dumps(accepted.projection).lower()
+                self.assertNotIn("correct", rendered)
+                self.assertNotIn("validated", rendered)
+            finally:
+                only_a.close()
+        finally:
+            harness.close()
+
 
 if __name__ == "__main__":
     unittest.main()

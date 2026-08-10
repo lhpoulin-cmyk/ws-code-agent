@@ -10,10 +10,11 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch as mock_patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ws_code_agent.contained_validation import ORACLE_SOURCE, ORACLE_STAGE_ROOT, SystemdContainedValidationRunner, WRAPPER
+from ws_code_agent.contained_validation import ContainmentUnavailable, ORACLE_SOURCE, ORACLE_STAGE_ROOT, SystemdContainedValidationRunner, WRAPPER
 from ws_code_agent.isolated_patch import IsolatedPatchExecutor, PatchProposal
 from ws_code_agent.readonly_executor import ReadOnlyExecutor
 from ws_code_agent.validation import DescriptorValidationExecutor, ValidationDescriptor, ValidationRole, ValidationStatus
@@ -59,9 +60,25 @@ class ContainedValidationTests(unittest.TestCase):
         self.assertEqual("SUCCESS", applied.status.value)
         return x, context, applied.result_snapshot
 
+    @staticmethod
+    def _stage_names() -> set[Path]:
+        return set(ORACLE_STAGE_ROOT.glob("run-*")) if ORACLE_STAGE_ROOT.exists() else set()
+
+    def _synthetic_oracle(self, body: str) -> Path:
+        oracle = Path(self.tmp.name) / "synthetic-private-oracle.py"
+        oracle.write_text(body, encoding="utf-8")
+        return oracle
+
+    @staticmethod
+    def _oracle_descriptor(oracle: Path, timeout: float = 10) -> ValidationDescriptor:
+        return ValidationDescriptor(
+            "C01-oracle", "v1", "/usr/bin/python3", ("-B", str(oracle)), ".", timeout,
+            ValidationRole.HIDDEN_ORACLE, True, containment_required=True,
+        )
+
     def test_c01_visible_and_hidden_oracle_are_contained(self) -> None:
         x, context, y = self._prepared()
-        stages_before = set(ORACLE_STAGE_ROOT.glob("run-*")) if ORACLE_STAGE_ROOT.exists() else set()
+        stages_before = self._stage_names()
         try:
             visible = ValidationDescriptor("C01-visible", "v1", "/usr/bin/python3", ("-B", "-m", "unittest", "discover", "-s", "tests"), ".", 10, ValidationRole.VISIBLE, True, containment_required=True)
             hidden = ValidationDescriptor("C01-oracle", "v1", "/usr/bin/python3", ("-B", str(ORACLE_SOURCE)), ".", 10, ValidationRole.HIDDEN_ORACLE, True, containment_required=True)
@@ -77,8 +94,59 @@ class ContainedValidationTests(unittest.TestCase):
             self.assertEqual(x.snapshot_identity, self.observer.observe_repository(self.root).snapshot.snapshot_identity)
         finally:
             self.patcher.cleanup(context)
-        stages_after = set(ORACLE_STAGE_ROOT.glob("run-*")) if ORACLE_STAGE_ROOT.exists() else set()
+        stages_after = self._stage_names()
         self.assertEqual(stages_before, stages_after)
+
+    def test_hidden_oracle_projection_is_single_artifact_and_private_paths_are_hidden(self) -> None:
+        _, context, y = self._prepared()
+        oracle = self._synthetic_oracle(
+            "import errno, os, socket\n"
+            "from pathlib import Path\n"
+            "assert [item.name for item in Path('/run/ws-code-agent/oracle').iterdir()] == ['oracle.py']\n"
+            "assert Path('/run/ws-code-agent/oracle/oracle.py').is_file()\n"
+            "for path in ('/home/louis/.local/share/ws-code-agent/alpha-private', '/home/louis/lab-root-trust', '/home/louis/src/ws-code-agent'):\n"
+            " try: os.stat(path)\n"
+            " except OSError: pass\n"
+            " else: raise AssertionError(path)\n"
+            "socket.socket(socket.AF_UNIX, socket.SOCK_STREAM).close()\n"
+            "for family in (socket.AF_INET, socket.AF_INET6):\n"
+            " try: socket.socket(family, socket.SOCK_STREAM)\n"
+            " except OSError as error: assert error.errno == errno.EAFNOSUPPORT\n"
+            " else: raise AssertionError(family)\n",
+        )
+        stages_before = self._stage_names()
+        try:
+            descriptor = self._oracle_descriptor(oracle)
+            run = DescriptorValidationExecutor({"C01-oracle": descriptor}, self.observer, SystemdContainedValidationRunner(oracle_source=oracle)).run_validation(context, y, "C01-oracle", ("C01-oracle",))
+            self.assertEqual(ValidationStatus.VALIDATION_PASS, run.status, run.stderr)
+        finally:
+            self.patcher.cleanup(context)
+        self.assertEqual(stages_before, self._stage_names())
+
+    def test_oracle_stage_cleanup_after_failure_timeout_and_launcher_error(self) -> None:
+        _, context, y = self._prepared()
+        stages_before = self._stage_names()
+        try:
+            failed = self._synthetic_oracle("raise SystemExit(7)\n")
+            descriptor = self._oracle_descriptor(failed)
+            run = DescriptorValidationExecutor({"C01-oracle": descriptor}, self.observer, SystemdContainedValidationRunner(oracle_source=failed)).run_validation(context, y, "C01-oracle", ("C01-oracle",))
+            self.assertEqual(ValidationStatus.VALIDATION_FAIL, run.status, run.stderr)
+            self.assertEqual(stages_before, self._stage_names())
+
+            timed_out = self._synthetic_oracle("import time\ntime.sleep(30)\n")
+            descriptor = self._oracle_descriptor(timed_out, timeout=0.3)
+            run = DescriptorValidationExecutor({"C01-oracle": descriptor}, self.observer, SystemdContainedValidationRunner(oracle_source=timed_out)).run_validation(context, y, "C01-oracle", ("C01-oracle",))
+            self.assertEqual(ValidationStatus.VALIDATION_TIMEOUT, run.status, run.stderr)
+            self.assertEqual(stages_before, self._stage_names())
+
+            launcher_error = self._synthetic_oracle("raise SystemExit(0)\n")
+            descriptor = self._oracle_descriptor(launcher_error)
+            with mock_patch("ws_code_agent.contained_validation.subprocess.run", side_effect=OSError("launcher unavailable")):
+                with self.assertRaises(ContainmentUnavailable):
+                    SystemdContainedValidationRunner(oracle_source=launcher_error).run(context, descriptor)
+            self.assertEqual(stages_before, self._stage_names())
+        finally:
+            self.patcher.cleanup(context)
 
     def test_contained_timeout_reaps_descendant_and_collects_unit(self) -> None:
         (self.root / "tests" / "test_timeout.py").write_text(

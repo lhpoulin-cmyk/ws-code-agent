@@ -9,6 +9,7 @@ from .readonly_executor import (
     RepositorySnapshot,
     SearchMatch,
 )
+from .isolated_patch import ApplicationStatus, IsolatedPatchExecutor, PatchProposal
 
 __all__ = [
     "CompareResult",
@@ -18,4 +19,7 @@ __all__ = [
     "ReadOnlyExecutor",
     "RepositorySnapshot",
     "SearchMatch",
+    "ApplicationStatus",
+    "IsolatedPatchExecutor",
+    "PatchProposal",
 ]

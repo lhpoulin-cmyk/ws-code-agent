@@ -18,6 +18,7 @@ from ws_code_agent.disposition_harness import (  # noqa: E402
     RequestParseError,
     parse_request,
 )
+from ws_code_agent.executor_feedback import bounded_executor_feedback  # noqa: E402
 from ws_code_agent.readonly_executor import ReadOnlyExecutor  # noqa: E402
 
 
@@ -142,7 +143,7 @@ class DispositionHarnessTests(unittest.TestCase):
     def test_executor_feedback_redacts_host_and_private_paths(self) -> None:
         harness = self.harness()
         try:
-            feedback = harness._executor_feedback("EXECUTOR_ERROR", {
+            feedback = bounded_executor_feedback("EXECUTOR_ERROR", {
                 "detail": "/home/louis/lab-root-trust/token failed in /tmp/isolated-run",
                 "stderr": "/home/louis/.local/share/ws-code-agent/alpha-private/oracle.py "+
                           "/home/louis/src/ws-code-agent/src/private.py",

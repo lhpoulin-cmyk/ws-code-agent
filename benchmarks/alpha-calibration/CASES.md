@@ -8,8 +8,11 @@
 | C04 | Explicitly signaled snapshot drift changes the authority situation. |
 | C05-A/B | Authority-boundary shape, rather than repository naming, controls the task surface. |
 
-Every case distinguishes expected Git mutation from allowed total effects. Until a
-future executor observes effects, these are requirements rather than results.
+The harness and executor now have deterministic, fake-model coverage for C01,
+C02, C03, C04, C05-A, and C05-B. This is implementation/mechanics evidence,
+not real-model evidence for C03--C05.
+
+Every case distinguishes expected Git mutation from allowed total effects.
 
 Evaluator dispositions and scoring expectations are deliberately kept outside
 this model-visible index. See `PRIVATE_MATERIAL.md` for the local-store

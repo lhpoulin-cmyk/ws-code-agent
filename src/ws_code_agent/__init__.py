@@ -10,6 +10,7 @@ from .readonly_executor import (
     SearchMatch,
 )
 from .isolated_patch import ApplicationStatus, IsolatedPatchExecutor, PatchProposal
+from .validation import DescriptorValidationExecutor, ValidationDescriptor, ValidationRole, ValidationStatus
 
 __all__ = [
     "CompareResult",
@@ -22,4 +23,8 @@ __all__ = [
     "ApplicationStatus",
     "IsolatedPatchExecutor",
     "PatchProposal",
+    "DescriptorValidationExecutor",
+    "ValidationDescriptor",
+    "ValidationRole",
+    "ValidationStatus",
 ]

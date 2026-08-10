@@ -255,16 +255,17 @@ class IsolatedPatchExecutor:
             for parent in (candidate.parent, *candidate.parents):
                 if parent == root.parent:
                     break
-                if parent.exists() and parent.is_symlink():
+                if os.path.lexists(parent) and parent.is_symlink():
                     raise self._error("APPLY_PATCH_ISOLATED", ApplicationStatus.SYMLINK_DENIED, relative, None)
                 if parent == root:
                     break
-            if candidate.exists() and candidate.is_symlink():
+            if os.path.lexists(candidate) and candidate.is_symlink():
                 raise self._error("APPLY_PATCH_ISOLATED", ApplicationStatus.SYMLINK_DENIED, relative, None)
 
     @staticmethod
     def _patch_paths(patch: bytes) -> set[str]:
         paths: set[str] = set()
+        target_paths: set[str] = set()
         for line in patch.decode("utf-8", errors="strict").splitlines():
             if line.startswith("diff --git "):
                 parts = line.split(" ")
@@ -275,9 +276,19 @@ class IsolatedPatchExecutor:
                     paths.update((left, right))
                 else:
                     paths.add(left)
-        if not paths:
+            elif line.startswith("+++ "):
+                value = line[4:].split("\t", 1)[0]
+                if value != "/dev/null":
+                    if not value.startswith("b/"):
+                        raise ValueError("unsupported patch target syntax")
+                    target_paths.add(value[2:])
+            elif line.startswith("--- "):
+                value = line[4:].split("\t", 1)[0]
+                if value != "/dev/null" and not value.startswith("a/"):
+                    raise ValueError("unsupported patch source syntax")
+        if not paths or not target_paths or not target_paths <= paths:
             raise ValueError("patch contains no supported diff header")
-        return paths
+        return target_paths
 
     @staticmethod
     def _safe_cleanup(workspace: Path, source: Path) -> None:

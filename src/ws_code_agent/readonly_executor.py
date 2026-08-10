@@ -200,6 +200,8 @@ class ReadOnlyExecutor:
 
     def read_file(self, snapshot: RepositorySnapshot, relative_path: str) -> ReadResult:
         operation = "READ_FILE"
+        if self.compare_snapshot(snapshot).status is not CompareStatus.MATCH:
+            raise self._error(operation, "STATE_STALE", "bound snapshot is stale", snapshot.snapshot_identity)
         path = self._resolve_inside(snapshot, relative_path, operation)
         try:
             if not path.is_file():
@@ -229,6 +231,8 @@ class ReadOnlyExecutor:
         result_limit: int = 100,
     ) -> SearchResult:
         operation = "SEARCH"
+        if self.compare_snapshot(snapshot).status is not CompareStatus.MATCH:
+            raise self._error(operation, "STATE_STALE", "bound snapshot is stale", snapshot.snapshot_identity)
         if not isinstance(literal, str) or not literal:
             raise self._error(operation, "MALFORMED_SEARCH_REQUEST", "literal must be non-empty", snapshot.snapshot_identity)
         if not isinstance(result_limit, int) or result_limit < 1 or result_limit > 1000:

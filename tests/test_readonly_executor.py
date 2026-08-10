@@ -150,6 +150,7 @@ class ReadOnlyExecutorTests(unittest.TestCase):
         outside = Path(self.temporary_directory.name) / "outside.txt"
         outside.write_text("outside\n", encoding="utf-8")
         os.symlink(outside, self.root / "outside-link")
+        snapshot = self.observe()
         with self.assertRaises(ExecutorOperationError) as raised:
             self.executor.read_file(snapshot, "outside-link")
         self.assertEqual("PATH_ESCAPE_DENIED", raised.exception.fact.error_classification)

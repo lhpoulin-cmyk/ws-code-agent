@@ -15,3 +15,14 @@ a durable harness result may be committed without a new inference. An
 interruption during executor processing is explicitly `INVALIDATED`, never
 guessed or retried. Case metadata persists C04 transition state and C05
 authority mappings rather than recalculating them from a live filesystem.
+
+Task 10E uses the fixed registry in `alpha_case_adapters.py`. Each family owns
+fresh C03/C04/C05 workspaces. Serialized snapshots are verified against live
+workspaces before inference; committed successful patches are replayed by the
+executor to reconstruct isolated effects. C04's transition has a separate
+atomic marker, and C05's alias/capability map is persisted rather than inferred
+from variant names during resume.
+
+The bounded operator entrypoint is `tools/run_alpha_experiment.py` with
+`start-task10e`, `status`, and one-turn `step` commands. Unknown cases are not
+loadable and case progression is enforced by committed case status.

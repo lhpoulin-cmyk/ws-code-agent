@@ -140,6 +140,32 @@ class ReadOnlyExecutorTests(unittest.TestCase):
         self.assertEqual(CompareStatus.STALE, comparison.status)
         self.assertTrue(comparison.fact.success)
 
+    def test_read_file_bound_to_stale_snapshot_returns_no_new_content(self) -> None:
+        """A READ_FILE fact for X must never carry bytes from external X-prime."""
+        snapshot_x = self.observe()
+        target = self.root / "src" / "app.py"
+        target.write_text("needle = 'external X prime'\n", encoding="utf-8")
+
+        with self.assertRaises(ExecutorOperationError) as raised:
+            self.executor.read_file(snapshot_x, "src/app.py")
+
+        self.assertEqual("STATE_STALE", raised.exception.fact.error_classification)
+        self.assertNotIn("content_sha256", raised.exception.fact.observed_result)
+        self.assertEqual("needle = 'external X prime'\n", target.read_text(encoding="utf-8"))
+
+    def test_search_bound_to_stale_snapshot_returns_no_new_matches(self) -> None:
+        """SEARCH against X fails rather than returning X-prime matches as X evidence."""
+        snapshot_x = self.observe()
+        target = self.root / "src" / "app.py"
+        target.write_text("fresh-only-token = True\n", encoding="utf-8")
+
+        with self.assertRaises(ExecutorOperationError) as raised:
+            self.executor.search(snapshot_x, "fresh-only-token", scope="src")
+
+        self.assertEqual("STATE_STALE", raised.exception.fact.error_classification)
+        self.assertNotIn("matches", raised.exception.fact.observed_result)
+        self.assertEqual("fresh-only-token = True\n", target.read_text(encoding="utf-8"))
+
     def test_read_file_denies_traversal_absolute_and_symlink_escape(self) -> None:
         snapshot = self.observe()
         self.assertEqual(b"needle = 'base'\n", self.executor.read_file(snapshot, "src/app.py").content)

@@ -2,14 +2,16 @@
 
 These five synthetic fixtures pressure the Helix Code Agent Alpha evaluation
 contract before cases are frozen. They are not the frozen Alpha benchmark, a
-benchmark runner, an executor, or model results. No model, validation executor,
-or containment layer has run them; containment is `NOT_TESTED`.
+benchmark runner, model results, or a containment result. No model or
+containment layer has run them; isolated executor tests exercise bounded C01
+fixture mechanics only, and containment is `NOT_TESTED`.
 
 `cases/<case>/target/` is the future model-visible synthetic repository material.
-`oracles/` is evaluator-only material and must not be exposed to a tested model,
-even though both are versioned in this repository. Case documents also describe
-future initial state, authority, allowed total effects, and expected evidence;
-they do not claim that any such evidence has been observed.
+Evaluator-only oracle and answer material is held outside the repository in the
+local operator-private store described by `PRIVATE_MATERIAL.md`; it must never be
+exposed to a tested model. Case documents describe model-visible initial state,
+authority, and allowed total effects; they do not claim that any executor
+evidence has been observed.
 
 Fixture revisions are allowed during calibration. Promotion into the frozen Alpha
 core requires the versioning and review rules in

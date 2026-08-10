@@ -1,9 +1,12 @@
 from __future__ import annotations
 import sys
+import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -24,6 +27,15 @@ class DescriptorValidationTests(unittest.TestCase):
         (self.root / "src").mkdir(); (self.root / "src" / "app.py").write_text("value = 'base'\n"); (self.root / "check.py").write_text("print('ok')\n")
         (self.root / "fail.py").write_text("import sys\nprint('diagnostic', file=sys.stderr)\nsys.exit(3)\n")
         (self.root / "timeout.py").write_text("import time\ntime.sleep(2)\n")
+        (self.root / "spawn_descendant.py").write_text(
+            "import os\nimport subprocess\nimport sys\nimport time\n"
+            "from pathlib import Path\n"
+            "child = subprocess.Popen([sys.executable, '-B', '-c', 'import time; time.sleep(30)'])\n"
+            "Path('parent.pid').write_text(str(os.getpid()), encoding='utf-8')\n"
+            "Path('descendant.pid').write_text(str(child.pid), encoding='utf-8')\n"
+            "print(f'descendant={child.pid}', flush=True)\n"
+            "time.sleep(30)\n"
+        )
         (self.root / "write.py").write_text("open('generated.txt', 'w').write('x')\n")
         commit(self.root)
         self.observer, self.patch_executor = ReadOnlyExecutor(), IsolatedPatchExecutor()
@@ -56,6 +68,40 @@ class DescriptorValidationTests(unittest.TestCase):
         # Timeout/fail did not mutate Y; the write descriptor then proves exit 0 is not clean validation.
         effect = executor.run_validation(context, y, "write", ("write",)); self.assertEqual(ValidationStatus.EFFECT_VIOLATION, effect.status); self.assertTrue((root / "generated.txt").exists())
         self.assertEqual(x.snapshot_identity, self.observer.observe_repository(self.root).snapshot.snapshot_identity); self.patch_executor.cleanup(context)
+
+    def test_timeout_reaps_descendant_process_group(self):
+        """A timed-out validation cannot leave its child alive in the executor group."""
+        x, context, y = self.prepared()
+        root = Path(context.isolated_root)
+        executor = DescriptorValidationExecutor({
+            "tree-timeout": self.descriptor("tree-timeout", ("-B", "spawn_descendant.py"), timeout_seconds=0.3),
+        })
+        descendant_pid = None
+        try:
+            run = executor.run_validation(context, y, "tree-timeout", ("tree-timeout",))
+            self.assertEqual(ValidationStatus.VALIDATION_TIMEOUT, run.status)
+            self.assertTrue(run.timed_out)
+            self.assertIn("descendant=", run.stdout)
+            parent_pid = int((root / "parent.pid").read_text(encoding="utf-8"))
+            descendant_pid = int((root / "descendant.pid").read_text(encoding="utf-8"))
+            deadline = time.monotonic() + 2
+            while self._process_is_running(descendant_pid) and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertFalse(self._process_is_running(descendant_pid), "descendant survived timeout cleanup")
+            self.assertFalse(self._process_is_running(parent_pid), "direct validation process survived timeout cleanup")
+            self.assertEqual(x.snapshot_identity, self.observer.observe_repository(self.root).snapshot.snapshot_identity)
+        finally:
+            if descendant_pid is not None and self._process_is_running(descendant_pid):
+                os.kill(descendant_pid, signal.SIGKILL)
+            self.patch_executor.cleanup(context)
+
+    @staticmethod
+    def _process_is_running(pid):
+        stat = Path(f"/proc/{pid}/stat")
+        if not stat.exists():
+            return False
+        fields = stat.read_text(encoding="utf-8").split()
+        return len(fields) > 2 and fields[2] != "Z"
     def test_c01_visible_and_hidden_oracle_pass_without_authoritative_mutation(self):
         fixture = Path(__file__).resolve().parents[1] / "benchmarks/alpha-calibration/cases/C01-simple-patch/target"; shutil.copytree(fixture, self.root / "c01"); root = self.root / "c01"; git(root, "init", "-q"); commit(root)
         x = self.observer.observe_repository(root).snapshot; context = self.patch_executor.build_isolated_copy(x)

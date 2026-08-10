@@ -127,6 +127,29 @@ class IsolatedPatchTests(unittest.TestCase):
             self.assertEqual(source_x.snapshot_identity, self.observer.observe_repository(self.root).snapshot.snapshot_identity)
         self.executor.cleanup(context)
 
+    def test_header_target_mismatch_is_denied_before_patch_application(self) -> None:
+        """The actual +++ target, not an allowed diff header, controls scope."""
+        source_x = self.observer.observe_repository(self.root).snapshot
+        context = self.executor.build_isolated_copy(source_x)
+        mismatched = (
+            b"diff --git a/src/app.py b/src/app.py\n"
+            b"--- a/src/app.py\n"
+            b"+++ b/operator.txt\n"
+            b"@@ -1 +1 @@\n"
+            b"-operator base\n"
+            b"+forbidden change\n"
+        )
+        proposal = self.proposal(source_x, mismatched, ("operator.txt",))
+        result = self.executor.apply_patch_isolated(context, proposal, ("src/app.py",))
+        self.assertEqual(ApplicationStatus.PATCH_REJECTED, result.status)
+        self.assertIn("supported diff header", result.fact.observed_result["detail"])
+        self.assertEqual(
+            context.initial_snapshot.snapshot_identity,
+            self.observer.observe_repository(context.isolated_root).snapshot.snapshot_identity,
+        )
+        self.assertEqual(source_x.snapshot_identity, self.observer.observe_repository(self.root).snapshot.snapshot_identity)
+        self.executor.cleanup(context)
+
     def test_symlink_escape_and_context_mismatch_are_rejected(self) -> None:
         outside = Path(self.temporary.name) / "outside.txt"
         outside.write_text("outside\n", encoding="utf-8")

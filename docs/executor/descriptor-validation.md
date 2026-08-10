@@ -15,6 +15,12 @@ Hidden oracle source remains outside the isolated model-visible target tree.
 Descriptors require no network, but OS-level network and child-process
 containment remain unproven.
 
+Validation executes model-influenced code and is not general production
+containment. Before any model run, its host environment must be unprivileged and
+disposable, free of production secrets, SSH-agent access, and cloud/API
+credentials, with network denial enforced operationally. A future Task 10 packet
+must verify those host conditions before inference.
+
 > Task 9 proves bounded execution of predeclared validation descriptors against
 > isolated repository state and causal attribution of their results. It does not
 > yet prove general process, child-process, filesystem, or network containment

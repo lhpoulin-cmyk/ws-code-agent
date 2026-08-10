@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 WRAPPER = Path("/usr/local/libexec/ws-code-agent-contained-validation")
 ORACLE_SOURCE = Path("/home/louis/.local/share/ws-code-agent/alpha-private/C01-oracle.py")
-ORACLE_STAGE_ROOT = Path("/run/user/1000/ws-code-agent-validation-oracle")
+ORACLE_STAGE_ROOT = Path("/run/ws-code-agent-validation/oracle-staging")
 
 
 class ContainmentUnavailable(RuntimeError):
@@ -51,28 +51,29 @@ class SystemdContainedValidationRunner:
                    "--root", str(root), "--timeout-seconds", str(descriptor.timeout_seconds)]
         stage: Path | None = None
         oracle_digest = ""
-        if descriptor.descriptor_id == "C01-visible":
-            expected = ("-B", "-m", "unittest", "discover", "-s", "tests")
-            if descriptor.arguments != expected:
-                raise ContainmentUnavailable("C01 visible descriptor does not match the fixed contained command")
-        elif descriptor.descriptor_id == "C01-oracle":
-            if descriptor.arguments != ("-B", str(self._oracle_source)) or not self._oracle_source.is_file():
-                raise ContainmentUnavailable("C01 oracle descriptor does not match the fixed staged oracle")
-            ORACLE_STAGE_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
-            stage = Path(tempfile.mkdtemp(prefix="run-", dir=ORACLE_STAGE_ROOT))
-            oracle = stage / "oracle.py"
-            oracle_digest = hashlib.sha256(self._oracle_source.read_bytes()).hexdigest()
-            shutil.copyfile(self._oracle_source, oracle)
-            if hashlib.sha256(oracle.read_bytes()).hexdigest() != oracle_digest:
-                raise ContainmentUnavailable("staged oracle digest mismatch")
-            if tuple(path.name for path in stage.iterdir()) != ("oracle.py",):
-                raise ContainmentUnavailable("oracle stage is not single-artifact")
-            os.chmod(oracle, 0o444)
-            os.chmod(stage, 0o555)
-            command.extend(("--oracle-dir", str(stage)))
-        else:
-            raise ContainmentUnavailable("descriptor is not approved for contained Task 10A validation")
         try:
+            if descriptor.descriptor_id == "C01-visible":
+                expected = ("-B", "-m", "unittest", "discover", "-s", "tests")
+                if descriptor.arguments != expected:
+                    raise ContainmentUnavailable("C01 visible descriptor does not match the fixed contained command")
+            elif descriptor.descriptor_id == "C01-oracle":
+                if descriptor.arguments != ("-B", str(self._oracle_source)) or not self._oracle_source.is_file():
+                    raise ContainmentUnavailable("C01 oracle descriptor does not match the fixed staged oracle")
+                if not ORACLE_STAGE_ROOT.is_dir():
+                    raise ContainmentUnavailable("ws-cp oracle staging root unavailable")
+                stage = Path(tempfile.mkdtemp(prefix="run-", dir=ORACLE_STAGE_ROOT))
+                oracle = stage / "oracle.py"
+                oracle_digest = hashlib.sha256(self._oracle_source.read_bytes()).hexdigest()
+                shutil.copyfile(self._oracle_source, oracle)
+                if hashlib.sha256(oracle.read_bytes()).hexdigest() != oracle_digest:
+                    raise ContainmentUnavailable("staged oracle digest mismatch")
+                if tuple(path.name for path in stage.iterdir()) != ("oracle.py",):
+                    raise ContainmentUnavailable("oracle stage is not single-artifact")
+                os.chmod(oracle, 0o444)
+                os.chmod(stage, 0o555)
+                command.extend(("--oracle-dir", str(stage)))
+            else:
+                raise ContainmentUnavailable("descriptor is not approved for contained Task 10A validation")
             process = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      timeout=descriptor.timeout_seconds + 5, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:

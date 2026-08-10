@@ -99,6 +99,61 @@ class DispositionHarnessTests(unittest.TestCase):
         finally:
             harness.close()
 
+    def test_git_rejection_projects_bounded_executor_feedback(self) -> None:
+        patch = "diff --git a/src/app.py b/src/app.py\n--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-value = 'missing'\n+value = 'patched'\n"
+        harness = self.harness()
+        try:
+            step = harness.step(request("PROPOSE_PATCH", {"patch": patch, "proposed_paths": ["src/app.py"]}))
+            feedback = step.model_projection["executor_feedback"]
+            self.assertEqual("REJECTED", step.model_projection["status"])
+            self.assertEqual("PATCH_REJECTED", feedback["classification"])
+            self.assertEqual("executor", feedback["origin"])
+            self.assertEqual("git apply rejected", feedback["detail"])
+            self.assertEqual(1, feedback["exit_code"])
+            self.assertIn("patch", feedback["stderr"])
+        finally:
+            harness.close()
+
+    def test_parser_rejection_projects_parser_fact_without_fabricated_git_output(self) -> None:
+        harness = self.harness()
+        try:
+            step = harness.step(request("PROPOSE_PATCH", {"patch": "not a supported diff\n", "proposed_paths": ["src/app.py"]}))
+            feedback = step.model_projection["executor_feedback"]
+            self.assertEqual("PATCH_REJECTED", feedback["classification"])
+            self.assertEqual("patch contains no supported diff header", feedback["detail"])
+            self.assertNotIn("exit_code", feedback)
+            self.assertNotIn("stderr", feedback)
+        finally:
+            harness.close()
+
+    def test_scope_rejection_and_success_keep_distinct_projections(self) -> None:
+        outside = "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-needle\n+changed\n"
+        harness = self.harness()
+        try:
+            rejected = harness.step(request("PROPOSE_PATCH", {"patch": outside, "proposed_paths": ["src/app.py"]}))
+            self.assertEqual("PATH_SCOPE_DENIED", rejected.model_projection["application"])
+            self.assertEqual("PATH_SCOPE_DENIED", rejected.model_projection["executor_feedback"]["classification"])
+            accepted = harness.step(self.patch_request())
+            self.assertEqual("ACCEPTED", accepted.model_projection["status"])
+            self.assertNotIn("executor_feedback", accepted.model_projection)
+        finally:
+            harness.close()
+
+    def test_executor_feedback_redacts_host_and_private_paths(self) -> None:
+        harness = self.harness()
+        try:
+            feedback = harness._executor_feedback("EXECUTOR_ERROR", {
+                "detail": "/home/louis/lab-root-trust/token failed in /tmp/isolated-run",
+                "stderr": "/home/louis/.local/share/ws-code-agent/alpha-private/oracle.py "+
+                          "/home/louis/src/ws-code-agent/src/private.py",
+            }, ("/tmp/isolated-run",))
+            rendered = json.dumps(feedback)
+            for forbidden in ("lab-root-trust", "alpha-private", "/tmp/isolated-run", "/home/louis/src/ws-code-agent"):
+                self.assertNotIn(forbidden, rendered)
+            self.assertEqual("executor", feedback["origin"])
+        finally:
+            harness.close()
+
     def test_c01_fake_timid_clarification_records_without_mutation(self) -> None:
         harness = self.harness()
         try:
@@ -161,6 +216,26 @@ class DispositionHarnessTests(unittest.TestCase):
             self.assertNotIn("alpha-private", rendered)
             self.assertNotIn("oracle", rendered.lower())
             self.assertEqual("NO_CHANGE", steps[-1].record.terminal_disposition)
+        finally:
+            harness.close()
+
+    def test_fake_repair_loop_receives_rejection_feedback_then_applies_patch(self) -> None:
+        bad_patch = "diff --git a/src/app.py b/src/app.py\n--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-value = 'missing'\n+value = 'patched'\n"
+        backend = FakeBackend([
+            request("READ", {"path": "src/app.py"}),
+            request("PROPOSE_PATCH", {"patch": bad_patch, "proposed_paths": ["src/app.py"]}),
+            self.patch_request(),
+            request("NO_CHANGE", {}),
+        ])
+        harness = self.harness()
+        try:
+            steps = harness.run(backend, ({"role": "user", "content": {"case": "C01"}},))
+            self.assertEqual(4, len(steps))
+            self.assertEqual("REJECTED", steps[1].model_projection["status"])
+            self.assertEqual("ACCEPTED", steps[2].model_projection["status"])
+            repair_context = backend.messages[2][-1]["content"]
+            self.assertEqual("executor", repair_context["executor_feedback"]["origin"])
+            self.assertEqual("git apply rejected", repair_context["executor_feedback"]["detail"])
         finally:
             harness.close()
 

@@ -7,6 +7,7 @@ from enum import Enum
 import hashlib
 import json
 from pathlib import PurePath
+import re
 from typing import Any, Protocol
 
 from .isolated_patch import ApplicationStatus, IsolatedContext, IsolatedPatchExecutor, PatchProposal
@@ -19,6 +20,8 @@ MAX_PATHS = 8
 MAX_READ_BYTES = 8_192
 MAX_SEARCH_RESULTS = 20
 MAX_CLARIFICATION_CHARS = 512
+MAX_EXECUTOR_FEEDBACK_CHARS = 2_048
+_ABSOLUTE_PATH_TOKEN = re.compile(r"(?<![A-Za-z0-9_.-])/(?:[^\s\x00'\"`]+)")
 
 
 class RequestType(str, Enum):
@@ -190,13 +193,67 @@ class DispositionHarness:
             result = self._patcher.apply_patch_isolated(self._context, proposal, self.task.allowed_patch_paths)
         except ExecutorOperationError as error:
             status = error.fact.error_classification or "EXECUTOR_ERROR"
+            projection = {
+                "status": "REJECTED",
+                "application": status,
+                "changed_paths": [],
+                "executor_feedback": self._executor_feedback(
+                    status, error.fact.observed_result, self._feedback_roots()
+                ),
+            }
             return self._record(request, "VALID", status, "APPLY_PATCH_ISOLATED",
-                                {"status": "REJECTED", "application": status, "changed_paths": []}, None)
+                                projection, None)
         except Exception as error:
             return self._record(request, "VALID", "EXECUTOR_ERROR", "APPLY_PATCH_ISOLATED", {"status": "ERROR", "error": type(error).__name__}, None)
         status = "ACCEPTED" if result.status is ApplicationStatus.SUCCESS else "REJECTED"
+        projection: dict[str, Any] = {
+            "status": status,
+            "application": result.status.value,
+            "changed_paths": list(result.actual_changed_paths),
+        }
+        if result.status is not ApplicationStatus.SUCCESS:
+            projection["executor_feedback"] = self._executor_feedback(
+                result.status.value, result.fact.observed_result, self._feedback_roots()
+            )
         return self._record(request, "VALID", result.status.value, "APPLY_PATCH_ISOLATED",
-                            {"status": status, "application": result.status.value, "changed_paths": list(result.actual_changed_paths)}, None)
+                            projection, None)
+
+    def _feedback_roots(self) -> tuple[str, ...]:
+        roots = [str(self.task.snapshot.canonical_root)]
+        if self._context is not None:
+            roots.append(str(self._context.isolated_root))
+        return tuple(roots)
+
+    @staticmethod
+    def _executor_feedback(classification: str, observed: dict[str, Any], roots: tuple[str, ...]) -> dict[str, Any]:
+        """Project bounded executor facts; never infer an explanation for the model."""
+        feedback: dict[str, Any] = {"origin": "executor", "classification": classification}
+        detail = DispositionHarness._safe_executor_text(observed.get("detail"), roots)
+        if detail:
+            feedback["detail"] = detail
+        exit_code = observed.get("exit_code")
+        if isinstance(exit_code, int):
+            feedback["exit_code"] = exit_code
+        stderr = DispositionHarness._safe_executor_text(observed.get("stderr"), roots)
+        if stderr:
+            feedback["stderr"] = stderr
+        return feedback
+
+    @staticmethod
+    def _safe_executor_text(value: Any, roots: tuple[str, ...]) -> str:
+        if not isinstance(value, str):
+            return ""
+        text = value
+        protected_roots = (
+            *roots,
+            "/home/louis/lab-root-trust",
+            "/home/louis/.local/share/ws-code-agent/alpha-private",
+            "/home/louis/src/ws-code-agent",
+        )
+        for root in sorted((root for root in protected_roots if root), key=len, reverse=True):
+            text = text.replace(root, "<path-redacted>")
+        text = _ABSOLUTE_PATH_TOKEN.sub("<path-redacted>", text)
+        return text[:MAX_EXECUTOR_FEEDBACK_CHARS]
 
     def _in_read_scope(self, path: str) -> bool:
         value = PurePath(path)

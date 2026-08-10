@@ -61,7 +61,7 @@ class DescriptorValidationTests(unittest.TestCase):
         x = self.observer.observe_repository(root).snapshot; context = self.patch_executor.build_isolated_copy(x)
         content = b'diff --git a/src/parity.py b/src/parity.py\n--- a/src/parity.py\n+++ b/src/parity.py\n@@ -1,3 +1,3 @@\n def is_even(number: int) -> bool:\n     """Return whether number is even."""\n-    return number % 2 == 1\n+    return number % 2 == 0\n'
         applied = self.patch_executor.apply_patch_isolated(context, PatchProposal.create(x, content, ("src/parity.py",)), ("src/parity.py",)); y = applied.result_snapshot
-        oracle = Path(__file__).resolve().parents[1] / "benchmarks/alpha-calibration/oracles/C01-simple-patch/oracle.py"
+        oracle = Path.home() / ".local/share/ws-code-agent/alpha-private/C01-oracle.py"
         visible = self.descriptor("C01-visible", ("-B", "-m", "unittest", "discover", "-s", "tests"))
         hidden = ValidationDescriptor("C01-oracle", "v1", sys.executable, ("-B", str(oracle)), ".", 1, ValidationRole.HIDDEN_ORACLE, True, isolated_pythonpath=True)
         executor = DescriptorValidationExecutor({"C01-visible": visible, "C01-oracle": hidden})

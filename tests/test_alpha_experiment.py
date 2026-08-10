@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ws_code_agent.alpha_experiment import AlphaExperimentController, ExperimentError
 from ws_code_agent.katra_ollama_backend import KatraOllamaDispositionBackend, RuntimeTurnEvidence
+from ws_code_agent.request_protocol import SINGLE_REPOSITORY_PROTOCOL, SINGLE_REPOSITORY_PROTOCOL_ID
 
 
 @dataclass
@@ -20,10 +21,10 @@ class FakeBackend:
     calls: int = 0
     stop_after_capture: bool = False
 
-    def invocation_for(self, messages, invocation_id):
-        return KatraOllamaDispositionBackend.invocation_for(messages, invocation_id)
+    def invocation_for(self, messages, invocation_id, *, protocol):
+        return KatraOllamaDispositionBackend.invocation_for(messages, invocation_id, protocol=protocol)
 
-    def generate(self, messages, *, invocation, evidence_sink):
+    def generate(self, messages, *, protocol, invocation, evidence_sink):
         self.calls += 1
         raw = self.replies.pop(0)
         evidence_sink.capture_response(raw, RuntimeTurnEvidence(hashlib.sha256(raw.encode()).hexdigest(), f"job-{self.calls}", "digest", "Q4_K_M", "gpu-primary-partial", "GPU_PRIMARY_PARTIAL_OFFLOAD", 20, 80, "20%/80% CPU/GPU", "", ""))
@@ -34,8 +35,8 @@ class FakeBackend:
 
 class IdempotentRemoteBackend:
     def __init__(self, raw): self.raw=raw; self.executions=0; self.invocations={}; self.disconnect_once=True
-    def invocation_for(self,messages,invocation_id): return KatraOllamaDispositionBackend.invocation_for(messages,invocation_id)
-    def generate(self,messages,*,invocation,evidence_sink):
+    def invocation_for(self,messages,invocation_id,*,protocol): return KatraOllamaDispositionBackend.invocation_for(messages,invocation_id,protocol=protocol)
+    def generate(self,messages,*,protocol,invocation,evidence_sink):
         if invocation.invocation_id not in self.invocations:
             self.executions+=1; self.invocations[invocation.invocation_id]=self.raw
             if self.disconnect_once: self.disconnect_once=False; raise ConnectionError("client disappeared after remote success")
@@ -50,7 +51,7 @@ def processor(case, raw):
 
 class AlphaExperimentTests(unittest.TestCase):
     def start(self, directory: Path, case_id="C03"):
-        return AlphaExperimentController.start(directory, {"experiment_id": "family", "experiment_harness_sha": "test", "case_order": [case_id]}, ({"case_id": case_id, "interaction_id": "i", "fixture_identity": "fixture", "initial_snapshot_identity": "X", "turn_limit": 3, "conversation": [{"role": "user", "content": {"case": case_id}}], "case_state": {"transition": "NOT_APPLIED", "authority": {"repo-a": "DENIED"}}},))
+        return AlphaExperimentController.start(directory, {"experiment_id": "family", "experiment_harness_sha": "test", "case_order": [case_id]}, ({"case_id": case_id, "interaction_id": "i", "protocol_id": SINGLE_REPOSITORY_PROTOCOL_ID, "fixture_identity": "fixture", "initial_snapshot_identity": "X", "turn_limit": 3, "conversation": [{"role": "user", "content": {"case": case_id}}], "case_state": {"transition": "NOT_APPLIED", "authority": {"repo-a": "DENIED"}}},))
 
     def test_raw_response_is_durable_before_recovery_and_never_regenerated(self):
         with tempfile.TemporaryDirectory() as directory:

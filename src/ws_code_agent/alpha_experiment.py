@@ -15,6 +15,7 @@ import tempfile
 from typing import Any, Callable, Mapping, Protocol
 
 from .katra_ollama_backend import InferenceInvocation, KatraOllamaDispositionBackend, ResponseEvidenceSink, RuntimeTurnEvidence
+from .request_protocol import ProtocolSpec, protocol_by_id
 
 
 class ExperimentError(RuntimeError):
@@ -22,8 +23,8 @@ class ExperimentError(RuntimeError):
 
 
 class TurnBackend(Protocol):
-    def generate(self, messages: tuple[dict[str, Any], ...], *, invocation: InferenceInvocation, evidence_sink: ResponseEvidenceSink) -> str: ...
-    def invocation_for(self, messages: tuple[dict[str, Any], ...], invocation_id: str) -> InferenceInvocation: ...
+    def generate(self, messages: tuple[dict[str, Any], ...], *, protocol: ProtocolSpec, invocation: InferenceInvocation, evidence_sink: ResponseEvidenceSink) -> str: ...
+    def invocation_for(self, messages: tuple[dict[str, Any], ...], invocation_id: str, *, protocol: ProtocolSpec) -> InferenceInvocation: ...
 
 
 Processor = Callable[[dict[str, Any], str], Mapping[str, Any]]
@@ -157,6 +158,10 @@ class AlphaExperimentController:
         if case["case_status"] not in {"READY", "ACTIVE"}: raise ExperimentError("case may not advance")
         if case["turn_committed"] >= case["turn_limit"]: raise ExperimentError("turn limit reached")
         turn = case["turn_committed"] + 1
+        try:
+            protocol=protocol_by_id(case["protocol_id"])
+        except (KeyError, ValueError) as error:
+            raise ExperimentError("case request protocol is not registered") from error
         case["case_status"] = "ACTIVE"
         case["pending_turn"] = {"phase": "TURN_STARTED", "turn": turn}
         self._write_case(case)
@@ -164,18 +169,24 @@ class AlphaExperimentController:
         material=f"{self.root.name}\0{case_id}\0{case['interaction_id']}\0{turn}\0{family['experiment_harness_sha']}"
         suffix=hashlib.sha256(material.encode()).hexdigest()
         invocation_id=f"alpha-{hashlib.sha256(self.root.name.encode()).hexdigest()[:12]}-{case_id}-t{turn:04d}-{suffix[:12]}"
-        invocation=backend.invocation_for(tuple(case["conversation"]), invocation_id)
-        case["pending_turn"]={"phase":"INFERENCE_INTENT_DURABLE","turn":turn,"invocation_id":invocation.invocation_id,"prompt_sha256":invocation.prompt_sha256,"model":"qwen3-coder:30b","execution_policy":"gpu-primary-partial","remote_response":f"evidence/invocations/{invocation.invocation_id}/response.txt"}
+        invocation=backend.invocation_for(tuple(case["conversation"]), invocation_id, protocol=protocol)
+        case["pending_turn"]={"phase":"INFERENCE_INTENT_DURABLE","turn":turn,"invocation_id":invocation.invocation_id,"prompt_sha256":invocation.prompt_sha256,"protocol_id":protocol.protocol_id,"model":"qwen3-coder:30b","execution_policy":"gpu-primary-partial","remote_response":f"evidence/invocations/{invocation.invocation_id}/response.txt"}
         self._write_case(case)
         return self._invoke_intent(case, backend, processor)
 
     def _invoke_intent(self, case: dict[str, Any], backend: TurnBackend, processor: Processor) -> dict[str, Any]:
         pending=case["pending_turn"]; turn=pending["turn"]
+        try:
+            protocol=protocol_by_id(pending["protocol_id"])
+        except (KeyError, ValueError) as error:
+            raise ExperimentError("durable inference protocol is not registered") from error
+        if case.get("protocol_id") != protocol.protocol_id:
+            raise ExperimentError("durable inference protocol mismatch")
         invocation=InferenceInvocation(pending["invocation_id"],pending["prompt_sha256"])
         sink = _Sink(self, case, turn)
         # Any backend cleanup happens only after ``capture_response`` returns.
         try:
-            backend.generate(tuple(case["conversation"]), invocation=invocation, evidence_sink=sink)
+            backend.generate(tuple(case["conversation"]), protocol=protocol, invocation=invocation, evidence_sink=sink)
         except Exception as error:
             raise
         return self._recover(self._case(case["case_id"]), processor)

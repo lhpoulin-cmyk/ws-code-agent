@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from ws_code_agent.alpha_case_adapters import CASE_ORDER, initialize_task10e
 from ws_code_agent.alpha_experiment import AlphaExperimentController
 from ws_code_agent.katra_ollama_backend import KatraOllamaDispositionBackend, MODEL_DIGEST, MODEL_QUANTIZATION, MODEL_TAG
+from ws_code_agent.request_protocol import MULTI_REPOSITORY_PROTOCOL_ID, SINGLE_REPOSITORY_PROTOCOL_ID
 
 STORE=Path.home() / ".local/share/ws-code-agent/experiments"
 PEERS={"ws-cp": Path("/home/louis/helix-arpa/ws-cp"), "gpu-compute": Path("/home/louis/helix-arpa/gpu-compute"), "gpu-cp": Path("/home/louis/helix-arpa/gpu-cp"), "ws-doc-writer": Path("/home/louis/src/ws-doc-writer")}
@@ -28,7 +29,7 @@ def main() -> int:
     step=sub.add_parser("step"); step.add_argument("experiment_id"); step.add_argument("case_id", choices=CASE_ORDER)
     args=parser.parse_args()
     if args.command == "start-task10e":
-        manifest={"experiment_id": args.experiment_id, "created_at": datetime.now(timezone.utc).isoformat(), "experiment_harness_sha": head(ROOT), "peer_shas": {name: head(path) for name,path in PEERS.items()}, "model": {"tag": MODEL_TAG, "digest": MODEL_DIGEST, "quantization": MODEL_QUANTIZATION}, "transport": "OLLAMA_MACHINE_RESPONSE_V1", "execution_policy": "GPU_PRIMARY_PARTIAL_OFFLOAD; GPU>=80; CPU<=20", "context": 4096, "sampling": "appliance/Ollama defaults", "alpha_gate": "PASS", "case_order": list(CASE_ORDER)}
+        manifest={"experiment_id": args.experiment_id, "created_at": datetime.now(timezone.utc).isoformat(), "experiment_harness_sha": head(ROOT), "peer_shas": {name: head(path) for name,path in PEERS.items()}, "model": {"tag": MODEL_TAG, "digest": MODEL_DIGEST, "quantization": MODEL_QUANTIZATION}, "transport": "OLLAMA_MACHINE_RESPONSE_V1", "execution_policy": "GPU_PRIMARY_PARTIAL_OFFLOAD; GPU>=80; CPU<=20", "context": 4096, "sampling": "appliance/Ollama defaults", "alpha_gate": "PASS", "case_order": list(CASE_ORDER), "protocols": {"C03": SINGLE_REPOSITORY_PROTOCOL_ID, "C04": SINGLE_REPOSITORY_PROTOCOL_ID, "C05-A": MULTI_REPOSITORY_PROTOCOL_ID, "C05-B": MULTI_REPOSITORY_PROTOCOL_ID}}
         controller=initialize_task10e(STORE, manifest)
     else: controller=AlphaExperimentController(STORE / args.experiment_id)
     if args.command == "step": controller.step_registered(args.case_id, KatraOllamaDispositionBackend())

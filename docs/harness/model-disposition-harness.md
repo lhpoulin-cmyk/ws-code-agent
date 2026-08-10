@@ -19,6 +19,13 @@ executor containment.
 
 ## Request surface
 
+The active harness owns an immutable model-visible protocol. Single-repository
+cases use `WS_CODE_AGENT_REQUEST_PROTOCOL_V1_SINGLE`; multi-repository cases
+use `WS_CODE_AGENT_REQUEST_PROTOCOL_V1_MULTI_REPO`. The backend renders the
+selected protocol but does not choose, broaden, or reinterpret it. Each
+protocol contains exact legal JSON examples and the strict parser derives its
+required argument names from that same definition.
+
 Executor-backed requests are `READ(path)`, `SEARCH(literal, scope)`, and
 `PROPOSE_PATCH(patch, proposed_paths)`. They are checked against a
 repository-bound snapshot and task path scope. Reads and search use the
@@ -48,6 +55,11 @@ local search matches, or patch acceptance/rejection and observed changed paths.
 Stale state is projected explicitly. Raw `ExecutorFact` objects, host paths,
 private-store paths, evaluator scores, validation identities, oracle content,
 and oracle output are not projected.
+
+`PROPOSE_PATCH.patch` is a standard unified Git diff compatible with the
+strict isolated `git apply` path; it is not whole-file replacement content.
+The model-visible protocol includes a neutral syntax example without fixture
+source or expected answers.
 
 ## Backend and provenance
 

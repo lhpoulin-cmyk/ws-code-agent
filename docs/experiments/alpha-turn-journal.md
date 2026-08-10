@@ -23,6 +23,11 @@ executor to reconstruct isolated effects. C04's transition has a separate
 atomic marker, and C05's alias/capability map is persisted rather than inferred
 from variant names during resume.
 
+Each case also persists its registered request-protocol ID. C03/C04 bind the
+single-repository contract; C05-A/C05-B bind the repository-qualified contract.
+The protocol ID is included in durable inference intent so a restart cannot
+silently render a different request surface.
+
 The bounded operator entrypoint is `tools/run_alpha_experiment.py` with
 `start-task10e`, `status`, and one-turn `step` commands. Unknown cases are not
 loadable and case progression is enforced by committed case status.

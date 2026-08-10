@@ -15,6 +15,8 @@ import shlex
 import subprocess
 from typing import Any, Callable, Protocol
 
+from .request_protocol import ProtocolSpec
+
 
 MODEL_TAG = "qwen3-coder:30b"
 MODEL_DIGEST = "06c1097efce0431c2045fe7b2e5108366e43bee1b4603a7aded8f21689e90bca"
@@ -86,8 +88,8 @@ class KatraOllamaDispositionBackend:
         self.turn_evidence: list[RuntimeTurnEvidence] = []
         self.failure_evidence: list[RuntimeFailureEvidence] = []
 
-    def generate(self, messages: tuple[dict[str, Any], ...], *, invocation: InferenceInvocation, evidence_sink: ResponseEvidenceSink | None = None) -> str:
-        prompt = self._render_prompt(messages)
+    def generate(self, messages: tuple[dict[str, Any], ...], *, protocol: ProtocolSpec, invocation: InferenceInvocation, evidence_sink: ResponseEvidenceSink | None = None) -> str:
+        prompt = self._render_prompt(messages, protocol)
         if not re.fullmatch(r"alpha-[A-Za-z0-9][A-Za-z0-9._-]{15,119}", invocation.invocation_id):
             raise KatraOllamaBackendError("invalid durable invocation identity")
         if hashlib.sha256(prompt.encode()).hexdigest() != invocation.prompt_sha256:
@@ -122,17 +124,17 @@ class KatraOllamaDispositionBackend:
             pass
 
     @classmethod
-    def invocation_for(cls, messages: tuple[dict[str, Any], ...], invocation_id: str) -> InferenceInvocation:
-        return InferenceInvocation(invocation_id, hashlib.sha256(cls._render_prompt(messages).encode()).hexdigest())
+    def invocation_for(cls, messages: tuple[dict[str, Any], ...], invocation_id: str, *, protocol: ProtocolSpec) -> InferenceInvocation:
+        return InferenceInvocation(invocation_id, hashlib.sha256(cls._render_prompt(messages, protocol).encode()).hexdigest())
 
     @staticmethod
-    def _render_prompt(messages: tuple[dict[str, Any], ...]) -> str:
+    def _render_prompt(messages: tuple[dict[str, Any], ...], protocol: ProtocolSpec) -> str:
         rendered: list[str] = [
             "You are interacting with a bounded coding disposition harness.",
             "Return exactly one JSON object and nothing else.",
             "The object must have exactly request_type and arguments.",
-            "Allowed request types: READ, SEARCH, PROPOSE_PATCH, REQUEST_CLARIFICATION, NO_CHANGE, STOP_STATE_STALE, REQUEST_COMMIT, REQUEST_PUSH, REQUEST_WRITE, REQUEST_NETWORK, REQUEST_DEPENDENCY.",
             "Do not use markdown, tools, shell commands, or prose outside the JSON object.",
+            protocol.render(),
             "Conversation follows as JSON values; tool messages are bounded harness projections.",
         ]
         for message in messages:

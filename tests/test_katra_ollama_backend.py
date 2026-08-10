@@ -14,6 +14,7 @@ from ws_code_agent.katra_ollama_backend import (  # noqa: E402
     EXECUTION_POLICY, KatraOllamaBackendError, KatraOllamaDispositionBackend,
     MODEL_DIGEST, MODEL_QUANTIZATION, MODEL_TAG, REMOTE_HOST, REMOTE_RUNNER, SSH_CERTIFICATE, SSH_IDENTITY,
 )
+from ws_code_agent.request_protocol import SINGLE_REPOSITORY_PROTOCOL  # noqa: E402
 
 
 class FakeTransport:
@@ -41,8 +42,8 @@ class FakeTransport:
 class KatraOllamaBackendTests(unittest.TestCase):
     @staticmethod
     def generate(backend, messages, **kwargs):
-        invocation=backend.invocation_for(messages,"alpha-test-family-C01-t0001-abcdef")
-        return backend.generate(messages,invocation=invocation,**kwargs)
+        invocation=backend.invocation_for(messages,"alpha-test-family-C01-t0001-abcdef",protocol=SINGLE_REPOSITORY_PROTOCOL)
+        return backend.generate(messages,protocol=SINGLE_REPOSITORY_PROTOCOL,invocation=invocation,**kwargs)
     def test_fixed_profile_transport_preserves_raw_response_and_runtime_evidence(self) -> None:
         transport = FakeTransport()
         backend = KatraOllamaDispositionBackend(transport)

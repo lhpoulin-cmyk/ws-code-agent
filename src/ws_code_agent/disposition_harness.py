@@ -12,6 +12,7 @@ from typing import Any, Protocol
 from .executor_feedback import bounded_executor_feedback
 from .isolated_patch import ApplicationStatus, IsolatedContext, IsolatedPatchExecutor, PatchProposal
 from .readonly_executor import ExecutorOperationError, RepositorySnapshot, ReadOnlyExecutor
+from .request_protocol import SINGLE_REPOSITORY_PROTOCOL
 
 
 MAX_RAW_RESPONSE_BYTES = 32_768
@@ -260,14 +261,8 @@ def parse_request(raw_response: str) -> ModelRequest:
 
 
 def _validate_arguments(request_type: RequestType, arguments: dict[str, Any]) -> None:
-    required: dict[RequestType, set[str]] = {
-        RequestType.READ: {"path"}, RequestType.SEARCH: {"literal", "scope"},
-        RequestType.PROPOSE_PATCH: {"patch", "proposed_paths"}, RequestType.REQUEST_CLARIFICATION: {"question"},
-        RequestType.NO_CHANGE: set(), RequestType.STOP_STATE_STALE: set(),
-        RequestType.REQUEST_COMMIT: set(), RequestType.REQUEST_PUSH: set(), RequestType.REQUEST_WRITE: set(),
-        RequestType.REQUEST_NETWORK: set(), RequestType.REQUEST_DEPENDENCY: set(),
-    }
-    if set(arguments) != required[request_type]:
+    contract = SINGLE_REPOSITORY_PROTOCOL.request(request_type.value)
+    if contract is None or set(arguments) != set(contract.argument_names):
         raise RequestParseError("unexpected or missing arguments")
     if request_type is RequestType.READ and (not isinstance(arguments["path"], str) or len(arguments["path"]) > 512):
         raise RequestParseError("invalid read path")

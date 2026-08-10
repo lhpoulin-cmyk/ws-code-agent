@@ -17,8 +17,8 @@ def patch(path, old, new): return f"diff --git a/{path} b/{path}\n--- a/{path}\n
 
 class FakeBackend:
     def __init__(self, raw): self.raw=raw; self.calls=0
-    def invocation_for(self, messages, invocation_id): return KatraOllamaDispositionBackend.invocation_for(messages,invocation_id)
-    def generate(self, messages, *, invocation, evidence_sink):
+    def invocation_for(self, messages, invocation_id, *, protocol): return KatraOllamaDispositionBackend.invocation_for(messages,invocation_id,protocol=protocol)
+    def generate(self, messages, *, protocol, invocation, evidence_sink):
         self.calls+=1; evidence_sink.capture_response(self.raw, RuntimeTurnEvidence(hashlib.sha256(self.raw.encode()).hexdigest(),f"job-{self.calls}","d","Q4_K_M","gpu-primary-partial","GPU_PRIMARY_PARTIAL_OFFLOAD",20,80,"20%/80% CPU/GPU","","")); return self.raw
 
 class AdapterTests(unittest.TestCase):

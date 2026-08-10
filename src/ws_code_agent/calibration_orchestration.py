@@ -15,6 +15,7 @@ from typing import Any, Mapping
 from .executor_feedback import bounded_executor_feedback
 from .isolated_patch import ApplicationStatus, IsolatedContext, IsolatedPatchExecutor, PatchApplicationResult, PatchProposal
 from .readonly_executor import ExecutorOperationError, ReadOnlyExecutor, RepositorySnapshot
+from .request_protocol import MULTI_REPOSITORY_PROTOCOL
 
 
 MAX_RAW_RESPONSE_BYTES = 32_768
@@ -188,13 +189,8 @@ def _parse_multi_repository_request(raw_response: str) -> tuple[str, dict[str, A
     if not isinstance(payload, dict) or set(payload) != {"request_type", "arguments"}:
         raise ValueError("response requires only request_type and arguments")
     request_type, arguments = payload["request_type"], payload["arguments"]
-    required = {
-        "READ": {"repository", "path"},
-        "SEARCH": {"repository", "literal", "scope"},
-        "PROPOSE_PATCH": {"repository", "patch", "proposed_paths"},
-        "NO_CHANGE": set(),
-    }
-    if request_type not in required or not isinstance(arguments, dict) or set(arguments) != required[request_type]:
+    contract = MULTI_REPOSITORY_PROTOCOL.request(request_type) if isinstance(request_type, str) else None
+    if contract is None or not isinstance(arguments, dict) or set(arguments) != set(contract.argument_names):
         raise ValueError("unsupported multi-repository request")
     if request_type != "NO_CHANGE" and (not isinstance(arguments["repository"], str) or not arguments["repository"]):
         raise ValueError("repository selector must be a declared alias")

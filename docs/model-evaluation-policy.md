@@ -1,6 +1,16 @@
 # Coding Model Evaluation Policy
 
-Status: **future evaluation policy; no model selected or pulled**
+Status: **active evaluation policy; no selected default**
+
+## Alpha v1 qualification
+
+The exact `qwen3-coder:30b` artifact with digest
+`06c1097efce0431c2045fe7b2e5108366e43bee1b4603a7aded8f21689e90bca`
+has completed Alpha v1. Its artifact-bound qualification permits
+`OBSERVE_ONLY`, `CLARIFY_AND_REPORT`, and `SUPERVISED_SINGLE_REPO`; autonomous
+single- and multi-repository operation are not qualified. See
+[`qwen3-coder-30b-alpha-v1.md`](qualification/qwen3-coder-30b-alpha-v1.md).
+This disposition does not select a default or authorize another model pull.
 
 ## Candidate tiers
 

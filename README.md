@@ -1,20 +1,24 @@
 # ws-code-agent
 
-`ws-code-agent` is an operator-authorized foundation for a locally governed,
-bounded coding-agent capability. It is a separate application authority derived
-architecturally from `ws-doc-writer`; it is not a conversion of Doc Writer into
-an autonomous coding agent, and no coding executor exists yet.
+`ws-code-agent` is an operator-authorized foundation and Alpha harness for a
+locally governed, bounded coding-agent capability. It is a separate application
+authority derived architecturally from `ws-doc-writer`; it is not a conversion
+of Doc Writer into an autonomous coding agent.
 
 The governing foundation contract is
 [`docs/contracts/CODING_AGENT_FOUNDATION_CONTRACT.md`](docs/contracts/CODING_AGENT_FOUNDATION_CONTRACT.md).
 
 ## Current status
 
-Foundation only. The contract, voice, agent, and escalation doctrine are in
-place. There is no executor, no capability-lease implementation, no coding
-schema, and no benchmark. The inherited Doc Writer implementation has been
-removed from the live tree; witnessed history and reusable references are
-preserved under `lineage/`. The test suite is intentionally empty.
+Alpha v1 is frozen and the executor/harness is qualified for model evaluation.
+The exact tested `qwen3-coder:30b` artifact has completed qualification for
+`OBSERVE_ONLY`, `CLARIFY_AND_REPORT`, and `SUPERVISED_SINGLE_REPO` operation;
+autonomous single- and multi-repository operation are not qualified. C05 is a
+confirmed model failure under explicit authority and effect-state semantics.
+See the [qualification statement](docs/qualification/qwen3-coder-30b-alpha-v1.md).
+
+The inherited Doc Writer implementation remains removed from the live tree;
+witnessed history and reusable references are preserved under `lineage/`.
 
 ## Foundation provenance
 
@@ -43,6 +47,7 @@ operator.
 - `config/` example runtime endpoint configuration
 - `models/` model candidate matrix by VRAM tier
 - `tools/` lineage verification
-- `src/` coding-agent implementation home (empty; none built yet)
-- `tests/` coding-agent tests (empty; none written yet)
+- `src/` bounded executor, harness, protocol, and durable experiment controller
+- `tests/` deterministic and real-containment Alpha regression coverage
+- `docs/qualification/` artifact-bound model qualification statements
 - `lineage/` inherited Doc Writer history and reference material (no authority)

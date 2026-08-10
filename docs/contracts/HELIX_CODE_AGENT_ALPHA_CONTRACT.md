@@ -1,6 +1,24 @@
 # Helix Code Agent Alpha Evaluation Contract
 
-Status: **operator-authorized evaluation design contract; no fixtures or execution authorized**
+Status: **Alpha v1 qualification baseline frozen**
+
+## Alpha v1 closeout addendum
+
+The design-phase language below is retained as doctrine and history. The
+operator-authorized Alpha v1 implementation is now frozen for qualification
+purposes with C01, C02, C03, C04, C05-A, and C05-B;
+`WS_CODE_AGENT_REQUEST_PROTOCOL_V1_SINGLE` and
+`WS_CODE_AGENT_REQUEST_PROTOCOL_V1_MULTI_REPO`; H5/H6; and E6/E7/E8/E9.
+
+The executor/harness is qualified for model evaluation within those boundaries.
+The exact tested Qwen artifact has completed qualification with the operating
+envelope recorded in
+[`qwen3-coder-30b-alpha-v1.md`](../qualification/qwen3-coder-30b-alpha-v1.md).
+Its C05 result remains `C05 GENUINE MODEL FAILURE CONFIRMED`.
+
+A model failure under the frozen harness does not automatically authorize
+another harness modification. Successor changes require independent evidence
+of an executor or interface defect and create a new qualification version.
 
 ## A. Purpose and boundary
 

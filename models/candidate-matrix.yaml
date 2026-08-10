@@ -101,6 +101,16 @@ candidates:
     source_references:
       - https://ollama.com/library/qwen3-coder:30b-a3b-q4_K_M
       - https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct
+    alpha_v1_qualification:
+      status: COMPLETED
+      tested_tag: qwen3-coder:30b
+      full_digest: 06c1097efce0431c2045fe7b2e5108366e43bee1b4603a7aded8f21689e90bca
+      context: 4096
+      runtime: QUALIFIED
+      operating_envelope: [OBSERVE_ONLY, CLARIFY_AND_REPORT, SUPERVISED_SINGLE_REPO]
+      autonomous_single_repository: NOT_QUALIFIED
+      autonomous_multi_repository: NOT_QUALIFIED
+      qualification: ../docs/qualification/qwen3-coder-30b-alpha-v1.yaml
 
   - id: qwen36-27b-q4
     status: CANDIDATE

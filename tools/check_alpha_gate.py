@@ -9,7 +9,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 REGISTER = ROOT / "docs/executor/adversarial-invariant-register.md"
-ROWS = ("P3", "P5", "P6", "S2", "S3", "S4", "V1", "V2", "V6", "T1", "T4", "X3", "X4", "M3", "M4", "R1", "G3")
+ROWS = ("P3", "P5", "P6", "S2", "S3", "S4", "V1", "V2", "V6", "T1", "T4", "X3", "X4", "M3", "M4", "R1", "E6", "G3")
 
 
 def run(*command: str) -> None:

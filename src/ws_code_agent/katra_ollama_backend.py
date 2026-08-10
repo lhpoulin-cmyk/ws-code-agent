@@ -15,7 +15,7 @@ import re
 import secrets
 import shlex
 import subprocess
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 
 MODEL_TAG = "qwen3-coder:30b"
@@ -67,6 +67,12 @@ class RuntimeFailureEvidence:
     stderr: str
 
 
+class ResponseEvidenceSink(Protocol):
+    """Trusted local evidence commit point, invoked before remote cleanup."""
+
+    def capture_response(self, raw_response: str, evidence: RuntimeTurnEvidence) -> None: ...
+
+
 class KatraOllamaDispositionBackend:
     """Text-only, exact-artifact backend for a single accepted Katra profile."""
 
@@ -75,9 +81,10 @@ class KatraOllamaDispositionBackend:
         self.turn_evidence: list[RuntimeTurnEvidence] = []
         self.failure_evidence: list[RuntimeFailureEvidence] = []
 
-    def generate(self, messages: tuple[dict[str, Any], ...]) -> str:
+    def generate(self, messages: tuple[dict[str, Any], ...], *, evidence_sink: ResponseEvidenceSink | None = None) -> str:
         prompt = self._render_prompt(messages)
         output = f"{REMOTE_TEMP_ROOT}/ws-code-agent-disposition-{secrets.token_hex(16)}.txt"
+        local_durable = evidence_sink is None
         try:
             run = self._ssh(self._runner_command(prompt, output), required=False)
             if run.returncode != 0:
@@ -95,13 +102,21 @@ class KatraOllamaDispositionBackend:
                 raise KatraOllamaBackendError("controlled inference output retrieval failed")
             evidence = self._fetch_evidence(job_id)
             text = raw.stdout.decode("utf-8", errors="strict")
-            self.turn_evidence.append(self._validate_evidence(text, job_id, evidence, run))
+            turn_evidence = self._validate_evidence(text, job_id, evidence, run)
+            # The remote output is disposable only after a trusted local sink
+            # has durably accepted the exact bytes and runtime evidence.
+            if evidence_sink is not None:
+                evidence_sink.capture_response(text, turn_evidence)
+                local_durable = True
+            self.turn_evidence.append(turn_evidence)
             return text
         except UnicodeDecodeError as error:
             raise KatraOllamaBackendError("model response was not UTF-8 text") from error
         finally:
-            # This is a fixed disposable response artifact, not a caller path.
-            self._ssh(("/usr/bin/rm", "-f", "--", output), required=False)
+            # On persistence failure leave the only raw-output copy available
+            # for operator recovery; an evidence sink owns later bounded cleanup.
+            if local_durable:
+                self._ssh(("/usr/bin/rm", "-f", "--", output), required=False)
 
     @staticmethod
     def _render_prompt(messages: tuple[dict[str, Any], ...]) -> str:

@@ -22,6 +22,7 @@ Task 10E triage. No row is `MISSING`.
 | M3 | COVERED | `test_aggregate_uses_required_change_set_and_never_claims_correctness` |
 | M4 | COVERED | `test_aggregate_uses_required_change_set_and_never_claims_correctness` |
 | R1 | COVERED | `test_active_tracked_tree_excludes_inherited_doc_writer_runtime_identity` |
+| E6 | COVERED | `test_raw_response_is_durable_before_recovery_and_never_regenerated`; `test_durable_sink_precedes_disposable_cleanup_and_failure_retains_output` |
 | G3 | PARTIAL | 2026-08-10: C03/C05 have no approved behavioral validators or private oracles. Unregistered `containment_required` descriptors fail closed; Task 10E must record `technical_validation = NOT_RUN` unless a future evaluator-owned descriptor is approved. |
 
 `ApplicationStatus.SUCCESS` / projected `ACCEPTED` means only isolated,

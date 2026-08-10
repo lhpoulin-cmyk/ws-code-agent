@@ -94,3 +94,22 @@ class KatraOllamaBackendTests(unittest.TestCase):
             KatraOllamaDispositionBackend(model="anything")  # type: ignore[call-arg]
         with self.assertRaises(KatraOllamaBackendError):
             KatraOllamaDispositionBackend().generate(({"role": "tool", "content": {}, "extra": True},))
+
+    def test_durable_sink_precedes_disposable_cleanup_and_failure_retains_output(self) -> None:
+        events: list[str] = []
+        class Sink:
+            def capture_response(self, raw_response, evidence):
+                events.append("durable:" + evidence.raw_sha256)
+        transport = FakeTransport()
+        KatraOllamaDispositionBackend(transport).generate(({"role": "user", "content": {}},), evidence_sink=Sink())
+        cleanup = next(index for index, call in enumerate(transport.calls) if shlex.split(call[-1])[0] == "/usr/bin/rm")
+        self.assertTrue(events)
+        self.assertGreater(cleanup, 0)
+
+        class FailingSink:
+            def capture_response(self, raw_response, evidence):
+                raise OSError("durable store unavailable")
+        transport = FakeTransport()
+        with self.assertRaises(OSError):
+            KatraOllamaDispositionBackend(transport).generate(({"role": "user", "content": {}},), evidence_sink=FailingSink())
+        self.assertFalse(any(shlex.split(call[-1])[0] == "/usr/bin/rm" for call in transport.calls))

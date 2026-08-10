@@ -37,6 +37,12 @@ _JOB_ID = re.compile(r"\[?(job-[0-9]{8}T[0-9]{6}Z-[0-9]+)\]?")
 class KatraOllamaBackendError(RuntimeError):
     """The fixed transport or runtime profile could not establish a turn."""
 
+    def __init__(self, message: str, *, exit_code: int | None = None, stdout: bytes = b"", stderr: bytes = b"") -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+        self.stdout = stdout.decode("utf-8", errors="replace")
+        self.stderr = stderr.decode("utf-8", errors="replace")
+
 
 @dataclass(frozen=True)
 class RuntimeTurnEvidence:
@@ -53,20 +59,36 @@ class RuntimeTurnEvidence:
     runner_stderr: str
 
 
+@dataclass(frozen=True)
+class RuntimeFailureEvidence:
+    stage: str
+    exit_code: int | None
+    stdout: str
+    stderr: str
+
+
 class KatraOllamaDispositionBackend:
     """Text-only, exact-artifact backend for a single accepted Katra profile."""
 
     def __init__(self, run_process: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run) -> None:
         self._run_process = run_process
         self.turn_evidence: list[RuntimeTurnEvidence] = []
+        self.failure_evidence: list[RuntimeFailureEvidence] = []
 
     def generate(self, messages: tuple[dict[str, Any], ...]) -> str:
         prompt = self._render_prompt(messages)
         output = f"{REMOTE_TEMP_ROOT}/ws-code-agent-disposition-{secrets.token_hex(16)}.txt"
         try:
-            run = self._ssh(self._runner_command(prompt, output))
+            run = self._ssh(self._runner_command(prompt, output), required=False)
             if run.returncode != 0:
-                raise KatraOllamaBackendError(f"controlled inference failed: exit {run.returncode}")
+                self.failure_evidence.append(RuntimeFailureEvidence(
+                    "controlled-run", run.returncode, run.stdout.decode("utf-8", errors="replace"),
+                    run.stderr.decode("utf-8", errors="replace"),
+                ))
+                raise KatraOllamaBackendError(
+                    f"controlled inference failed: exit {run.returncode}", exit_code=run.returncode,
+                    stdout=run.stdout, stderr=run.stderr,
+                )
             job_id = self._job_id(run.stdout)
             raw = self._ssh(("/usr/bin/cat", "--", output))
             if raw.returncode != 0:
@@ -110,7 +132,10 @@ class KatraOllamaDispositionBackend:
         )
         result = self._run_process(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
         if required and result.returncode != 0:
-            raise KatraOllamaBackendError(f"approved Katra transport failed: exit {result.returncode}")
+            raise KatraOllamaBackendError(
+                f"approved Katra transport failed: exit {result.returncode}", exit_code=result.returncode,
+                stdout=result.stdout, stderr=result.stderr,
+            )
         return result
 
     @staticmethod

@@ -71,8 +71,13 @@ class KatraOllamaBackendTests(unittest.TestCase):
         self.assertEqual(REMOTE_RUNNER, remote[0])
 
     def test_transport_failure_and_profile_violation_fail_closed(self) -> None:
-        with self.assertRaises(KatraOllamaBackendError):
-            KatraOllamaDispositionBackend(FakeTransport(fail_first=True)).generate(({"role": "user", "content": {}},))
+        failed = KatraOllamaDispositionBackend(FakeTransport(fail_first=True))
+        with self.assertRaises(KatraOllamaBackendError) as captured:
+            failed.generate(({"role": "user", "content": {}},))
+        self.assertEqual(255, captured.exception.exit_code)
+        self.assertEqual("transport failed", captured.exception.stderr)
+        self.assertEqual(1, len(failed.failure_evidence))
+        self.assertEqual("transport failed", failed.failure_evidence[0].stderr)
 
         class BadEvidence(FakeTransport):
             def __call__(self, command, **kwargs):

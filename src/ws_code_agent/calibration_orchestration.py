@@ -17,6 +17,11 @@ from .isolated_patch import ApplicationStatus, IsolatedContext, IsolatedPatchExe
 from .readonly_executor import ExecutorOperationError, ReadOnlyExecutor, RepositorySnapshot
 
 
+MAX_RAW_RESPONSE_BYTES = 32_768
+MAX_PATCH_BYTES = 16_384
+MAX_PATHS = 8
+MAX_SEARCH_RESULTS = 20
+
 @dataclass(frozen=True)
 class DeclaredRepository:
     """One immutable task-scoped repository capability, never a peer grant."""
@@ -83,6 +88,8 @@ class MultiRepositoryDispositionHarness:
             })
         if request_type == "READ":
             return self._read(repository, arguments["path"])
+        if request_type == "SEARCH":
+            return self._search(repository, arguments["literal"], arguments["scope"])
         return self._propose_patch(repository, arguments["patch"], tuple(arguments["proposed_paths"]))
 
     def aggregate_status(self, steps: tuple[MultiRepositoryStep, ...]) -> str:
@@ -141,6 +148,27 @@ class MultiRepositoryDispositionHarness:
             )
         return MultiRepositoryStep("PROPOSE_PATCH", repository.alias, result.status.value, "APPLY_PATCH_ISOLATED", projection, result)
 
+    def _search(self, repository: DeclaredRepository, literal: str, scope: str) -> MultiRepositoryStep:
+        if not _in_scope(scope, repository.allowed_read_scopes):
+            return self._denied("SEARCH", repository, "PATH_SCOPE_DENIED")
+        try:
+            result = self._observer.search(repository.snapshot, literal, scope=scope, result_limit=MAX_SEARCH_RESULTS)
+        except ExecutorOperationError as error:
+            status = error.fact.error_classification or "EXECUTOR_ERROR"
+            return MultiRepositoryStep("SEARCH", repository.alias, status, "SEARCH", {
+                "status": "STALE" if status == "STATE_STALE" else "ERROR",
+                "error": status,
+                **_repository_projection(repository),
+            })
+        return MultiRepositoryStep("SEARCH", repository.alias, "AUTHORIZED", "SEARCH", {
+            "status": "OK",
+            "matches": [
+                {"path": item.relative_path, "line": item.line_number, "text": item.line_text}
+                for item in result.matches
+            ],
+            **_repository_projection(repository),
+        })
+
     @staticmethod
     def _denied(request_type: str, repository: DeclaredRepository, classification: str) -> MultiRepositoryStep:
         return MultiRepositoryStep(request_type, repository.alias, classification, None, {
@@ -149,6 +177,8 @@ class MultiRepositoryDispositionHarness:
 
 
 def _parse_multi_repository_request(raw_response: str) -> tuple[str, dict[str, Any]]:
+    if not isinstance(raw_response, str) or len(raw_response.encode("utf-8")) > MAX_RAW_RESPONSE_BYTES:
+        raise ValueError("response is not a bounded UTF-8 string")
     try:
         payload = json.loads(raw_response)
     except (TypeError, json.JSONDecodeError) as error:
@@ -158,6 +188,7 @@ def _parse_multi_repository_request(raw_response: str) -> tuple[str, dict[str, A
     request_type, arguments = payload["request_type"], payload["arguments"]
     required = {
         "READ": {"repository", "path"},
+        "SEARCH": {"repository", "literal", "scope"},
         "PROPOSE_PATCH": {"repository", "patch", "proposed_paths"},
         "NO_CHANGE": set(),
     }
@@ -165,12 +196,20 @@ def _parse_multi_repository_request(raw_response: str) -> tuple[str, dict[str, A
         raise ValueError("unsupported multi-repository request")
     if request_type != "NO_CHANGE" and (not isinstance(arguments["repository"], str) or not arguments["repository"]):
         raise ValueError("repository selector must be a declared alias")
-    if request_type == "READ" and not isinstance(arguments["path"], str):
+    if request_type == "READ" and (not isinstance(arguments["path"], str) or len(arguments["path"]) > 512):
         raise ValueError("invalid read path")
+    if request_type == "SEARCH" and (
+        not isinstance(arguments["literal"], str) or not arguments["literal"] or len(arguments["literal"]) > 256
+        or not isinstance(arguments["scope"], str) or len(arguments["scope"]) > 512
+    ):
+        raise ValueError("invalid search request")
     if request_type == "PROPOSE_PATCH":
-        if not isinstance(arguments["patch"], str) or not isinstance(arguments["proposed_paths"], list) or not arguments["proposed_paths"]:
+        if (
+            not isinstance(arguments["patch"], str) or len(arguments["patch"].encode("utf-8")) > MAX_PATCH_BYTES
+            or not isinstance(arguments["proposed_paths"], list) or not 1 <= len(arguments["proposed_paths"]) <= MAX_PATHS
+        ):
             raise ValueError("invalid patch proposal")
-        if any(not isinstance(path, str) for path in arguments["proposed_paths"]):
+        if any(not isinstance(path, str) or len(path) > 512 for path in arguments["proposed_paths"]):
             raise ValueError("invalid proposed path")
     return request_type, arguments
 

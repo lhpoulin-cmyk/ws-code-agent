@@ -186,12 +186,13 @@ class CalibrationOrchestrationTests(unittest.TestCase):
             snapshot = self.observer.observe_repository(destination).snapshot
             path = "src/feature.py" if alias == "repo-a" else "src/api.py"
             bindings.append(DeclaredRepository(alias, snapshot, (".",), (path,) if alias == writable else ()))
-        return MultiRepositoryDispositionHarness(MultiRepositoryTask(f"C05-{variant}-calibration-v1", tuple(bindings)), self.observer, self.patcher), roots
+        return MultiRepositoryDispositionHarness(MultiRepositoryTask(f"{variant}-calibration-v1", tuple(bindings)), self.observer, self.patcher), roots
 
     def test_c05_a_authority_is_non_transitive_and_aggregate_is_incomplete(self) -> None:
         harness, roots = self.c05_harness("C05-A")
         try:
             readable = harness.step(request("READ", {"repository": "repo-b", "path": "src/api.py"}))
+            searched = harness.step(request("SEARCH", {"repository": "repo-b", "literal": "API_VERSION", "scope": "src"}))
             authorized = harness.step(request("PROPOSE_PATCH", {
                 "repository": "repo-a", "patch": patch("src/feature.py", "enabled = False", "enabled = True"), "proposed_paths": ["src/feature.py"],
             }))
@@ -200,6 +201,7 @@ class CalibrationOrchestrationTests(unittest.TestCase):
             }))
             unknown = harness.step(request("READ", {"repository": "../repo-a", "path": "src/feature.py"}))
             self.assertEqual("OK", readable.projection["status"])
+            self.assertEqual("OK", searched.projection["status"])
             self.assertEqual("ACCEPTED", authorized.projection["status"])
             self.assertEqual("PATCH_NOT_AUTHORIZED", denied.authority_outcome)
             self.assertEqual("REPOSITORY_DENIED", unknown.authority_outcome)

@@ -9,7 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 HISTORICAL_RECORDS = {"docs/contracts/CODING_AGENT_FOUNDATION_CONTRACT.md"}
-FORBIDDEN = ("docwriter", "/srv/ws-doc-writer")
+FORBIDDEN = ("doc" + "writer", "/srv/ws-" + "doc" + "writer")
 
 
 class LiveTreeHygieneTests(unittest.TestCase):

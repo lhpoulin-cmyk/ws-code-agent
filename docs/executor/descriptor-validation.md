@@ -11,9 +11,20 @@ snapshot before execution and capture after-state, executable path, argv, cwd,
 timing, exit, timeout, stdout, and stderr. Exit zero with an unexpected
 repository write is `EFFECT_VIOLATION`.
 
-Hidden oracle source remains outside the isolated model-visible target tree.
-Descriptors require no network, but OS-level network and child-process
-containment remain unproven.
+For the Task 10A C01 descriptors marked `containment_required`, direct process
+execution is not a fallback. They use the ws-cp fixed systemd transient-unit
+runner as `louis:louis`, with `PrivateNetwork=yes` and
+`RestrictAddressFamilies=AF_UNIX`. The unit receives a read-only isolated result
+tree. A hidden oracle receives only a fresh read-only staging directory bound at
+`/run/ws-code-agent/oracle`, containing exactly `oracle.py`; it never receives
+the evaluator-private root or its host-side path. The staging artifact digest,
+unit identity, uid/gid, network/address-family policy, and timeout result are
+retained as containment evidence. If that runner cannot establish containment,
+the result is `VALIDATION_CONTAINMENT_UNAVAILABLE`.
+
+This proves the specific Task 10A socket-family, private-path, read-only-result,
+process-tree, and single-artifact-oracle gates. It does not prove general
+production containment for arbitrary executable workloads.
 
 Validation executes model-influenced code and is not general production
 containment. Before any model run, its host environment must be unprivileged and

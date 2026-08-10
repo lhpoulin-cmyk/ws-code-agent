@@ -77,3 +77,10 @@ Before separately authorized inference, the execution packet must demonstrate:
 Failure to establish any gate blocks a model run. Production process,
 filesystem, child-process, and network containment remain unresolved separate
 work.
+
+Task 10A validation additionally requires contained C01 descriptors. Their
+evidence records the systemd transient mechanism, AF_UNIX-only address-family
+policy, private network, `louis:louis` identity, transient unit identity,
+read-only ResultSnapshot, and the hidden oracle's single-artifact staging
+projection. This is a host gate for the bounded experiment, not a production
+containment certification.

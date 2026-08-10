@@ -1,0 +1,7 @@
+diff --git a/README.md b/README.md
+index 87b3e32..e95ad86 100644
+--- a/README.md
++++ b/README.md
+@@ -3 +3 @@
+-This target starts at snapshot X.
++This target changed after snapshot X was observed.

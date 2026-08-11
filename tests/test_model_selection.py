@@ -152,6 +152,11 @@ class ModelSelectionTests(unittest.TestCase):
             "    processor_envelope: {minimum_gpu_percent: 71, maximum_cpu_percent: 29}",
             "    observed_vram_mib: 14634",
             "    effective_context: 4096",
+            "    status: APPARATUS_READY",
+            "    session_kind: QWEN25_32B_V2_SUPERVISED_PRODUCTION_ADMISSION",
+            "    operator_command: start-qwen25-32b-v2",
+            "    backend: Qwen25_32BKatraOllamaDispositionBackend",
+            "    model_visible_first_turn_equivalence: PASS",
             "  production_admission: NOT_EVALUATED",
         )
         self.assertTrue(all(value in selection for value in required_selection))
@@ -189,6 +194,12 @@ class ModelSelectionTests(unittest.TestCase):
             "      neutral_probes: 3",
             "      terminality: NORMAL_STOP_ALL_PROBES",
             "      model_repeat_limit: NOT_OBSERVED",
+            "      status: APPARATUS_READY",
+            "      session_kind: QWEN25_32B_V2_SUPERVISED_PRODUCTION_ADMISSION",
+            "      operator_command: start-qwen25-32b-v2",
+            "      backend: Qwen25_32BKatraOllamaDispositionBackend",
+            "      digest_selector: EXACT_FULL_MANIFEST",
+            "      model_visible_first_turn_equivalence: PASS",
             "    production_admission: NOT_EVALUATED",
         )
         self.assertTrue(all(value in candidate for value in required_candidate))
@@ -209,6 +220,11 @@ class ModelSelectionTests(unittest.TestCase):
             "NEXT: BIND QWEN2.5-CODER 32B SCALE CONTROL TO FROZEN V2 ADMISSION SEAM",
             runtime_evidence,
         )
+        binding_evidence = (
+            ROOT / "docs/experiments/task10u-qwen25-coder-32b-v2-binding.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("TASK10U_32B_ADMISSION_APPARATUS_READY", binding_evidence)
+        self.assertIn("MODEL_VISIBLE_FIRST_TURN_EQUIVALENCE = PASS", binding_evidence)
         self.assertEqual(
             "3c4cbbb94fa26a758dbc157c6895606f1705a7b71b8bdc4c60fcb08330cfbe4e",
             hashlib.sha256(VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL.render().encode()).hexdigest(),

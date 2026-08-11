@@ -21,6 +21,8 @@ from ws_code_agent.supervised_work import (  # noqa: E402
     DEVSTRAL_V2_SESSION_KIND,
     QWEN25_CANDIDATE_ID,
     QWEN25_V2_SESSION_KIND,
+    QWEN25_32B_CANDIDATE_ID,
+    QWEN25_32B_V2_SESSION_KIND,
     SYNTHETIC_V2_CLARIFICATION,
     SYNTHETIC_V2_SESSION_KIND,
     SYNTHETIC_V2_WRITE,
@@ -37,6 +39,7 @@ from ws_code_agent.request_protocol import (  # noqa: E402
 QUALIFICATION = ROOT / "docs/qualification/qwen3-coder-30b-alpha-v1.yaml"
 DEVSTRAL_CANDIDATE = ROOT / "docs/qualification/devstral-small-2-v2-admission-candidate.yaml"
 QWEN25_CANDIDATE = ROOT / "docs/qualification/qwen25-coder-14b-v2-admission-candidate.yaml"
+QWEN25_32B_CANDIDATE = ROOT / "docs/qualification/qwen25-coder-32b-v2-admission-candidate.yaml"
 
 
 def request(kind: str, arguments: dict) -> str:
@@ -468,6 +471,80 @@ class SupervisedWorkTests(unittest.TestCase):
                         candidate_path=altered,
                         harness_sha="frozen-harness",
                     )
+
+    def test_qwen25_32b_admission_binding_is_exact_separate_and_stale_safe(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write = SupervisedWorkController.start_qwen25_32b_v2_admission(
+                root / "store",
+                session_id="work-qwen25-32b-write-test",
+                fixture_kind=SYNTHETIC_V2_WRITE,
+                candidate_path=QWEN25_32B_CANDIDATE,
+                harness_sha="frozen-harness",
+            )
+            manifest = write.manifest()
+            self.assertEqual(QWEN25_32B_V2_SESSION_KIND, manifest["session_kind"])
+            self.assertNotEqual(QWEN25_V2_SESSION_KIND, manifest["session_kind"])
+            self.assertEqual(QWEN25_32B_CANDIDATE_ID, manifest["qualification"]["candidate_id"])
+            self.assertNotEqual(QWEN25_CANDIDATE_ID, manifest["qualification"]["candidate_id"])
+            self.assertEqual("qwen2.5-coder:32b-instruct-q4_K_M", manifest["model_artifact"]["tag"])
+            self.assertEqual(
+                "b92d6a0bd47ee79114298de0177bf920c05a706d12633950b3936778492bef41",
+                manifest["model_artifact"]["digest"],
+            )
+            self.assertEqual(
+                "ac3d1ba8aa77755dab3806d9024e9c385ea0d5b412d6bdf9157f8a4a7e9fc0d9",
+                manifest["model_artifact"]["model_blob"],
+            )
+            self.assertEqual("qwen25-coder-32b-katra-4096", manifest["model_artifact"]["runtime_profile_id"])
+            self.assertEqual("GPU_PRIMARY_PARTIAL_OFFLOAD", manifest["model_artifact"]["runtime_profile"])
+            self.assertEqual((71, 29), (
+                manifest["model_artifact"]["minimum_gpu_percent"],
+                manifest["model_artifact"]["maximum_cpu_percent"],
+            ))
+            self.assertEqual(4096, manifest["model_artifact"]["context"])
+            self.assertEqual(["."], manifest["authority"]["read_scopes"])
+            self.assertEqual(["src/message.py"], manifest["authority"]["patch_paths"])
+            self.assertEqual(8, manifest["turn_limit"])
+            self.assertEqual("task10k-c-write/synthetic-v1", write._turns._case("WORK")["fixture_identity"])
+            self.assertEqual(0, write._turns._case("WORK")["turn_committed"])
+
+            source = QWEN25_32B_CANDIDATE.read_text(encoding="utf-8")
+            replacements = {
+                "wrong-candidate": ("candidate_id: qwen25-coder-32b-q4", "candidate_id: qwen25-coder-14b-q4"),
+                "wrong-status": ("status: RUNTIME_ACCEPTED", "status: SELECTED_FOR_EVALUATION"),
+                "wrong-digest": ("b92d6a0bd47ee79114298de0177bf920c05a706d12633950b3936778492bef41", "0" * 64),
+                "wrong-blob": ("ac3d1ba8aa77755dab3806d9024e9c385ea0d5b412d6bdf9157f8a4a7e9fc0d9", "0" * 64),
+                "wrong-tag": ("qwen2.5-coder:32b-instruct-q4_K_M", "qwen2.5-coder:14b-instruct-q4_K_M"),
+                "wrong-quantization": ("  quantization: Q4_K_M", "  quantization: Q4_0"),
+                "wrong-profile": ("qwen25-coder-32b-katra-4096", "qwen25-coder-14b-katra-4096"),
+                "wrong-context": ("  context: 4096", "  context: 8192"),
+                "wrong-generation": ("  generation_overrides: NONE", "  generation_overrides: temperature=0"),
+                "wrong-execution": ("  execution: GPU_PRIMARY_PARTIAL_OFFLOAD", "  execution: GPU_ONLY"),
+                "wrong-gpu": ("  minimum_gpu_percent: 71", "  minimum_gpu_percent: 70"),
+                "wrong-cpu": ("  maximum_cpu_percent: 29", "  maximum_cpu_percent: 30"),
+                "wrong-runtime": ("  ollama_version: 0.32.0+helix.repeatlimit.1", "  ollama_version: 0.32.0"),
+                "wrong-binary": ("  binary_sha256: b53a386d6e2f8e17a360eb3d08bfc17e3e475d03918d07ace386c359324ef143", "  binary_sha256: " + "0" * 64),
+                "wrong-build": ("  build_id: ffd1f9f6c8ffd69fdca1316e7c032447479fe139", "  build_id: " + "0" * 40),
+                "wrong-deviation": ("  runtime_deviation: OLLAMA_V0_32_0_REPEAT_LIMIT_TERMINALIZATION_V1", "  runtime_deviation: NONE"),
+                "wrong-protocol": ("  protocol_id: WS_CODE_AGENT_REQUEST_PROTOCOL_V2_SINGLE_VALUE_FREE", "  protocol_id: WS_CODE_AGENT_REQUEST_PROTOCOL_V1_SINGLE"),
+                "wrong-admission": ("  production_admission: NOT_EVALUATED", "  production_admission: PASS"),
+            }
+            for name, (old, new) in replacements.items():
+                altered = root / f"{name}.yaml"
+                altered.write_text(source.replace(old, new), encoding="utf-8")
+                with self.subTest(name=name), self.assertRaisesRegex(
+                    SupervisedWorkError, "CHALLENGER_BINDING_MISMATCH"
+                ):
+                    supervised_work_module._qwen25_32b_candidate_binding(altered)
+
+            cli = (ROOT / "tools/run_supervised_work.py").read_text(encoding="utf-8")
+            self.assertIn('sub.add_parser("start-qwen25-v2")', cli)
+            self.assertIn('sub.add_parser("start-qwen25-32b-v2")', cli)
+            self.assertIn("elif digest == QWEN25_MODEL_DIGEST:", cli)
+            self.assertIn("elif digest == QWEN25_32B_MODEL_DIGEST:", cli)
+            self.assertIn("backend = Qwen25KatraOllamaDispositionBackend()", cli)
+            self.assertIn("backend = Qwen25_32BKatraOllamaDispositionBackend()", cli)
 
     def test_value_free_v2_synthetic_write_and_clarification_use_normal_durable_lane(self):
         with tempfile.TemporaryDirectory() as temporary:

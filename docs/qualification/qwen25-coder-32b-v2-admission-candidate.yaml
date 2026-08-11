@@ -1,0 +1,46 @@
+schema_version: 1
+candidate_id: qwen25-coder-32b-q4
+status: RUNTIME_ACCEPTED
+
+artifact:
+  model: qwen2.5-coder:32b-instruct-q4_K_M
+  digest: b92d6a0bd47ee79114298de0177bf920c05a706d12633950b3936778492bef41
+  model_blob: ac3d1ba8aa77755dab3806d9024e9c385ea0d5b412d6bdf9157f8a4a7e9fc0d9
+  quantization: Q4_K_M
+  context: 4096
+  generation_overrides: NONE
+  other_sampling: artifact/Ollama defaults
+  transport: OLLAMA_MACHINE_RESPONSE_V1
+
+runtime:
+  profile_id: qwen25-coder-32b-katra-4096
+  status: RUNTIME_ACCEPTED
+  execution: GPU_PRIMARY_PARTIAL_OFFLOAD
+  minimum_gpu_percent: 71
+  maximum_cpu_percent: 29
+  observed_vram_mib: 14634
+  appliance: cuda-compute-katra
+  host: hv-katra
+  accelerator: NVIDIA GeForce RTX 5070 Ti
+  ollama_version: 0.32.0+helix.repeatlimit.1
+  binary_sha256: b53a386d6e2f8e17a360eb3d08bfc17e3e475d03918d07ace386c359324ef143
+  build_id: ffd1f9f6c8ffd69fdca1316e7c032447479fe139
+  runtime_deviation: OLLAMA_V0_32_0_REPEAT_LIMIT_TERMINALIZATION_V1
+  gpu_cp_acceptance: ../../../../helix-arpa/gpu-cp/docs/acceptance/qwen25-coder-32b-runtime-20260811.md
+
+supervised_protocol:
+  alpha_evaluation_protocol: WS_CODE_AGENT_REQUEST_PROTOCOL_V1_SINGLE
+  protocol_id: WS_CODE_AGENT_REQUEST_PROTOCOL_V2_SINGLE_VALUE_FREE
+  qualification_status: CANDIDATE
+  render_sha256: 3c4cbbb94fa26a758dbc157c6895606f1705a7b71b8bdc4c60fcb08330cfbe4e
+  synthetic_acceptance: PENDING
+  production_qualified: false
+  operating_class: SUPERVISED_SINGLE_REPO
+
+admission:
+  production_admission: NOT_EVALUATED
+  write_fixture: task10k-c-write/synthetic-v1
+  clarification_fixture: task10k-c-clarification/synthetic-v1
+  turn_limit_each: 8
+  both_required: true
+  alpha_qualification: NOT_EVALUATED

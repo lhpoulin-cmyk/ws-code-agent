@@ -20,20 +20,26 @@ from ws_code_agent.katra_ollama_backend import (  # noqa: E402
     MODEL_DIGEST, MODEL_QUANTIZATION, MODEL_TAG,
     QWEN25_EXECUTION_POLICY, QWEN25_MODEL_DIGEST, QWEN25_MODEL_TAG,
     QWEN25_RUNTIME_PROFILE, Qwen25KatraOllamaDispositionBackend,
+    QWEN25_32B_EXECUTION_POLICY, QWEN25_32B_MODEL_DIGEST, QWEN25_32B_MODEL_TAG,
+    QWEN25_32B_RUNTIME_PROFILE, Qwen25_32BKatraOllamaDispositionBackend,
     REMOTE_HOST, REMOTE_RUNNER, SSH_CERTIFICATE, SSH_IDENTITY,
 )
-from ws_code_agent.request_protocol import SINGLE_REPOSITORY_PROTOCOL  # noqa: E402
+from ws_code_agent.request_protocol import (  # noqa: E402
+    SINGLE_REPOSITORY_PROTOCOL,
+    VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL,
+)
 
 
 class FakeTransport:
-    def __init__(self, *, fail_first: bool = False, devstral: bool = False, qwen25: bool = False) -> None:
+    def __init__(self, *, fail_first: bool = False, devstral: bool = False, qwen25: bool = False, qwen25_32b: bool = False) -> None:
         self.calls: list[tuple[str, ...]] = []
         self.fail_first = fail_first
         self.devstral = devstral
         self.qwen25 = qwen25
+        self.qwen25_32b = qwen25_32b
 
     def completion_bytes(self) -> bytes:
-        model = QWEN25_MODEL_TAG if self.qwen25 else DEVSTRAL_MODEL_TAG if self.devstral else MODEL_TAG
+        model = QWEN25_32B_MODEL_TAG if self.qwen25_32b else QWEN25_MODEL_TAG if self.qwen25 else DEVSTRAL_MODEL_TAG if self.devstral else MODEL_TAG
         response = b'{"request_type":"NO_CHANGE","arguments":{}}\n'
         return (json.dumps({
             "evidence_contract": "OLLAMA_RESPONSE_META_V2",
@@ -74,7 +80,10 @@ class FakeTransport:
         if remote[0] == "/usr/bin/cat" and remote[-1].endswith("ollama-envelope-meta.json"):
             return subprocess.CompletedProcess(command, 0, self.completion_bytes(), b"")
         if remote[0] == "/usr/bin/cat" and "meta.yaml" in remote[2]:
-            if self.qwen25:
+            if self.qwen25_32b:
+                digest, cpu, gpu = QWEN25_32B_MODEL_DIGEST, 29, 71
+                policy, result = QWEN25_32B_EXECUTION_POLICY, "GPU_PRIMARY_PARTIAL_OFFLOAD"
+            elif self.qwen25:
                 digest, cpu, gpu = QWEN25_MODEL_DIGEST, 0, 100
                 policy, result = QWEN25_EXECUTION_POLICY, "GPU_ONLY"
             elif self.devstral:
@@ -181,6 +190,69 @@ class KatraOllamaBackendTests(unittest.TestCase):
             ExecutionArtifactIdentity("wrong:tag", expected.manifest_digest, expected.quantization, expected.runtime_profile_id, expected.execution_policy),
             ExecutionArtifactIdentity(expected.model_tag, "0" * 64, expected.quantization, expected.runtime_profile_id, expected.execution_policy),
             ExecutionArtifactIdentity(expected.model_tag, expected.manifest_digest, expected.quantization, "different-profile", expected.execution_policy),
+        )
+        for identity in mismatches:
+            with self.subTest(identity=identity), self.assertRaisesRegex(
+                KatraOllamaBackendError, "DURABLE_MODEL_BINDING_MISMATCH"
+            ):
+                backend.generate(
+                    messages, protocol=SINGLE_REPOSITORY_PROTOCOL,
+                    invocation=InferenceInvocation(invocation.invocation_id, invocation.prompt_sha256, identity),
+                )
+
+    def test_qwen25_32b_backend_is_exact_separate_and_prompt_identical(self) -> None:
+        messages = ({"role": "user", "content": {"fixture": "write"}},)
+        transport = FakeTransport(qwen25_32b=True)
+        backend = Qwen25_32BKatraOllamaDispositionBackend(transport)
+        self.generate(backend, messages)
+        inference = shlex.split(transport.calls[0][-1])
+        self.assertEqual(QWEN25_32B_MODEL_TAG, inference[inference.index("--model") + 1])
+        self.assertEqual(QWEN25_32B_EXECUTION_POLICY, inference[-1])
+        evidence = backend.turn_evidence[0]
+        self.assertEqual(QWEN25_32B_RUNTIME_PROFILE.profile_id, backend.RUNTIME_PROFILE.profile_id)
+        self.assertEqual(QWEN25_32B_MODEL_DIGEST, evidence.manifest_digest)
+        self.assertEqual((29, 71), (evidence.observed_cpu_percent, evidence.observed_gpu_percent))
+        rendered = KatraOllamaDispositionBackend._render_prompt(
+            messages, VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL
+        )
+        self.assertEqual(
+            rendered,
+            Qwen25KatraOllamaDispositionBackend._render_prompt(
+                messages, VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL
+            ),
+        )
+        self.assertEqual(
+            rendered,
+            Qwen25_32BKatraOllamaDispositionBackend._render_prompt(
+                messages, VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL
+            ),
+        )
+
+        invocation_14b = Qwen25KatraOllamaDispositionBackend.invocation_for(
+            messages, "alpha-test-family-C01-t0001-abcdef", protocol=SINGLE_REPOSITORY_PROTOCOL
+        )
+        invocation_32b = backend.invocation_for(
+            messages, "alpha-test-family-C01-t0001-abcdef", protocol=SINGLE_REPOSITORY_PROTOCOL
+        )
+        self.assertNotEqual(invocation_14b.execution_identity, invocation_32b.execution_identity)
+        with self.assertRaisesRegex(KatraOllamaBackendError, "DURABLE_MODEL_BINDING_MISMATCH"):
+            Qwen25KatraOllamaDispositionBackend(FakeTransport(qwen25=True)).generate(
+                messages, protocol=SINGLE_REPOSITORY_PROTOCOL, invocation=invocation_32b
+            )
+        with self.assertRaisesRegex(KatraOllamaBackendError, "DURABLE_MODEL_BINDING_MISMATCH"):
+            backend.generate(messages, protocol=SINGLE_REPOSITORY_PROTOCOL, invocation=invocation_14b)
+
+    def test_qwen25_32b_backend_rejects_wrong_tag_digest_and_profile(self) -> None:
+        backend = Qwen25_32BKatraOllamaDispositionBackend(FakeTransport(qwen25_32b=True))
+        messages = ({"role": "user", "content": {"fixture": "write"}},)
+        invocation = backend.invocation_for(
+            messages, "alpha-test-family-C01-t0001-abcdef", protocol=SINGLE_REPOSITORY_PROTOCOL
+        )
+        expected = invocation.execution_identity
+        mismatches = (
+            ExecutionArtifactIdentity("wrong:tag", expected.manifest_digest, expected.quantization, expected.runtime_profile_id, expected.execution_policy),
+            ExecutionArtifactIdentity(expected.model_tag, "0" * 64, expected.quantization, expected.runtime_profile_id, expected.execution_policy),
+            ExecutionArtifactIdentity(expected.model_tag, expected.manifest_digest, expected.quantization, "qwen25-coder-14b-katra-4096", expected.execution_policy),
         )
         for identity in mismatches:
             with self.subTest(identity=identity), self.assertRaisesRegex(

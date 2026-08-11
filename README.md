@@ -64,7 +64,11 @@ One exact pull and three no-retry neutral probes established a runtime-accepted
 `qwen25-coder-32b-katra-4096` profile: 71% GPU / 29% CPU, 14,634 MiB peak VRAM,
 effective context 4096, and no host-pressure or accelerator fault. This is
 runtime evidence only. Behavioral comparison has not run, and the candidate is
-not production-admitted, preferred, or a replacement for the 14B baseline.
+not production-admitted, preferred, or a replacement for the 14B baseline. A
+separate exact 32B manifest, durable session kind, fixed-profile backend, and
+`start-qwen25-32b-v2` operator command now bind it to the unchanged frozen V2
+admission seam. This binding adds no model-visible accommodation and creates no
+behavioral score.
 
 The inherited Doc Writer implementation remains removed from the live tree;
 witnessed history and reusable references are preserved under `lineage/`.

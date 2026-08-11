@@ -30,6 +30,10 @@ QWEN25_MODEL_TAG = "qwen2.5-coder:14b-instruct-q4_K_M"
 QWEN25_MODEL_DIGEST = "9ec8897f747e246e970bc5cfdda85d22f1123dc2e3d34978a010a75968716849"
 QWEN25_MODEL_QUANTIZATION = "Q4_K_M"
 QWEN25_EXECUTION_POLICY = "gpu-only"
+QWEN25_32B_MODEL_TAG = "qwen2.5-coder:32b-instruct-q4_K_M"
+QWEN25_32B_MODEL_DIGEST = "b92d6a0bd47ee79114298de0177bf920c05a706d12633950b3936778492bef41"
+QWEN25_32B_MODEL_QUANTIZATION = "Q4_K_M"
+QWEN25_32B_EXECUTION_POLICY = "gpu-primary-partial"
 # The retained VM hostname is not presently resolvable from ws-matriarch.  The
 # approved operator path is the documented VM 320 address plus the vault-backed
 # SSH certificate; neither is model-controlled.
@@ -159,6 +163,16 @@ QWEN25_RUNTIME_PROFILE = FixedKatraRuntimeProfile(
     "GPU_ONLY",
     100,
     0,
+)
+QWEN25_32B_RUNTIME_PROFILE = FixedKatraRuntimeProfile(
+    "qwen25-coder-32b-katra-4096",
+    QWEN25_32B_MODEL_TAG,
+    QWEN25_32B_MODEL_DIGEST,
+    QWEN25_32B_MODEL_QUANTIZATION,
+    QWEN25_32B_EXECUTION_POLICY,
+    "GPU_PRIMARY_PARTIAL_OFFLOAD",
+    71,
+    29,
 )
 
 
@@ -388,3 +402,9 @@ class Qwen25KatraOllamaDispositionBackend(KatraOllamaDispositionBackend):
     """Exact selected Qwen2.5 challenger bound to its accepted Katra profile."""
 
     RUNTIME_PROFILE = QWEN25_RUNTIME_PROFILE
+
+
+class Qwen25_32BKatraOllamaDispositionBackend(KatraOllamaDispositionBackend):
+    """Exact Qwen2.5-Coder 32B scale control bound to its accepted profile."""
+
+    RUNTIME_PROFILE = QWEN25_32B_RUNTIME_PROFILE

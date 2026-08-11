@@ -186,6 +186,27 @@ candidates:
         semantic_judgment: FAIL
         disposition: PRESENTATION_NORMALIZATION_DOES_NOT_FIX_CLARIFICATION_JUDGMENT
       preserved_32b_pass_through: BYTE_IDENTICAL
+      interactive_normalized_lane:
+        lane_id: QWEN25_14B_INTERACTIVE_NORMALIZED_V1
+        mode: INTERACTIVE_NORMALIZED
+        adapter_id: SINGLE_MARKDOWN_JSON_FENCE_NORMALIZATION_V1
+        adapter_version: v1
+        status: NOT_ACCEPTED
+        strict_raw_separation: PASS
+        model_visible_prompt_unchanged: PASS
+        write: FAIL
+        write_terminal: NO_CHANGE_AFTER_PATCH_REJECTED
+        write_turns: 2
+        candidate: NOT_CREATED
+        technical_validation: NOT_EVALUATED
+        clarification: FAIL
+        clarification_terminal: PROPOSE_PATCH_WITH_PATCH_AUTHORITY_NONE
+        clarification_judgment: INVENTED_IMPLEMENTATION
+        clarification_turns: 3
+        task10y_14b_inferences: 5
+        task10y_32b_inferences: 0
+        retry: NOT_PERFORMED
+        disposition: INTERACTIVE_14B_NORMALIZED_LANE_NOT_ACCEPTED
     baseline_disposition:
       practical_coding_baseline: YES
       runtime_accepted: YES
@@ -201,6 +222,7 @@ candidates:
       - ../docs/experiments/task10q-qwen25-coder-14b-runtime-acceptance.md
       - ../docs/experiments/task10r-qwen25-coder-14b-v2-admission.md
       - ../docs/experiments/task10x-qwen25-coder-14b-adapter-calibration.md
+      - ../docs/experiments/task10y-qwen25-coder-14b-normalized-production-lane.md
 
   - id: gpt-oss-20b-mxfp4
     status: INELIGIBLE_FROZEN_COMPARISON_SEAM

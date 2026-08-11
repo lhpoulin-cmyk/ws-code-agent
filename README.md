@@ -58,14 +58,22 @@ instead of `REQUEST_CLARIFICATION`. The strict parser accepted neither request,
 so production admission failed without changing the model's accepted runtime or
 practical-baseline disposition.
 
-Task 10X calibrated—but did not enable—
+Task 10X calibrated
 `SINGLE_MARKDOWN_JSON_FENCE_NORMALIZATION_V1` for the 14B interactive lane.
 The exact historical write response became parser-valid after its sole Markdown
 wrapper was removed, then the unchanged executor truthfully rejected the
 unmodified corrupt patch. The clarification response became parser-valid
 `NO_CHANGE`, preserving its separate semantic failure. This establishes a
 defensible representation-only candidate adapter without rescoring history,
-repairing output, or changing the current `STRICT_RAW` production behavior.
+repairing output, or changing the `STRICT_RAW` benchmark behavior. Task 10Y
+then bound that adapter to a separate `INTERACTIVE_NORMALIZED` lane and ran two
+fresh fixtures. The write session produced a fenced, authority-correct but
+corrupt patch, then chose bare `NO_CHANGE` after executor rejection; no
+candidate existed to validate. The clarification session investigated with
+valid search/read requests, then proposed an invented implementation despite
+patch authority being `NONE`. The authority layer denied it. Both are semantic
+failures, so the normalized lane is `NOT_ACCEPTED`; the adapter remains bounded
+and the historical strict score remains unchanged.
 
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its

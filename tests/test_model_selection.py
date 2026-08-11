@@ -117,6 +117,15 @@ class ModelSelectionTests(unittest.TestCase):
             "        semantic_judgment: FAIL",
             "        disposition: PRESENTATION_NORMALIZATION_DOES_NOT_FIX_CLARIFICATION_JUDGMENT",
             "      preserved_32b_pass_through: BYTE_IDENTICAL",
+            "        lane_id: QWEN25_14B_INTERACTIVE_NORMALIZED_V1",
+            "        mode: INTERACTIVE_NORMALIZED",
+            "        status: NOT_ACCEPTED",
+            "        strict_raw_separation: PASS",
+            "        write_terminal: NO_CHANGE_AFTER_PATCH_REJECTED",
+            "        clarification_terminal: PROPOSE_PATCH_WITH_PATCH_AUTHORITY_NONE",
+            "        task10y_14b_inferences: 5",
+            "        task10y_32b_inferences: 0",
+            "        disposition: INTERACTIVE_14B_NORMALIZED_LANE_NOT_ACCEPTED",
         )
         self.assertTrue(all(value in candidate for value in required_candidate))
         self.assertNotIn("PRODUCTION_ADMITTED", candidate)
@@ -146,6 +155,13 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn("FENCE_NORMALIZATION_JUSTIFIED", adapter_evidence)
         self.assertIn("PRESENTATION_NORMALIZATION_DOES_NOT_FIX_CLARIFICATION_JUDGMENT", adapter_evidence)
         self.assertIn("MODEL_INFERENCE_COUNT = 0", adapter_evidence)
+        lane_evidence = (
+            ROOT / "docs/experiments/task10y-qwen25-coder-14b-normalized-production-lane.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("INTERACTIVE_14B_NORMALIZED_LANE_NOT_ACCEPTED", lane_evidence)
+        self.assertIn("INTERACTIVE_WRITE_FAIL", lane_evidence)
+        self.assertIn("INTERACTIVE_CLARIFICATION_FAIL", lane_evidence)
+        self.assertIn("14B STRICT_RAW historical FAIL: UNCHANGED", lane_evidence)
 
     def test_qwen25_coder_32b_scale_control_preserves_inconclusive_admission(self):
         matrix = (ROOT / "models/candidate-matrix.yaml").read_text(encoding="utf-8")

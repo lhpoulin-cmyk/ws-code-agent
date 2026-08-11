@@ -18,10 +18,17 @@ selected_challenger:
     temperature: 0.15
   local_install_state: NOT_INSTALLED_AT_SELECTION
   expected_katra_fit: PARTIAL_OFFLOAD_EXPECTED
-  runtime_acceptance: NOT_EVALUATED
-  production_admission: NOT_EVALUATED
+  runtime_acceptance: RUNTIME_ACCEPTED
+  runtime_profile_id: devstral-small-2-24b-katra-partial
+  accepted_execution: GPU_PRIMARY_PARTIAL_OFFLOAD
+  accepted_gpu_minimum_percent: 88
+  accepted_cpu_maximum_percent: 12
+  observed_vram_mib: 14648
+  production_admission: PENDING
   alpha_qualification: NOT_EVALUATED
-  evidence: ../docs/experiments/task10m-devstral-challenger-selection.md
+  evidence:
+    - ../docs/experiments/task10m-devstral-challenger-selection.md
+    - ../docs/qualification/devstral-small-2-v2-admission-candidate.yaml
 
 katra:
   role: KATRA_TORTURE
@@ -184,6 +191,13 @@ candidates:
     tool_agent_support: Explicitly agentic and tools-capable in the Ollama entry.
     license: Apache-2.0
     runtime_requirements: Ollama 0.13.3 or later.
+    runtime_acceptance:
+      status: RUNTIME_ACCEPTED
+      profile_id: devstral-small-2-24b-katra-partial
+      execution: GPU_PRIMARY_PARTIAL_OFFLOAD
+      processor_envelope: {minimum_gpu_percent: 88, maximum_cpu_percent: 12}
+      observed_vram_mib: 14648
+      production_admission: PENDING
     source_references:
       - https://ollama.com/library/devstral-small-2:24b-instruct-2512-q4_K_M
       - https://huggingface.co/mistralai/Devstral-Small-2-24B-Instruct-2512

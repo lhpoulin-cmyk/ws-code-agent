@@ -22,7 +22,18 @@ from typing import Any, Mapping
 from .alpha_experiment import AlphaExperimentController, ExperimentError, TurnBackend, _atomic_bytes, _atomic_json, _load
 from .disposition_harness import DispositionHarness, HarnessTask, RequestType, parse_request
 from .isolated_patch import IsolatedPatchExecutor, PatchProposal
-from .katra_ollama_backend import InferenceInvocation, MODEL_DIGEST, MODEL_QUANTIZATION, MODEL_TAG, ResponseEvidenceSink
+from .katra_ollama_backend import (
+    DEVSTRAL_MODEL_DIGEST,
+    DEVSTRAL_MODEL_QUANTIZATION,
+    DEVSTRAL_MODEL_TAG,
+    DEVSTRAL_RUNTIME_PROFILE,
+    InferenceInvocation,
+    MODEL_DIGEST,
+    MODEL_QUANTIZATION,
+    MODEL_TAG,
+    QWEN_RUNTIME_PROFILE,
+    ResponseEvidenceSink,
+)
 from .readonly_executor import CompareStatus, ReadOnlyExecutor, RepositorySnapshot
 from .request_protocol import (
     SINGLE_REPOSITORY_PROTOCOL_ID,
@@ -40,6 +51,8 @@ MAX_SCOPES = 8
 MAX_PATCH_PATHS = 8
 SESSION_ID = re.compile(r"work-[A-Za-z0-9][A-Za-z0-9._-]{7,95}")
 SYNTHETIC_V2_SESSION_KIND = "SYNTHETIC_SUPERVISED_SINGLE_REPOSITORY_V2_ACCEPTANCE"
+DEVSTRAL_V2_SESSION_KIND = "DEVSTRAL_V2_SUPERVISED_PRODUCTION_ADMISSION"
+DEVSTRAL_CANDIDATE_ID = "devstral-small-2-q4"
 SYNTHETIC_V2_WRITE = "write"
 SYNTHETIC_V2_CLARIFICATION = "clarification"
 SYNTHETIC_V2_FIXTURES = (SYNTHETIC_V2_WRITE, SYNTHETIC_V2_CLARIFICATION)
@@ -165,6 +178,63 @@ def _qualification_binding(path: Path) -> dict[str, Any]:
         "alpha_version": ALPHA_VERSION,
         "operating_class": OPERATING_CLASS,
     }
+
+
+def _qwen_model_artifact() -> dict[str, Any]:
+    return {
+        "tag": MODEL_TAG,
+        "digest": MODEL_DIGEST,
+        "quantization": MODEL_QUANTIZATION,
+        "context": 4096,
+        "sampling": "appliance/Ollama defaults",
+        "runtime_profile": QWEN_RUNTIME_PROFILE.policy_result,
+        "runtime_profile_id": QWEN_RUNTIME_PROFILE.profile_id,
+        "minimum_gpu_percent": QWEN_RUNTIME_PROFILE.minimum_gpu_percent,
+        "maximum_cpu_percent": QWEN_RUNTIME_PROFILE.maximum_cpu_percent,
+    }
+
+
+def _devstral_candidate_binding(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    raw = path.read_bytes()
+    text = raw.decode("utf-8", errors="strict")
+    required = (
+        f"candidate_id: {DEVSTRAL_CANDIDATE_ID}",
+        "status: SELECTED_FOR_EVALUATION",
+        f"  model: {DEVSTRAL_MODEL_TAG}",
+        f"  digest: {DEVSTRAL_MODEL_DIGEST}",
+        f"  quantization: {DEVSTRAL_MODEL_QUANTIZATION}",
+        "  context: 4096",
+        "  temperature: 0.15",
+        f"  profile_id: {DEVSTRAL_RUNTIME_PROFILE.profile_id}",
+        "  status: RUNTIME_ACCEPTED",
+        "  minimum_gpu_percent: 88",
+        "  maximum_cpu_percent: 12",
+        f"  protocol_id: {VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID}",
+        "  production_admission: PENDING",
+    )
+    if any(item not in text for item in required):
+        raise SupervisedWorkError("CHALLENGER_BINDING_MISMATCH")
+    qualification = {
+        "candidate_id": DEVSTRAL_CANDIDATE_ID,
+        "manifest": "docs/qualification/devstral-small-2-v2-admission-candidate.yaml",
+        "manifest_sha256": hashlib.sha256(raw).hexdigest(),
+        "artifact_digest": DEVSTRAL_MODEL_DIGEST,
+        "evaluation_scope": "V2_SYNTHETIC_PRODUCTION_ADMISSION",
+        "runtime_status": "RUNTIME_ACCEPTED",
+        "production_admission": "PENDING",
+    }
+    model_artifact = {
+        "tag": DEVSTRAL_MODEL_TAG,
+        "digest": DEVSTRAL_MODEL_DIGEST,
+        "quantization": DEVSTRAL_MODEL_QUANTIZATION,
+        "context": 4096,
+        "sampling": {"temperature": 0.15, "other": "artifact/Ollama defaults"},
+        "runtime_profile": DEVSTRAL_RUNTIME_PROFILE.policy_result,
+        "runtime_profile_id": DEVSTRAL_RUNTIME_PROFILE.profile_id,
+        "minimum_gpu_percent": DEVSTRAL_RUNTIME_PROFILE.minimum_gpu_percent,
+        "maximum_cpu_percent": DEVSTRAL_RUNTIME_PROFILE.maximum_cpu_percent,
+    }
+    return qualification, model_artifact
 
 
 def _candidate_protocol_qualification(path: Path) -> dict[str, Any]:
@@ -343,6 +413,7 @@ class SupervisedWorkController:
             protocol_id=protocol_id,
             protocol_qualification=protocol_qualification,
             qualification=qualification,
+            model_artifact=_qwen_model_artifact(),
             session_kind="SUPERVISED_SINGLE_REPOSITORY_WORK_V1",
             fixture_identity="operator-repository/snapshot-v1",
         )
@@ -386,7 +457,52 @@ class SupervisedWorkController:
             protocol_id=VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID,
             protocol_qualification=protocol_qualification,
             qualification=qualification,
+            model_artifact=_qwen_model_artifact(),
             session_kind=SYNTHETIC_V2_SESSION_KIND,
+            fixture_identity=fixture_identity,
+        )
+
+    @classmethod
+    def start_devstral_v2_admission(
+        cls,
+        store: Path,
+        *,
+        session_id: str,
+        fixture_kind: str,
+        candidate_path: Path,
+        harness_sha: str,
+        turn_limit: int = DEFAULT_TURN_LIMIT,
+    ) -> "SupervisedWorkController":
+        if not SESSION_ID.fullmatch(session_id):
+            raise SupervisedWorkError("INVALID_SESSION_ID")
+        qualification, model_artifact = _devstral_candidate_binding(candidate_path)
+        protocol_qualification = _candidate_protocol_qualification(candidate_path)
+        if (
+            protocol_qualification["qualification_status"] != "CANDIDATE"
+            or protocol_qualification["synthetic_acceptance"] != "PENDING"
+            or protocol_qualification["production_qualified"]
+        ):
+            raise SupervisedWorkError("V2_CANDIDATE_SESSION_NOT_AUTHORIZED")
+        qualification["protocol"] = protocol_qualification
+        repository, objective, read_scopes, patch_paths, fixture_identity = (
+            _initialize_synthetic_v2_fixture(store, session_id, fixture_kind)
+        )
+        expected_head = _git(repository, "rev-parse", "HEAD")
+        return cls._start_bound(
+            store,
+            session_id=session_id,
+            repository=repository,
+            expected_head=expected_head,
+            objective=objective,
+            read_scopes=read_scopes,
+            patch_paths=patch_paths,
+            harness_sha=harness_sha,
+            turn_limit=turn_limit,
+            protocol_id=VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID,
+            protocol_qualification=protocol_qualification,
+            qualification=qualification,
+            model_artifact=model_artifact,
+            session_kind=DEVSTRAL_V2_SESSION_KIND,
             fixture_identity=fixture_identity,
         )
 
@@ -406,6 +522,7 @@ class SupervisedWorkController:
         protocol_id: str,
         protocol_qualification: Mapping[str, Any],
         qualification: Mapping[str, Any],
+        model_artifact: Mapping[str, Any],
         session_kind: str,
         fixture_identity: str,
     ) -> "SupervisedWorkController":
@@ -450,15 +567,7 @@ class SupervisedWorkController:
             "turn_limit": turn_limit,
             "protocol_id": protocol_id,
             "protocol_qualification": dict(protocol_qualification),
-            "model_artifact": {
-                "tag": MODEL_TAG,
-                "digest": MODEL_DIGEST,
-                "quantization": MODEL_QUANTIZATION,
-                "context": 4096,
-                "runtime_profile": "GPU_PRIMARY_PARTIAL_OFFLOAD",
-                "gpu_percent": 80,
-                "cpu_percent": 20,
-            },
+            "model_artifact": dict(model_artifact),
             "qualification": dict(qualification),
         }
         conversation = [{

@@ -11,16 +11,19 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ws_code_agent.katra_ollama_backend import (  # noqa: E402
-    EXECUTION_POLICY, KatraOllamaBackendError, KatraOllamaDispositionBackend,
+    DEVSTRAL_MODEL_DIGEST, DEVSTRAL_MODEL_TAG, DEVSTRAL_RUNTIME_PROFILE,
+    DevstralKatraOllamaDispositionBackend, EXECUTION_POLICY,
+    KatraOllamaBackendError, KatraOllamaDispositionBackend,
     MODEL_DIGEST, MODEL_QUANTIZATION, MODEL_TAG, REMOTE_HOST, REMOTE_RUNNER, SSH_CERTIFICATE, SSH_IDENTITY,
 )
 from ws_code_agent.request_protocol import SINGLE_REPOSITORY_PROTOCOL  # noqa: E402
 
 
 class FakeTransport:
-    def __init__(self, *, fail_first: bool = False) -> None:
+    def __init__(self, *, fail_first: bool = False, devstral: bool = False) -> None:
         self.calls: list[tuple[str, ...]] = []
         self.fail_first = fail_first
+        self.devstral = devstral
 
     def __call__(self, command, **_kwargs):
         self.calls.append(tuple(command))
@@ -30,9 +33,12 @@ class FakeTransport:
         if remote[0] == REMOTE_RUNNER:
             return subprocess.CompletedProcess(command, 0, b"[job-20260810T120000Z-42] succeeded\n", b"")
         if remote[0] == "/usr/bin/cat" and "meta.yaml" in remote[2]:
+            digest = DEVSTRAL_MODEL_DIGEST if self.devstral else MODEL_DIGEST
+            cpu, gpu = (12, 88) if self.devstral else (20, 80)
             return subprocess.CompletedProcess(command, 0, (
-                f"manifest_digest: {MODEL_DIGEST}\nquantization: {MODEL_QUANTIZATION}\nexecution_policy: {EXECUTION_POLICY}\n"
-                "policy_result: GPU_PRIMARY_PARTIAL_OFFLOAD\nobserved_cpu_percent: 20\nobserved_gpu_percent: 80\nobserved_processor: 20%/80% CPU/GPU\n"
+                f"manifest_digest: {digest}\nquantization: {MODEL_QUANTIZATION}\nexecution_policy: {EXECUTION_POLICY}\n"
+                f"policy_result: GPU_PRIMARY_PARTIAL_OFFLOAD\nobserved_cpu_percent: {cpu}\nobserved_gpu_percent: {gpu}\n"
+                f"observed_processor: {cpu}%/{gpu}% CPU/GPU\n"
             ).encode(), b"")
         if remote[0] == "/usr/bin/cat":
             return subprocess.CompletedProcess(command, 0, b'{"request_type":"NO_CHANGE","arguments":{}}\n', b"")
@@ -75,6 +81,22 @@ class KatraOllamaBackendTests(unittest.TestCase):
         self.assertIn(injected, prompt)
         self.assertNotIn("touch", remote[:remote.index("--prompt")])
         self.assertEqual(REMOTE_RUNNER, remote[0])
+
+    def test_devstral_backend_is_exact_profile_bound_and_fail_closed(self) -> None:
+        transport = FakeTransport(devstral=True)
+        backend = DevstralKatraOllamaDispositionBackend(transport)
+        self.generate(backend, ({"role": "user", "content": {"fixture": "write"}},))
+        inference = shlex.split(transport.calls[0][-1])
+        self.assertEqual(DEVSTRAL_MODEL_TAG, inference[inference.index("--model") + 1])
+        evidence = backend.turn_evidence[0]
+        self.assertEqual(DEVSTRAL_RUNTIME_PROFILE.profile_id, backend.RUNTIME_PROFILE.profile_id)
+        self.assertEqual(DEVSTRAL_MODEL_DIGEST, evidence.manifest_digest)
+        self.assertEqual((12, 88), (evidence.observed_cpu_percent, evidence.observed_gpu_percent))
+        with self.assertRaises(KatraOllamaBackendError):
+            self.generate(
+                DevstralKatraOllamaDispositionBackend(FakeTransport()),
+                ({"role": "user", "content": {"fixture": "write"}},),
+            )
 
     def test_transport_failure_and_profile_violation_fail_closed(self) -> None:
         failed = KatraOllamaDispositionBackend(FakeTransport(fail_first=True))

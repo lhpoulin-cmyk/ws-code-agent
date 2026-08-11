@@ -16,6 +16,8 @@ sys.path.insert(0, str(ROOT / "src"))
 from ws_code_agent.alpha_experiment import AlphaExperimentController  # noqa: E402
 from ws_code_agent.katra_ollama_backend import KatraOllamaDispositionBackend, RuntimeTurnEvidence  # noqa: E402
 from ws_code_agent.supervised_work import (  # noqa: E402
+    DEVSTRAL_CANDIDATE_ID,
+    DEVSTRAL_V2_SESSION_KIND,
     SYNTHETIC_V2_CLARIFICATION,
     SYNTHETIC_V2_SESSION_KIND,
     SYNTHETIC_V2_WRITE,
@@ -29,6 +31,7 @@ from ws_code_agent.request_protocol import (  # noqa: E402
 
 
 QUALIFICATION = ROOT / "docs/qualification/qwen3-coder-30b-alpha-v1.yaml"
+DEVSTRAL_CANDIDATE = ROOT / "docs/qualification/devstral-small-2-v2-admission-candidate.yaml"
 
 
 def request(kind: str, arguments: dict) -> str:
@@ -293,6 +296,66 @@ class SupervisedWorkTests(unittest.TestCase):
                     fixture_kind=SYNTHETIC_V2_WRITE,
                     qualification_path=accepted_v2_qualification(root),
                     harness_sha="test-harness",
+                )
+
+    def test_devstral_admission_uses_exact_candidate_and_frozen_v2_fixtures(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write = SupervisedWorkController.start_devstral_v2_admission(
+                root / "store",
+                session_id="work-devstral-write-test",
+                fixture_kind=SYNTHETIC_V2_WRITE,
+                candidate_path=DEVSTRAL_CANDIDATE,
+                harness_sha="frozen-harness",
+            )
+            manifest = write.manifest()
+            self.assertEqual(DEVSTRAL_V2_SESSION_KIND, manifest["session_kind"])
+            self.assertEqual(DEVSTRAL_CANDIDATE_ID, manifest["qualification"]["candidate_id"])
+            self.assertEqual(
+                "24277f07f62db8f9cb68e9dfc679ea1818a7fbac47a50eff0a701d3f645b63c8",
+                manifest["model_artifact"]["digest"],
+            )
+            self.assertEqual(
+                "devstral-small-2-24b-katra-partial",
+                manifest["model_artifact"]["runtime_profile_id"],
+            )
+            self.assertEqual(88, manifest["model_artifact"]["minimum_gpu_percent"])
+            self.assertEqual(12, manifest["model_artifact"]["maximum_cpu_percent"])
+            self.assertEqual(VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID, manifest["protocol_id"])
+            self.assertEqual(["."], manifest["authority"]["read_scopes"])
+            self.assertEqual(["src/message.py"], manifest["authority"]["patch_paths"])
+            self.assertEqual(
+                "task10k-c-write/synthetic-v1",
+                write._turns._case("WORK")["fixture_identity"],
+            )
+
+            clarification = SupervisedWorkController.start_devstral_v2_admission(
+                root / "store",
+                session_id="work-devstral-clarification-test",
+                fixture_kind=SYNTHETIC_V2_CLARIFICATION,
+                candidate_path=DEVSTRAL_CANDIDATE,
+                harness_sha="frozen-harness",
+            )
+            self.assertEqual([], clarification.manifest()["authority"]["patch_paths"])
+            self.assertEqual(
+                "task10k-c-clarification/synthetic-v1",
+                clarification._turns._case("WORK")["fixture_identity"],
+            )
+
+            altered = root / "altered-candidate.yaml"
+            altered.write_text(
+                DEVSTRAL_CANDIDATE.read_text(encoding="utf-8").replace(
+                    "minimum_gpu_percent: 88", "minimum_gpu_percent: 80"
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(SupervisedWorkError, "CHALLENGER_BINDING_MISMATCH"):
+                SupervisedWorkController.start_devstral_v2_admission(
+                    root / "altered-store",
+                    session_id="work-devstral-altered-test",
+                    fixture_kind=SYNTHETIC_V2_WRITE,
+                    candidate_path=altered,
+                    harness_sha="frozen-harness",
                 )
 
     def test_value_free_v2_synthetic_write_and_clarification_use_normal_durable_lane(self):

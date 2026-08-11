@@ -14,7 +14,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from ws_code_agent.alpha_experiment import ExperimentError  # noqa: E402
-from ws_code_agent.katra_ollama_backend import KatraOllamaBackendError, KatraOllamaDispositionBackend  # noqa: E402
+from ws_code_agent.katra_ollama_backend import (  # noqa: E402
+    DEVSTRAL_MODEL_DIGEST,
+    DevstralKatraOllamaDispositionBackend,
+    KatraOllamaBackendError,
+    KatraOllamaDispositionBackend,
+    MODEL_DIGEST,
+)
 from ws_code_agent.supervised_work import (  # noqa: E402
     SYNTHETIC_V2_FIXTURES,
     SupervisedWorkController,
@@ -25,6 +31,7 @@ from ws_code_agent.supervised_work import (  # noqa: E402
 
 STORE = Path.home() / ".local" / "share" / "ws-code-agent" / "work"
 QUALIFICATION = ROOT / "docs" / "qualification" / "qwen3-coder-30b-alpha-v1.yaml"
+DEVSTRAL_CANDIDATE = ROOT / "docs" / "qualification" / "devstral-small-2-v2-admission-candidate.yaml"
 
 
 def _head() -> str:
@@ -46,6 +53,10 @@ def main() -> int:
     synthetic_v2.add_argument("--fixture", choices=SYNTHETIC_V2_FIXTURES, required=True)
     synthetic_v2.add_argument("--turn-limit", type=int, default=8)
     synthetic_v2.add_argument("--session-id")
+    devstral_v2 = sub.add_parser("start-devstral-v2")
+    devstral_v2.add_argument("--fixture", choices=SYNTHETIC_V2_FIXTURES, required=True)
+    devstral_v2.add_argument("--turn-limit", type=int, default=8)
+    devstral_v2.add_argument("--session-id")
     for command in ("status", "step", "review", "approve", "reject"):
         item = sub.add_parser(command)
         item.add_argument("session")
@@ -81,10 +92,28 @@ def main() -> int:
                 turn_limit=args.turn_limit,
             )
             output = controller.status()
+        elif args.command == "start-devstral-v2":
+            session_id = args.session_id or generated_session_id()
+            controller = SupervisedWorkController.start_devstral_v2_admission(
+                STORE,
+                session_id=session_id,
+                fixture_kind=args.fixture,
+                candidate_path=DEVSTRAL_CANDIDATE,
+                harness_sha=_head(),
+                turn_limit=args.turn_limit,
+            )
+            output = controller.status()
         else:
             controller = SupervisedWorkController(STORE / args.session)
             if args.command == "step":
-                controller.step(KatraOllamaDispositionBackend())
+                digest = controller.manifest()["model_artifact"]["digest"]
+                if digest == DEVSTRAL_MODEL_DIGEST:
+                    backend = DevstralKatraOllamaDispositionBackend()
+                elif digest == MODEL_DIGEST:
+                    backend = KatraOllamaDispositionBackend()
+                else:
+                    raise SupervisedWorkError("MODEL_QUALIFICATION_MISMATCH")
+                controller.step(backend)
                 output = controller.status()
             elif args.command == "review":
                 output = controller.review()

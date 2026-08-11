@@ -13,7 +13,7 @@ from ws_code_agent.request_protocol import VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL
 
 
 class ModelSelectionTests(unittest.TestCase):
-    def test_devstral_challenger_is_selected_without_qualification_or_admission(self):
+    def test_devstral_challenger_is_runtime_accepted_without_admission(self):
         matrix = (ROOT / "models/candidate-matrix.yaml").read_text(encoding="utf-8")
         selection = matrix.split("selected_challenger:\n", 1)[1].split("\nkatra:\n", 1)[0]
         required = (
@@ -26,13 +26,21 @@ class ModelSelectionTests(unittest.TestCase):
             "    temperature: 0.15",
             "  local_install_state: NOT_INSTALLED_AT_SELECTION",
             "  expected_katra_fit: PARTIAL_OFFLOAD_EXPECTED",
-            "  runtime_acceptance: NOT_EVALUATED",
-            "  production_admission: NOT_EVALUATED",
+            "  runtime_acceptance: RUNTIME_ACCEPTED",
+            "  runtime_profile_id: devstral-small-2-24b-katra-partial",
+            "  accepted_gpu_minimum_percent: 88",
+            "  accepted_cpu_maximum_percent: 12",
+            "  production_admission: PENDING",
             "  alpha_qualification: NOT_EVALUATED",
         )
         self.assertTrue(all(value in selection for value in required))
         self.assertNotIn("QUALIFIED", selection.replace("NOT_QUALIFIED", ""))
         self.assertNotIn("ADMITTED", selection.replace("NOT_ADMITTED", ""))
+        candidate = (ROOT / "docs/qualification/devstral-small-2-v2-admission-candidate.yaml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("status: RUNTIME_ACCEPTED", candidate)
+        self.assertIn("production_admission: PENDING", candidate)
         self.assertEqual(
             "3c4cbbb94fa26a758dbc157c6895606f1705a7b71b8bdc4c60fcb08330cfbe4e",
             hashlib.sha256(VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL.render().encode()).hexdigest(),

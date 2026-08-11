@@ -1,0 +1,41 @@
+schema_version: 1
+candidate_id: devstral-small-2-q4
+status: SELECTED_FOR_EVALUATION
+
+artifact:
+  model: devstral-small-2:24b-instruct-2512-q4_K_M
+  digest: 24277f07f62db8f9cb68e9dfc679ea1818a7fbac47a50eff0a701d3f645b63c8
+  quantization: Q4_K_M
+  context: 4096
+  temperature: 0.15
+  other_sampling: artifact/Ollama defaults
+  transport: OLLAMA_MACHINE_RESPONSE_V1
+
+runtime:
+  profile_id: devstral-small-2-24b-katra-partial
+  status: RUNTIME_ACCEPTED
+  execution: GPU_PRIMARY_PARTIAL_OFFLOAD
+  minimum_gpu_percent: 88
+  maximum_cpu_percent: 12
+  observed_vram_mib: 14648
+  appliance: cuda-compute-katra
+  host: hv-katra
+  accelerator: NVIDIA GeForce RTX 5070 Ti
+  gpu_cp_acceptance: ../../../../helix-arpa/gpu-cp/docs/acceptance/devstral-small-2-runtime-20260811.md
+
+supervised_protocol:
+  alpha_evaluation_protocol: WS_CODE_AGENT_REQUEST_PROTOCOL_V1_SINGLE
+  protocol_id: WS_CODE_AGENT_REQUEST_PROTOCOL_V2_SINGLE_VALUE_FREE
+  qualification_status: CANDIDATE
+  render_sha256: 3c4cbbb94fa26a758dbc157c6895606f1705a7b71b8bdc4c60fcb08330cfbe4e
+  synthetic_acceptance: PENDING
+  production_qualified: false
+  operating_class: SUPERVISED_SINGLE_REPO
+
+admission:
+  production_admission: PENDING
+  write_fixture: task10k-c-write/synthetic-v1
+  clarification_fixture: task10k-c-clarification/synthetic-v1
+  turn_limit_each: 8
+  both_required: true
+  alpha_qualification: NOT_EVALUATED

@@ -22,6 +22,10 @@ MODEL_TAG = "qwen3-coder:30b"
 MODEL_DIGEST = "06c1097efce0431c2045fe7b2e5108366e43bee1b4603a7aded8f21689e90bca"
 MODEL_QUANTIZATION = "Q4_K_M"
 EXECUTION_POLICY = "gpu-primary-partial"
+DEVSTRAL_MODEL_TAG = "devstral-small-2:24b-instruct-2512-q4_K_M"
+DEVSTRAL_MODEL_DIGEST = "24277f07f62db8f9cb68e9dfc679ea1818a7fbac47a50eff0a701d3f645b63c8"
+DEVSTRAL_MODEL_QUANTIZATION = "Q4_K_M"
+DEVSTRAL_EXECUTION_POLICY = "gpu-primary-partial"
 # The retained VM hostname is not presently resolvable from ws-matriarch.  The
 # approved operator path is the documented VM 320 address plus the vault-backed
 # SSH certificate; neither is model-controlled.
@@ -80,8 +84,44 @@ class InferenceInvocation:
     prompt_sha256: str
 
 
+@dataclass(frozen=True)
+class FixedKatraRuntimeProfile:
+    profile_id: str
+    model_tag: str
+    manifest_digest: str
+    quantization: str
+    execution_policy: str
+    policy_result: str
+    minimum_gpu_percent: int
+    maximum_cpu_percent: int
+
+
+QWEN_RUNTIME_PROFILE = FixedKatraRuntimeProfile(
+    "qwen3-coder-30b-katra-partial",
+    MODEL_TAG,
+    MODEL_DIGEST,
+    MODEL_QUANTIZATION,
+    EXECUTION_POLICY,
+    "GPU_PRIMARY_PARTIAL_OFFLOAD",
+    80,
+    20,
+)
+DEVSTRAL_RUNTIME_PROFILE = FixedKatraRuntimeProfile(
+    "devstral-small-2-24b-katra-partial",
+    DEVSTRAL_MODEL_TAG,
+    DEVSTRAL_MODEL_DIGEST,
+    DEVSTRAL_MODEL_QUANTIZATION,
+    DEVSTRAL_EXECUTION_POLICY,
+    "GPU_PRIMARY_PARTIAL_OFFLOAD",
+    88,
+    12,
+)
+
+
 class KatraOllamaDispositionBackend:
     """Text-only, exact-artifact backend for a single accepted Katra profile."""
+
+    RUNTIME_PROFILE = QWEN_RUNTIME_PROFILE
 
     def __init__(self, run_process: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run) -> None:
         self._run_process = run_process
@@ -162,10 +202,11 @@ class KatraOllamaDispositionBackend:
             )
         return result
 
-    @staticmethod
-    def _runner_command(prompt: str, invocation_id: str) -> tuple[str, ...]:
-        return (REMOTE_RUNNER, "--invocation-id", invocation_id, "--model", MODEL_TAG, "--prompt", prompt,
-                "--execution-policy", EXECUTION_POLICY)
+    @classmethod
+    def _runner_command(cls, prompt: str, invocation_id: str) -> tuple[str, ...]:
+        profile = cls.RUNTIME_PROFILE
+        return (REMOTE_RUNNER, "--invocation-id", invocation_id, "--model", profile.model_tag, "--prompt", prompt,
+                "--execution-policy", profile.execution_policy)
 
     @staticmethod
     def _job_id(stdout: bytes) -> str:
@@ -191,8 +232,8 @@ class KatraOllamaDispositionBackend:
                     values[key.strip()] = value.strip()
         return values
 
-    @staticmethod
-    def _validate_evidence(raw: str, job_id: str, evidence: dict[str, str], run: subprocess.CompletedProcess[bytes]) -> RuntimeTurnEvidence:
+    @classmethod
+    def _validate_evidence(cls, raw: str, job_id: str, evidence: dict[str, str], run: subprocess.CompletedProcess[bytes]) -> RuntimeTurnEvidence:
         required = {"manifest_digest", "quantization", "execution_policy", "policy_result", "observed_cpu_percent", "observed_gpu_percent", "observed_processor"}
         if not required <= set(evidence):
             raise KatraOllamaBackendError("controlled runtime evidence is incomplete")
@@ -200,9 +241,10 @@ class KatraOllamaDispositionBackend:
             cpu, gpu = int(evidence["observed_cpu_percent"]), int(evidence["observed_gpu_percent"])
         except ValueError as error:
             raise KatraOllamaBackendError("controlled runtime processor evidence is invalid") from error
-        if (evidence["manifest_digest"] != MODEL_DIGEST or evidence["quantization"] != MODEL_QUANTIZATION
-                or evidence["execution_policy"] != EXECUTION_POLICY or evidence["policy_result"] != "GPU_PRIMARY_PARTIAL_OFFLOAD"
-                or gpu < 80 or cpu > 20):
+        profile = cls.RUNTIME_PROFILE
+        if (evidence["manifest_digest"] != profile.manifest_digest or evidence["quantization"] != profile.quantization
+                or evidence["execution_policy"] != profile.execution_policy or evidence["policy_result"] != profile.policy_result
+                or gpu < profile.minimum_gpu_percent or cpu > profile.maximum_cpu_percent):
             raise KatraOllamaBackendError("accepted Katra runtime profile was not satisfied")
         return RuntimeTurnEvidence(
             hashlib.sha256(raw.encode("utf-8")).hexdigest(), job_id, evidence["manifest_digest"],
@@ -210,3 +252,9 @@ class KatraOllamaDispositionBackend:
             evidence["observed_processor"], run.stdout.decode("utf-8", errors="replace"),
             run.stderr.decode("utf-8", errors="replace"),
         )
+
+
+class DevstralKatraOllamaDispositionBackend(KatraOllamaDispositionBackend):
+    """Exact selected Devstral challenger bound to its accepted Katra profile."""
+
+    RUNTIME_PROFILE = DEVSTRAL_RUNTIME_PROFILE

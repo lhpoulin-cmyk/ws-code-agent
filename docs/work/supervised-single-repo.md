@@ -70,6 +70,18 @@ They accept no operator repository and grant neither production qualification
 nor promotion authority. The completed Qwen one-shot evaluation is historical;
 the failed qualification state prevents another Qwen run through this surface.
 
+## Disabled adapter candidate
+
+The live lane remains `STRICT_RAW`. Task 10X calibrated
+`SINGLE_MARKDOWN_JSON_FENCE_NORMALIZATION_V1` as a disabled
+`NORMALIZATION_CANDIDATE`. It removes only one whole-response unlabeled or
+lowercase-`json` Markdown fence while preserving the payload bytes and raw model
+evidence. It does not search prose, select objects, repair JSON or patches,
+rename requests, change values, convert `NO_CHANGE`, or retry a model. No live
+supervised path invokes it. Enabling any adapter requires a separate operator
+decision and must retain the existing parser, authority, isolation, validation,
+and review safeguards.
+
 ## Challenger admission
 
 A different artifact may be evaluated only after explicit selection. It must

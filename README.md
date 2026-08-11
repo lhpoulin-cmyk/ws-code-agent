@@ -58,6 +58,15 @@ instead of `REQUEST_CLARIFICATION`. The strict parser accepted neither request,
 so production admission failed without changing the model's accepted runtime or
 practical-baseline disposition.
 
+Task 10X calibrated—but did not enable—
+`SINGLE_MARKDOWN_JSON_FENCE_NORMALIZATION_V1` for the 14B interactive lane.
+The exact historical write response became parser-valid after its sole Markdown
+wrapper was removed, then the unchanged executor truthfully rejected the
+unmodified corrupt patch. The clarification response became parser-valid
+`NO_CHANGE`, preserving its separate semantic failure. This establishes a
+defensible representation-only candidate adapter without rescoring history,
+repairing output, or changing the current `STRICT_RAW` production behavior.
+
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and

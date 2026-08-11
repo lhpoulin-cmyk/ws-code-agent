@@ -104,6 +104,19 @@ class ModelSelectionTests(unittest.TestCase):
             "      runtime_accepted: YES",
             "      full_gpu_on_katra: YES",
             "      strict_v2_production_admission: FAIL",
+            "      live_mode: STRICT_RAW",
+            "      candidate_state: NORMALIZATION_CANDIDATE",
+            "      adapter_id: SINGLE_MARKDOWN_JSON_FENCE_NORMALIZATION_V1",
+            "      disposition: FENCE_NORMALIZATION_JUSTIFIED",
+            "      enabled: false",
+            "      historical_score: UNCHANGED_FAIL",
+            "        parser: VALID_PROPOSE_PATCH",
+            "        executor: PATCH_REJECTED_CORRUPT_PATCH_LINE_9",
+            "        technical_validation: NOT_EVALUATED",
+            "        parser: VALID_NO_CHANGE",
+            "        semantic_judgment: FAIL",
+            "        disposition: PRESENTATION_NORMALIZATION_DOES_NOT_FIX_CLARIFICATION_JUDGMENT",
+            "      preserved_32b_pass_through: BYTE_IDENTICAL",
         )
         self.assertTrue(all(value in candidate for value in required_candidate))
         self.assertNotIn("PRODUCTION_ADMITTED", candidate)
@@ -127,6 +140,12 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn("WRITE_FAIL", admission_evidence)
         self.assertIn("CLARIFICATION_FAIL", admission_evidence)
         self.assertIn("NEXT: SELECT NEXT ELIGIBLE CHALLENGER", admission_evidence)
+        adapter_evidence = (
+            ROOT / "docs/experiments/task10x-qwen25-coder-14b-adapter-calibration.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("FENCE_NORMALIZATION_JUSTIFIED", adapter_evidence)
+        self.assertIn("PRESENTATION_NORMALIZATION_DOES_NOT_FIX_CLARIFICATION_JUDGMENT", adapter_evidence)
+        self.assertIn("MODEL_INFERENCE_COUNT = 0", adapter_evidence)
 
     def test_qwen25_coder_32b_scale_control_preserves_inconclusive_admission(self):
         matrix = (ROOT / "models/candidate-matrix.yaml").read_text(encoding="utf-8")

@@ -32,6 +32,10 @@ from .katra_ollama_backend import (
     MODEL_QUANTIZATION,
     MODEL_TAG,
     QWEN_RUNTIME_PROFILE,
+    QWEN25_MODEL_DIGEST,
+    QWEN25_MODEL_QUANTIZATION,
+    QWEN25_MODEL_TAG,
+    QWEN25_RUNTIME_PROFILE,
     ResponseEvidenceSink,
 )
 from .readonly_executor import CompareStatus, ReadOnlyExecutor, RepositorySnapshot
@@ -53,6 +57,8 @@ SESSION_ID = re.compile(r"work-[A-Za-z0-9][A-Za-z0-9._-]{7,95}")
 SYNTHETIC_V2_SESSION_KIND = "SYNTHETIC_SUPERVISED_SINGLE_REPOSITORY_V2_ACCEPTANCE"
 DEVSTRAL_V2_SESSION_KIND = "DEVSTRAL_V2_SUPERVISED_PRODUCTION_ADMISSION"
 DEVSTRAL_CANDIDATE_ID = "devstral-small-2-q4"
+QWEN25_V2_SESSION_KIND = "QWEN25_V2_SUPERVISED_PRODUCTION_ADMISSION"
+QWEN25_CANDIDATE_ID = "qwen25-coder-14b-q4"
 SYNTHETIC_V2_WRITE = "write"
 SYNTHETIC_V2_CLARIFICATION = "clarification"
 SYNTHETIC_V2_FIXTURES = (SYNTHETIC_V2_WRITE, SYNTHETIC_V2_CLARIFICATION)
@@ -234,6 +240,53 @@ def _devstral_candidate_binding(path: Path) -> tuple[dict[str, Any], dict[str, A
         "runtime_profile_id": DEVSTRAL_RUNTIME_PROFILE.profile_id,
         "minimum_gpu_percent": DEVSTRAL_RUNTIME_PROFILE.minimum_gpu_percent,
         "maximum_cpu_percent": DEVSTRAL_RUNTIME_PROFILE.maximum_cpu_percent,
+    }
+    return qualification, model_artifact
+
+
+def _qwen25_candidate_binding(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    raw = path.read_bytes()
+    text = raw.decode("utf-8", errors="strict")
+    required = (
+        f"candidate_id: {QWEN25_CANDIDATE_ID}",
+        "status: RUNTIME_ACCEPTED",
+        f"  model: {QWEN25_MODEL_TAG}",
+        f"  digest: {QWEN25_MODEL_DIGEST}",
+        f"  quantization: {QWEN25_MODEL_QUANTIZATION}",
+        "  context: 4096",
+        "  generation_overrides: NONE",
+        f"  profile_id: {QWEN25_RUNTIME_PROFILE.profile_id}",
+        "  status: RUNTIME_ACCEPTED",
+        "  execution: GPU_ONLY",
+        "  minimum_gpu_percent: 100",
+        "  maximum_cpu_percent: 0",
+        "  ollama_version: 0.32.0+helix.repeatlimit.1",
+        "  binary_sha256: b53a386d6e2f8e17a360eb3d08bfc17e3e475d03918d07ace386c359324ef143",
+        "  build_id: ffd1f9f6c8ffd69fdca1316e7c032447479fe139",
+        f"  protocol_id: {VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID}",
+        "  production_admission: NOT_EVALUATED",
+    )
+    if any(item not in text for item in required):
+        raise SupervisedWorkError("CHALLENGER_BINDING_MISMATCH")
+    qualification = {
+        "candidate_id": QWEN25_CANDIDATE_ID,
+        "manifest": "docs/qualification/qwen25-coder-14b-v2-admission-candidate.yaml",
+        "manifest_sha256": hashlib.sha256(raw).hexdigest(),
+        "artifact_digest": QWEN25_MODEL_DIGEST,
+        "evaluation_scope": "V2_SYNTHETIC_PRODUCTION_ADMISSION",
+        "runtime_status": "RUNTIME_ACCEPTED",
+        "production_admission": "NOT_EVALUATED",
+    }
+    model_artifact = {
+        "tag": QWEN25_MODEL_TAG,
+        "digest": QWEN25_MODEL_DIGEST,
+        "quantization": QWEN25_MODEL_QUANTIZATION,
+        "context": 4096,
+        "sampling": "artifact/Ollama defaults; no generation overrides",
+        "runtime_profile": QWEN25_RUNTIME_PROFILE.policy_result,
+        "runtime_profile_id": QWEN25_RUNTIME_PROFILE.profile_id,
+        "minimum_gpu_percent": QWEN25_RUNTIME_PROFILE.minimum_gpu_percent,
+        "maximum_cpu_percent": QWEN25_RUNTIME_PROFILE.maximum_cpu_percent,
     }
     return qualification, model_artifact
 
@@ -504,6 +557,50 @@ class SupervisedWorkController:
             qualification=qualification,
             model_artifact=model_artifact,
             session_kind=DEVSTRAL_V2_SESSION_KIND,
+            fixture_identity=fixture_identity,
+        )
+
+    @classmethod
+    def start_qwen25_v2_admission(
+        cls,
+        store: Path,
+        *,
+        session_id: str,
+        fixture_kind: str,
+        candidate_path: Path,
+        harness_sha: str,
+        turn_limit: int = DEFAULT_TURN_LIMIT,
+    ) -> "SupervisedWorkController":
+        if not SESSION_ID.fullmatch(session_id):
+            raise SupervisedWorkError("INVALID_SESSION_ID")
+        qualification, model_artifact = _qwen25_candidate_binding(candidate_path)
+        protocol_qualification = _candidate_protocol_qualification(candidate_path)
+        if (
+            protocol_qualification["qualification_status"] != "CANDIDATE"
+            or protocol_qualification["synthetic_acceptance"] != "PENDING"
+            or protocol_qualification["production_qualified"]
+        ):
+            raise SupervisedWorkError("V2_CANDIDATE_SESSION_NOT_AUTHORIZED")
+        qualification["protocol"] = protocol_qualification
+        repository, objective, read_scopes, patch_paths, fixture_identity = (
+            _initialize_synthetic_v2_fixture(store, session_id, fixture_kind)
+        )
+        expected_head = _git(repository, "rev-parse", "HEAD")
+        return cls._start_bound(
+            store,
+            session_id=session_id,
+            repository=repository,
+            expected_head=expected_head,
+            objective=objective,
+            read_scopes=read_scopes,
+            patch_paths=patch_paths,
+            harness_sha=harness_sha,
+            turn_limit=turn_limit,
+            protocol_id=VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID,
+            protocol_qualification=protocol_qualification,
+            qualification=qualification,
+            model_artifact=model_artifact,
+            session_kind=QWEN25_V2_SESSION_KIND,
             fixture_identity=fixture_identity,
         )
 

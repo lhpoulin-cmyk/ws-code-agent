@@ -15,9 +15,12 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from ws_code_agent.alpha_experiment import AlphaExperimentController  # noqa: E402
 from ws_code_agent.katra_ollama_backend import KatraOllamaDispositionBackend, RuntimeTurnEvidence  # noqa: E402
+from ws_code_agent import supervised_work as supervised_work_module  # noqa: E402
 from ws_code_agent.supervised_work import (  # noqa: E402
     DEVSTRAL_CANDIDATE_ID,
     DEVSTRAL_V2_SESSION_KIND,
+    QWEN25_CANDIDATE_ID,
+    QWEN25_V2_SESSION_KIND,
     SYNTHETIC_V2_CLARIFICATION,
     SYNTHETIC_V2_SESSION_KIND,
     SYNTHETIC_V2_WRITE,
@@ -26,12 +29,14 @@ from ws_code_agent.supervised_work import (  # noqa: E402
 )
 from ws_code_agent.request_protocol import (  # noqa: E402
     SINGLE_REPOSITORY_PROTOCOL_ID,
+    VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL,
     VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID,
 )
 
 
 QUALIFICATION = ROOT / "docs/qualification/qwen3-coder-30b-alpha-v1.yaml"
 DEVSTRAL_CANDIDATE = ROOT / "docs/qualification/devstral-small-2-v2-admission-candidate.yaml"
+QWEN25_CANDIDATE = ROOT / "docs/qualification/qwen25-coder-14b-v2-admission-candidate.yaml"
 
 
 def request(kind: str, arguments: dict) -> str:
@@ -152,6 +157,38 @@ def start(store: Path, repo: Path, head: str, *, patch_paths=("src/message.py",)
 
 
 class SupervisedWorkTests(unittest.TestCase):
+    def test_qwen25_selector_preserves_frozen_v2_and_fixture_bytes(self):
+        self.assertEqual(
+            "3c4cbbb94fa26a758dbc157c6895606f1705a7b71b8bdc4c60fcb08330cfbe4e",
+            hashlib.sha256(VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL.render().encode()).hexdigest(),
+        )
+        fixtures = (
+            (
+                supervised_work_module._WRITE_OBJECTIVE,
+                supervised_work_module._WRITE_README,
+                "",
+                "task10k-c-write/synthetic-v1",
+                (".",),
+                ("src/message.py",),
+                "db9efb27f7f56da8a0f295e3ef0e656271264ac08ec977da578f2e6e020bb2b6",
+            ),
+            (
+                supervised_work_module._CLARIFICATION_OBJECTIVE,
+                supervised_work_module._CLARIFICATION_README,
+                supervised_work_module._CLARIFICATION_SOURCE,
+                "task10k-c-clarification/synthetic-v1",
+                (".",),
+                (),
+                "b0f5cdd341a2eb491ddcd9f02253563cbc0a44d79eccf86b3a3519cfdb13b3ba",
+            ),
+        )
+        for objective, readme, source, identity, reads, patches, expected in fixtures:
+            payload = json.dumps(
+                [objective, readme, source, identity, reads, patches],
+                separators=(",", ":"),
+            ).encode()
+            self.assertEqual(expected, hashlib.sha256(payload).hexdigest())
+
     def test_manifest_binds_clean_source_explicit_scope_and_qualification(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); repo, head = repository(root)
@@ -357,6 +394,80 @@ class SupervisedWorkTests(unittest.TestCase):
                     candidate_path=altered,
                     harness_sha="frozen-harness",
                 )
+
+    def test_qwen25_admission_uses_exact_candidate_and_rejects_stale_bindings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write = SupervisedWorkController.start_qwen25_v2_admission(
+                root / "store",
+                session_id="work-qwen25-write-test",
+                fixture_kind=SYNTHETIC_V2_WRITE,
+                candidate_path=QWEN25_CANDIDATE,
+                harness_sha="frozen-harness",
+            )
+            manifest = write.manifest()
+            self.assertEqual(QWEN25_V2_SESSION_KIND, manifest["session_kind"])
+            self.assertEqual(QWEN25_CANDIDATE_ID, manifest["qualification"]["candidate_id"])
+            self.assertEqual(
+                "qwen2.5-coder:14b-instruct-q4_K_M", manifest["model_artifact"]["tag"]
+            )
+            self.assertEqual(
+                "9ec8897f747e246e970bc5cfdda85d22f1123dc2e3d34978a010a75968716849",
+                manifest["model_artifact"]["digest"],
+            )
+            self.assertEqual("qwen25-coder-14b-katra-4096", manifest["model_artifact"]["runtime_profile_id"])
+            self.assertEqual((100, 0), (
+                manifest["model_artifact"]["minimum_gpu_percent"],
+                manifest["model_artifact"]["maximum_cpu_percent"],
+            ))
+            self.assertEqual(4096, manifest["model_artifact"]["context"])
+            self.assertEqual(["."], manifest["authority"]["read_scopes"])
+            self.assertEqual(["src/message.py"], manifest["authority"]["patch_paths"])
+            self.assertEqual(8, manifest["turn_limit"])
+            self.assertEqual("task10k-c-write/synthetic-v1", write._turns._case("WORK")["fixture_identity"])
+
+            clarification = SupervisedWorkController.start_qwen25_v2_admission(
+                root / "store",
+                session_id="work-qwen25-clarification-test",
+                fixture_kind=SYNTHETIC_V2_CLARIFICATION,
+                candidate_path=QWEN25_CANDIDATE,
+                harness_sha="frozen-harness",
+            )
+            self.assertEqual([], clarification.manifest()["authority"]["patch_paths"])
+            self.assertEqual(8, clarification.manifest()["turn_limit"])
+            self.assertEqual(
+                "task10k-c-clarification/synthetic-v1",
+                clarification._turns._case("WORK")["fixture_identity"],
+            )
+
+            replacements = {
+                "wrong-digest": (
+                    "9ec8897f747e246e970bc5cfdda85d22f1123dc2e3d34978a010a75968716849",
+                    "0" * 64,
+                ),
+                "wrong-tag": (
+                    "qwen2.5-coder:14b-instruct-q4_K_M",
+                    "qwen2.5-coder:14b-instruct-q4_0",
+                ),
+                "wrong-profile": (
+                    "qwen25-coder-14b-katra-4096",
+                    "devstral-small-2-24b-katra-partial",
+                ),
+            }
+            source = QWEN25_CANDIDATE.read_text(encoding="utf-8")
+            for name, (old, new) in replacements.items():
+                altered = root / f"{name}.yaml"
+                altered.write_text(source.replace(old, new), encoding="utf-8")
+                with self.subTest(name=name), self.assertRaisesRegex(
+                    SupervisedWorkError, "CHALLENGER_BINDING_MISMATCH"
+                ):
+                    SupervisedWorkController.start_qwen25_v2_admission(
+                        root / f"{name}-store",
+                        session_id=f"work-qwen25-{name}",
+                        fixture_kind=SYNTHETIC_V2_WRITE,
+                        candidate_path=altered,
+                        harness_sha="frozen-harness",
+                    )
 
     def test_value_free_v2_synthetic_write_and_clarification_use_normal_durable_lane(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -20,6 +20,8 @@ from ws_code_agent.katra_ollama_backend import (  # noqa: E402
     KatraOllamaBackendError,
     KatraOllamaDispositionBackend,
     MODEL_DIGEST,
+    QWEN25_MODEL_DIGEST,
+    Qwen25KatraOllamaDispositionBackend,
 )
 from ws_code_agent.supervised_work import (  # noqa: E402
     SYNTHETIC_V2_FIXTURES,
@@ -32,6 +34,7 @@ from ws_code_agent.supervised_work import (  # noqa: E402
 STORE = Path.home() / ".local" / "share" / "ws-code-agent" / "work"
 QUALIFICATION = ROOT / "docs" / "qualification" / "qwen3-coder-30b-alpha-v1.yaml"
 DEVSTRAL_CANDIDATE = ROOT / "docs" / "qualification" / "devstral-small-2-v2-admission-candidate.yaml"
+QWEN25_CANDIDATE = ROOT / "docs" / "qualification" / "qwen25-coder-14b-v2-admission-candidate.yaml"
 
 
 def _head() -> str:
@@ -57,6 +60,10 @@ def main() -> int:
     devstral_v2.add_argument("--fixture", choices=SYNTHETIC_V2_FIXTURES, required=True)
     devstral_v2.add_argument("--turn-limit", type=int, default=8)
     devstral_v2.add_argument("--session-id")
+    qwen25_v2 = sub.add_parser("start-qwen25-v2")
+    qwen25_v2.add_argument("--fixture", choices=SYNTHETIC_V2_FIXTURES, required=True)
+    qwen25_v2.add_argument("--turn-limit", type=int, default=8)
+    qwen25_v2.add_argument("--session-id")
     for command in ("status", "step", "review", "approve", "reject"):
         item = sub.add_parser(command)
         item.add_argument("session")
@@ -103,12 +110,25 @@ def main() -> int:
                 turn_limit=args.turn_limit,
             )
             output = controller.status()
+        elif args.command == "start-qwen25-v2":
+            session_id = args.session_id or generated_session_id()
+            controller = SupervisedWorkController.start_qwen25_v2_admission(
+                STORE,
+                session_id=session_id,
+                fixture_kind=args.fixture,
+                candidate_path=QWEN25_CANDIDATE,
+                harness_sha=_head(),
+                turn_limit=args.turn_limit,
+            )
+            output = controller.status()
         else:
             controller = SupervisedWorkController(STORE / args.session)
             if args.command == "step":
                 digest = controller.manifest()["model_artifact"]["digest"]
                 if digest == DEVSTRAL_MODEL_DIGEST:
                     backend = DevstralKatraOllamaDispositionBackend()
+                elif digest == QWEN25_MODEL_DIGEST:
+                    backend = Qwen25KatraOllamaDispositionBackend()
                 elif digest == MODEL_DIGEST:
                     backend = KatraOllamaDispositionBackend()
                 else:

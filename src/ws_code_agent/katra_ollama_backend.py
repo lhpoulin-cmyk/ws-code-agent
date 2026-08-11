@@ -26,6 +26,10 @@ DEVSTRAL_MODEL_TAG = "devstral-small-2:24b-instruct-2512-q4_K_M"
 DEVSTRAL_MODEL_DIGEST = "24277f07f62db8f9cb68e9dfc679ea1818a7fbac47a50eff0a701d3f645b63c8"
 DEVSTRAL_MODEL_QUANTIZATION = "Q4_K_M"
 DEVSTRAL_EXECUTION_POLICY = "gpu-primary-partial"
+QWEN25_MODEL_TAG = "qwen2.5-coder:14b-instruct-q4_K_M"
+QWEN25_MODEL_DIGEST = "9ec8897f747e246e970bc5cfdda85d22f1123dc2e3d34978a010a75968716849"
+QWEN25_MODEL_QUANTIZATION = "Q4_K_M"
+QWEN25_EXECUTION_POLICY = "gpu-only"
 # The retained VM hostname is not presently resolvable from ws-matriarch.  The
 # approved operator path is the documented VM 320 address plus the vault-backed
 # SSH certificate; neither is model-controlled.
@@ -145,6 +149,16 @@ DEVSTRAL_RUNTIME_PROFILE = FixedKatraRuntimeProfile(
     "GPU_PRIMARY_PARTIAL_OFFLOAD",
     88,
     12,
+)
+QWEN25_RUNTIME_PROFILE = FixedKatraRuntimeProfile(
+    "qwen25-coder-14b-katra-4096",
+    QWEN25_MODEL_TAG,
+    QWEN25_MODEL_DIGEST,
+    QWEN25_MODEL_QUANTIZATION,
+    QWEN25_EXECUTION_POLICY,
+    "GPU_ONLY",
+    100,
+    0,
 )
 
 
@@ -368,3 +382,9 @@ class DevstralKatraOllamaDispositionBackend(KatraOllamaDispositionBackend):
     """Exact selected Devstral challenger bound to its accepted Katra profile."""
 
     RUNTIME_PROFILE = DEVSTRAL_RUNTIME_PROFILE
+
+
+class Qwen25KatraOllamaDispositionBackend(KatraOllamaDispositionBackend):
+    """Exact selected Qwen2.5 challenger bound to its accepted Katra profile."""
+
+    RUNTIME_PROFILE = QWEN25_RUNTIME_PROFILE

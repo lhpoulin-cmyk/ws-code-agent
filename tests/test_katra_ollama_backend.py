@@ -172,6 +172,12 @@ class KatraOllamaBackendTests(unittest.TestCase):
         evidence = backend.turn_evidence[0]
         self.assertEqual(QWEN25_RUNTIME_PROFILE.profile_id, backend.RUNTIME_PROFILE.profile_id)
         self.assertEqual(QWEN25_MODEL_DIGEST, evidence.manifest_digest)
+        self.assertEqual((101, 11, 31, 59), (
+            evidence.total_duration,
+            evidence.load_duration,
+            evidence.prompt_eval_duration,
+            evidence.eval_duration,
+        ))
         self.assertEqual((0, 100), (evidence.observed_cpu_percent, evidence.observed_gpu_percent))
         self.assertEqual(
             KatraOllamaDispositionBackend._render_prompt(messages, SINGLE_REPOSITORY_PROTOCOL),

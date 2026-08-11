@@ -78,6 +78,10 @@ class RuntimeTurnEvidence:
     done_reason: str | None = None
     prompt_eval_count: int | None = None
     eval_count: int | None = None
+    total_duration: int | None = None
+    load_duration: int | None = None
+    prompt_eval_duration: int | None = None
+    eval_duration: int | None = None
 
 
 @dataclass(frozen=True)
@@ -389,6 +393,8 @@ class KatraOllamaDispositionBackend:
             evidence["completion_meta_sha256"], completion["done"],
             completion["done_reason_present"], completion["done_reason"],
             completion["prompt_eval_count"], completion["eval_count"],
+            completion["total_duration"], completion["load_duration"],
+            completion["prompt_eval_duration"], completion["eval_duration"],
         )
 
 

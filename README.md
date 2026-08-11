@@ -57,13 +57,14 @@ instead of `REQUEST_CLARIFICATION`. The strict parser accepted neither request,
 so production admission failed without changing the model's accepted runtime or
 practical-baseline disposition.
 
-`qwen25-coder-32b-q4` is selected next as an intra-family scale control. Its
+`qwen25-coder-32b-q4` is retained as an intra-family scale control. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and
 the exact 4096 comparison seam, while changing model scale from 14.8B to 32.8B.
-The 19,851,336,384-byte model layer cannot fit wholly in Katra's 16,303 MiB
-VRAM, so GPU-primary partial offload is expected and must pass a separate
-runtime acceptance. It is not acquired, runtime-accepted, production-admitted,
-preferred, or a replacement for the 14B baseline.
+One exact pull and three no-retry neutral probes established a runtime-accepted
+`qwen25-coder-32b-katra-4096` profile: 71% GPU / 29% CPU, 14,634 MiB peak VRAM,
+effective context 4096, and no host-pressure or accelerator fault. This is
+runtime evidence only. Behavioral comparison has not run, and the candidate is
+not production-admitted, preferred, or a replacement for the 14B baseline.
 
 The inherited Doc Writer implementation remains removed from the live tree;
 witnessed history and reusable references are preserved under `lineage/`.

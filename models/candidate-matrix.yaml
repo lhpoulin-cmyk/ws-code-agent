@@ -8,7 +8,7 @@ selection_rule: Selection for evaluation does not imply a default,
 selected_challenger:
   id: qwen25-coder-32b-q4
   role: INTRA_FAMILY_SCALE_CONTROL
-  status: SELECTED_FOR_EVALUATION
+  status: RUNTIME_ACCEPTED
   selected_at: 2026-08-11
   canonical_upstream_model: Qwen/Qwen2.5-Coder-32B-Instruct
   ollama_tag: qwen2.5-coder:32b-instruct-q4_K_M
@@ -19,13 +19,24 @@ selected_challenger:
   comparison_context: 4096
   context_classification: QWEN25_CODER_32B_CONTEXT_4096_COMPATIBLE
   artifact_generation_defaults: NONE_SPECIFIED
-  acquisition_state: NOT_ACQUIRED
+  acquisition_state: ACQUIRED_EXACT_ARTIFACT
   expected_katra_fit: GPU_PRIMARY_PARTIAL_OFFLOAD_EXPECTED
-  runtime_acceptance: NOT_EVALUATED
+  empirical_katra_fit: GPU_PRIMARY_PARTIAL_OFFLOAD
+  runtime_acceptance:
+    status: RUNTIME_ACCEPTED
+    profile_id: qwen25-coder-32b-katra-4096
+    implementation_checkpoint: 282cffabfa165b9d9906a35a9372cb077bdf6153
+    policy_acceptance_checkpoint: e64e39c029616d69ec4523500facd20e7a75c9f2
+    execution: GPU_PRIMARY_PARTIAL_OFFLOAD
+    processor_envelope: {minimum_gpu_percent: 71, maximum_cpu_percent: 29}
+    observed_vram_mib: 14634
+    minimum_host_available_bytes: 14011752448
+    effective_context: 4096
   production_admission: NOT_EVALUATED
   qualification: NOT_EVALUATED
   evidence:
     - ../docs/experiments/task10s-qwen25-coder-32b-scale-control-selection.md
+    - ../docs/experiments/task10t-qwen25-coder-32b-runtime-acceptance.md
 
 katra:
   role: KATRA_TORTURE
@@ -318,7 +329,7 @@ candidates:
       - ../docs/experiments/task10n-e-ollama-repeat-guard-terminalization.md
 
   - id: qwen25-coder-32b-q4
-    status: SELECTED_FOR_EVALUATION
+    status: RUNTIME_ACCEPTED
     role: INTRA_FAMILY_SCALE_CONTROL
     source_verified_at: 2026-08-11
     selected_at: 2026-08-11
@@ -329,8 +340,8 @@ candidates:
     ollama:
       display_tag: qwen2.5-coder:32b-instruct-q4_K_M
       resolved_identity: ollama-manifest-digest:b92d6a0bd47ee79114298de0177bf920c05a706d12633950b3936778492bef41
-      identity_note: Resolved read-only from the official registry on 2026-08-11;
-        no model layer was downloaded and the artifact is not installed on Katra.
+      identity_note: Resolved from the official registry, then acquired and
+        hash-verified in the canonical Katra Ollama store on 2026-08-11.
       config_digest: sha256:f0676bd3c336a0f995e270c5e2c80ce09aa5cfcab0c59ff574088eca52da32ee
       config_bytes: 488
       model_layer_digest: sha256:ac3d1ba8aa77755dab3806d9024e9c385ea0d5b412d6bdf9157f8a4a7e9fc0d9
@@ -375,11 +386,26 @@ candidates:
       interface: PLAIN_MACHINE_RESPONSE_COMPATIBLE
       model_specific_adaptation: NOT_REQUIRED
       repeat_limit_patch_relevance: REPORTING_ONLY_NO_LOADING_OR_SAMPLING_CHANGE
-    acquisition_state: NOT_ACQUIRED
+    acquisition_state: ACQUIRED_EXACT_ARTIFACT
     expected_katra_fit: GPU_PRIMARY_PARTIAL_OFFLOAD_EXPECTED
-    expected_residency: GPU_PRIMARY_PARTIAL_OFFLOAD
-    host_pressure_assessment: ELEVATED_BUT_BOUNDED_FOR_RUNTIME_ACCEPTANCE
-    runtime_acceptance: NOT_EVALUATED
+    empirical_katra_fit: GPU_PRIMARY_PARTIAL_OFFLOAD
+    host_pressure_assessment: ACCEPTED_NO_PRESSURE_ABORT
+    runtime_acceptance:
+      status: RUNTIME_ACCEPTED
+      profile_id: qwen25-coder-32b-katra-4096
+      implementation_repository: gpu-compute
+      implementation_checkpoint: 282cffabfa165b9d9906a35a9372cb077bdf6153
+      policy_repository: gpu-cp
+      policy_acceptance_checkpoint: e64e39c029616d69ec4523500facd20e7a75c9f2
+      runtime: 0.32.0+helix.repeatlimit.1
+      execution: GPU_PRIMARY_PARTIAL_OFFLOAD
+      processor_envelope: {minimum_gpu_percent: 71, maximum_cpu_percent: 29}
+      observed_vram_mib: 14634
+      minimum_host_available_bytes: 14011752448
+      effective_context: 4096
+      neutral_probes: 3
+      terminality: NORMAL_STOP_ALL_PROBES
+      model_repeat_limit: NOT_OBSERVED
     production_admission: NOT_EVALUATED
     qualification: NOT_EVALUATED
     selection_rationale:
@@ -394,6 +420,7 @@ candidates:
       - https://huggingface.co/Qwen/Qwen2.5-Coder-32B-Instruct
       - https://github.com/ollama/ollama/tree/v0.32.0
       - ../docs/experiments/task10s-qwen25-coder-32b-scale-control-selection.md
+      - ../docs/experiments/task10t-qwen25-coder-32b-runtime-acceptance.md
 
   - id: qwen3-coder-30b-q8
     status: CANDIDATE

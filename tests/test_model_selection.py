@@ -127,13 +127,13 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn("CLARIFICATION_FAIL", admission_evidence)
         self.assertIn("NEXT: SELECT NEXT ELIGIBLE CHALLENGER", admission_evidence)
 
-    def test_qwen25_coder_32b_is_selected_as_exact_scale_control(self):
+    def test_qwen25_coder_32b_runtime_is_accepted_as_exact_scale_control(self):
         matrix = (ROOT / "models/candidate-matrix.yaml").read_text(encoding="utf-8")
         selection = matrix.split("selected_challenger:\n", 1)[1].split("\nkatra:\n", 1)[0]
         required_selection = (
             "  id: qwen25-coder-32b-q4",
             "  role: INTRA_FAMILY_SCALE_CONTROL",
-            "  status: SELECTED_FOR_EVALUATION",
+            "  status: RUNTIME_ACCEPTED",
             "  ollama_tag: qwen2.5-coder:32b-instruct-q4_K_M",
             "  manifest_digest: b92d6a0bd47ee79114298de0177bf920c05a706d12633950b3936778492bef41",
             "  model_layer_digest: ac3d1ba8aa77755dab3806d9024e9c385ea0d5b412d6bdf9157f8a4a7e9fc0d9",
@@ -141,15 +141,23 @@ class ModelSelectionTests(unittest.TestCase):
             "  comparison_context: 4096",
             "  context_classification: QWEN25_CODER_32B_CONTEXT_4096_COMPATIBLE",
             "  artifact_generation_defaults: NONE_SPECIFIED",
-            "  acquisition_state: NOT_ACQUIRED",
+            "  acquisition_state: ACQUIRED_EXACT_ARTIFACT",
             "  expected_katra_fit: GPU_PRIMARY_PARTIAL_OFFLOAD_EXPECTED",
-            "  runtime_acceptance: NOT_EVALUATED",
+            "  empirical_katra_fit: GPU_PRIMARY_PARTIAL_OFFLOAD",
+            "    status: RUNTIME_ACCEPTED",
+            "    profile_id: qwen25-coder-32b-katra-4096",
+            "    implementation_checkpoint: 282cffabfa165b9d9906a35a9372cb077bdf6153",
+            "    policy_acceptance_checkpoint: e64e39c029616d69ec4523500facd20e7a75c9f2",
+            "    execution: GPU_PRIMARY_PARTIAL_OFFLOAD",
+            "    processor_envelope: {minimum_gpu_percent: 71, maximum_cpu_percent: 29}",
+            "    observed_vram_mib: 14634",
+            "    effective_context: 4096",
             "  production_admission: NOT_EVALUATED",
         )
         self.assertTrue(all(value in selection for value in required_selection))
         candidate = matrix.split("  - id: qwen25-coder-32b-q4\n", 1)[1].split("\n  - id:", 1)[0]
         required_candidate = (
-            "    status: SELECTED_FOR_EVALUATION",
+            "    status: RUNTIME_ACCEPTED",
             "    role: INTRA_FAMILY_SCALE_CONTROL",
             "ollama-manifest-digest:b92d6a0bd47ee79114298de0177bf920c05a706d12633950b3936778492bef41",
             "sha256:f0676bd3c336a0f995e270c5e2c80ce09aa5cfcab0c59ff574088eca52da32ee",
@@ -167,13 +175,23 @@ class ModelSelectionTests(unittest.TestCase):
             "      exact_14b_template_layer_match: true",
             "      interface: PLAIN_MACHINE_RESPONSE_COMPATIBLE",
             "      model_specific_adaptation: NOT_REQUIRED",
-            "    acquisition_state: NOT_ACQUIRED",
+            "    acquisition_state: ACQUIRED_EXACT_ARTIFACT",
             "    expected_katra_fit: GPU_PRIMARY_PARTIAL_OFFLOAD_EXPECTED",
-            "    runtime_acceptance: NOT_EVALUATED",
+            "    empirical_katra_fit: GPU_PRIMARY_PARTIAL_OFFLOAD",
+            "      status: RUNTIME_ACCEPTED",
+            "      profile_id: qwen25-coder-32b-katra-4096",
+            "      implementation_checkpoint: 282cffabfa165b9d9906a35a9372cb077bdf6153",
+            "      policy_acceptance_checkpoint: e64e39c029616d69ec4523500facd20e7a75c9f2",
+            "      execution: GPU_PRIMARY_PARTIAL_OFFLOAD",
+            "      processor_envelope: {minimum_gpu_percent: 71, maximum_cpu_percent: 29}",
+            "      observed_vram_mib: 14634",
+            "      effective_context: 4096",
+            "      neutral_probes: 3",
+            "      terminality: NORMAL_STOP_ALL_PROBES",
+            "      model_repeat_limit: NOT_OBSERVED",
             "    production_admission: NOT_EVALUATED",
         )
         self.assertTrue(all(value in candidate for value in required_candidate))
-        self.assertNotIn("RUNTIME_ACCEPTED", candidate)
         self.assertNotIn("PRODUCTION_ADMITTED", candidate)
         evidence = (
             ROOT / "docs/experiments/task10s-qwen25-coder-32b-scale-control-selection.md"
@@ -182,6 +200,15 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn("NEXT_MODEL_CANDIDATE = qwen25-coder-32b-q4", evidence)
         self.assertIn("ROLE = INTRA_FAMILY_SCALE_CONTROL", evidence)
         self.assertIn("NEXT: RUN QWEN2.5-CODER 32B ARTIFACT/RUNTIME ACCEPTANCE", evidence)
+        runtime_evidence = (
+            ROOT / "docs/experiments/task10t-qwen25-coder-32b-runtime-acceptance.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("QWEN25_CODER_32B_RUNTIME_ACCEPTED", runtime_evidence)
+        self.assertIn("GPU_PRIMARY_PARTIAL_OFFLOAD", runtime_evidence)
+        self.assertIn(
+            "NEXT: BIND QWEN2.5-CODER 32B SCALE CONTROL TO FROZEN V2 ADMISSION SEAM",
+            runtime_evidence,
+        )
         self.assertEqual(
             "3c4cbbb94fa26a758dbc157c6895606f1705a7b71b8bdc4c60fcb08330cfbe4e",
             hashlib.sha256(VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL.render().encode()).hexdigest(),

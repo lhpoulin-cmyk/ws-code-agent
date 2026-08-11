@@ -11,7 +11,15 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ws_code_agent.alpha_experiment import AlphaExperimentController, ExperimentError
-from ws_code_agent.katra_ollama_backend import KatraOllamaDispositionBackend, RuntimeTurnEvidence
+from ws_code_agent.katra_ollama_backend import (
+    DEVSTRAL_RUNTIME_PROFILE,
+    QWEN_RUNTIME_PROFILE,
+    DevstralKatraOllamaDispositionBackend,
+    ExecutionArtifactIdentity,
+    InferenceInvocation,
+    KatraOllamaDispositionBackend,
+    RuntimeTurnEvidence,
+)
 from ws_code_agent.request_protocol import SINGLE_REPOSITORY_PROTOCOL, SINGLE_REPOSITORY_PROTOCOL_ID
 
 
@@ -31,7 +39,7 @@ class FakeBackend:
             hashlib.sha256(raw.encode()).hexdigest(), f"job-{self.calls}",
             "digest", "Q4_K_M", "gpu-primary-partial",
             "GPU_PRIMARY_PARTIAL_OFFLOAD", 20, 80, "20%/80% CPU/GPU", "", "",
-            "OLLAMA_RESPONSE_META_V1", "a" * 64, True, True, "stop", 17, 23,
+            "OLLAMA_RESPONSE_META_V2", "a" * 64, True, True, "stop", 17, 23,
         ))
         if self.stop_after_capture:
             raise RuntimeError("simulated session loss")
@@ -47,6 +55,42 @@ class IdempotentRemoteBackend:
             if self.disconnect_once: self.disconnect_once=False; raise ConnectionError("client disappeared after remote success")
         raw=self.invocations[invocation.invocation_id]
         evidence_sink.capture_response(raw,RuntimeTurnEvidence(hashlib.sha256(raw.encode()).hexdigest(),"job-1","digest","Q4_K_M","gpu-primary-partial","GPU_PRIMARY_PARTIAL_OFFLOAD",20,80,"20%/80% CPU/GPU","","")); return raw
+
+
+class InterruptedIdentityBackend:
+    def __init__(self, backend_type=KatraOllamaDispositionBackend):
+        self.backend_type = backend_type
+
+    def invocation_for(self, messages, invocation_id, *, protocol):
+        return self.backend_type.invocation_for(
+            messages, invocation_id, protocol=protocol,
+        )
+
+    def generate(self, messages, *, protocol, invocation, evidence_sink):
+        raise ConnectionError("simulated disconnect before remote result")
+
+
+class AlteredIdentityBackend(InterruptedIdentityBackend):
+    def __init__(self, *, digest=None, profile=None):
+        super().__init__(DevstralKatraOllamaDispositionBackend)
+        self.digest = digest
+        self.profile = profile
+
+    def invocation_for(self, messages, invocation_id, *, protocol):
+        invocation = super().invocation_for(
+            messages, invocation_id, protocol=protocol,
+        )
+        original = invocation.execution_identity
+        altered = ExecutionArtifactIdentity(
+            original.model_tag,
+            self.digest or original.manifest_digest,
+            original.quantization,
+            self.profile or original.runtime_profile_id,
+            original.execution_policy,
+        )
+        return InferenceInvocation(
+            invocation.invocation_id, invocation.prompt_sha256, altered,
+        )
 
 
 def processor(case, raw):
@@ -66,7 +110,7 @@ class AlphaExperimentTests(unittest.TestCase):
             self.assertEqual("RAW_RESPONSE_DURABLE", state["pending_turn"]["phase"])
             self.assertTrue((Path(directory) / "family/cases/C03/turns/0001/raw-response.txt").exists())
             runtime = json.loads((Path(directory) / "family/cases/C03/turns/0001/state.json").read_text())["runtime"]
-            self.assertEqual("OLLAMA_RESPONSE_META_V1", runtime["completion_evidence_contract"])
+            self.assertEqual("OLLAMA_RESPONSE_META_V2", runtime["completion_evidence_contract"])
             self.assertEqual("stop", runtime["done_reason"])
             self.assertEqual((17, 23), (runtime["prompt_eval_count"], runtime["eval_count"]))
             result = controller.step("C03", backend, processor)
@@ -128,3 +172,64 @@ class AlphaExperimentTests(unittest.TestCase):
             controller=AlphaExperimentController(Path(directory)/"family"); controller.step("C03",backend,processor)
             self.assertEqual(1,backend.executions); self.assertIn(invocation_id,backend.invocations)
             self.assertEqual(1,controller.status()["cases"][0]["turn_committed"])
+
+    def test_qwen_intent_records_exact_qwen_artifact_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            controller = self.start(Path(directory))
+            with self.assertRaises(ConnectionError):
+                controller.step("C03", InterruptedIdentityBackend(), processor)
+            pending = controller._case("C03")["pending_turn"]
+            self.assertEqual(QWEN_RUNTIME_PROFILE.model_tag, pending["model_tag"])
+            self.assertEqual(QWEN_RUNTIME_PROFILE.manifest_digest, pending["manifest_digest"])
+            self.assertEqual(QWEN_RUNTIME_PROFILE.quantization, pending["quantization"])
+            self.assertEqual(QWEN_RUNTIME_PROFILE.profile_id, pending["runtime_profile_id"])
+
+    def test_devstral_intent_records_exact_devstral_artifact_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            controller = self.start(Path(directory))
+            with self.assertRaises(ConnectionError):
+                controller.step(
+                    "C03",
+                    InterruptedIdentityBackend(DevstralKatraOllamaDispositionBackend),
+                    processor,
+                )
+            pending = controller._case("C03")["pending_turn"]
+            self.assertEqual(DEVSTRAL_RUNTIME_PROFILE.model_tag, pending["model_tag"])
+            self.assertEqual(DEVSTRAL_RUNTIME_PROFILE.manifest_digest, pending["manifest_digest"])
+            self.assertEqual(DEVSTRAL_RUNTIME_PROFILE.quantization, pending["quantization"])
+            self.assertEqual(DEVSTRAL_RUNTIME_PROFILE.profile_id, pending["runtime_profile_id"])
+
+    def test_persisted_devstral_intent_cannot_resume_through_qwen_backend(self):
+        with tempfile.TemporaryDirectory() as directory:
+            controller = self.start(Path(directory))
+            with self.assertRaises(ConnectionError):
+                controller.step(
+                    "C03",
+                    InterruptedIdentityBackend(DevstralKatraOllamaDispositionBackend),
+                    processor,
+                )
+            resumed = AlphaExperimentController(Path(directory) / "family")
+            with self.assertRaisesRegex(ExperimentError, "DURABLE_MODEL_BINDING_MISMATCH"):
+                resumed.step("C03", InterruptedIdentityBackend(), processor)
+
+    def test_persisted_intent_rejects_artifact_digest_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            controller = self.start(Path(directory))
+            backend = InterruptedIdentityBackend(DevstralKatraOllamaDispositionBackend)
+            with self.assertRaises(ConnectionError):
+                controller.step("C03", backend, processor)
+            with self.assertRaisesRegex(ExperimentError, "DURABLE_MODEL_BINDING_MISMATCH"):
+                controller.step(
+                    "C03", AlteredIdentityBackend(digest="0" * 64), processor,
+                )
+
+    def test_persisted_intent_rejects_runtime_profile_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            controller = self.start(Path(directory))
+            backend = InterruptedIdentityBackend(DevstralKatraOllamaDispositionBackend)
+            with self.assertRaises(ConnectionError):
+                controller.step("C03", backend, processor)
+            with self.assertRaisesRegex(ExperimentError, "DURABLE_MODEL_BINDING_MISMATCH"):
+                controller.step(
+                    "C03", AlteredIdentityBackend(profile="different-profile"), processor,
+                )

@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from ws_code_agent.katra_ollama_backend import (  # noqa: E402
     DEVSTRAL_MODEL_DIGEST, DEVSTRAL_MODEL_TAG, DEVSTRAL_RUNTIME_PROFILE,
     DevstralKatraOllamaDispositionBackend, EXECUTION_POLICY,
+    ExecutionArtifactIdentity, InferenceInvocation,
     KatraOllamaBackendError, KatraOllamaDispositionBackend,
     MODEL_DIGEST, MODEL_QUANTIZATION, MODEL_TAG, REMOTE_HOST, REMOTE_RUNNER, SSH_CERTIFICATE, SSH_IDENTITY,
 )
@@ -29,17 +30,33 @@ class FakeTransport:
 
     def completion_bytes(self) -> bytes:
         model = DEVSTRAL_MODEL_TAG if self.devstral else MODEL_TAG
+        response = b'{"request_type":"NO_CHANGE","arguments":{}}\n'
         return (json.dumps({
-            "evidence_contract": "OLLAMA_RESPONSE_META_V1",
+            "evidence_contract": "OLLAMA_RESPONSE_META_V2",
+            "envelope_body_byte_count": 512,
+            "envelope_body_sha256": "e" * 64,
+            "envelope_syntax_valid": True,
+            "failure_classification": None,
+            "model_present": True,
             "model": model,
+            "response_present": True,
+            "response_byte_count": len(response),
+            "response_sha256": hashlib.sha256(response).hexdigest(),
+            "done_present": True,
             "done": True,
             "done_reason_present": True,
             "done_reason": "stop",
+            "prompt_eval_count_present": True,
             "prompt_eval_count": 17,
+            "eval_count_present": True,
             "eval_count": 23,
+            "total_duration_present": True,
             "total_duration": 101,
+            "load_duration_present": True,
             "load_duration": 11,
+            "prompt_eval_duration_present": True,
             "prompt_eval_duration": 31,
+            "eval_duration_present": True,
             "eval_duration": 59,
         }, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
@@ -50,7 +67,7 @@ class FakeTransport:
             return subprocess.CompletedProcess(command, 255, b"", b"transport failed")
         if remote[0] == REMOTE_RUNNER:
             return subprocess.CompletedProcess(command, 0, b"[job-20260810T120000Z-42] succeeded\n", b"")
-        if remote[0] == "/usr/bin/cat" and remote[-1].endswith("ollama-response-meta.json"):
+        if remote[0] == "/usr/bin/cat" and remote[-1].endswith("ollama-envelope-meta.json"):
             return subprocess.CompletedProcess(command, 0, self.completion_bytes(), b"")
         if remote[0] == "/usr/bin/cat" and "meta.yaml" in remote[2]:
             digest = DEVSTRAL_MODEL_DIGEST if self.devstral else MODEL_DIGEST
@@ -60,7 +77,7 @@ class FakeTransport:
                 f"manifest_digest: {digest}\nquantization: {MODEL_QUANTIZATION}\nexecution_policy: {EXECUTION_POLICY}\n"
                 f"policy_result: GPU_PRIMARY_PARTIAL_OFFLOAD\nobserved_cpu_percent: {cpu}\nobserved_gpu_percent: {gpu}\n"
                 f"observed_processor: {cpu}%/{gpu}% CPU/GPU\n"
-                "response_evidence_contract: OLLAMA_RESPONSE_META_V1\n"
+                "response_evidence_contract: OLLAMA_RESPONSE_META_V2\n"
                 f"completion_meta_sha256: {hashlib.sha256(self.completion_bytes()).hexdigest()}\n"
             ).encode(), b"")
         if remote[0] == "/usr/bin/cat":
@@ -84,7 +101,7 @@ class KatraOllamaBackendTests(unittest.TestCase):
         self.assertEqual(MODEL_QUANTIZATION, evidence.quantization)
         self.assertEqual(EXECUTION_POLICY, evidence.execution_policy)
         self.assertEqual((20, 80), (evidence.observed_cpu_percent, evidence.observed_gpu_percent))
-        self.assertEqual("OLLAMA_RESPONSE_META_V1", evidence.completion_evidence_contract)
+        self.assertEqual("OLLAMA_RESPONSE_META_V2", evidence.completion_evidence_contract)
         self.assertEqual("stop", evidence.done_reason)
         self.assertEqual((17, 23), (evidence.prompt_eval_count, evidence.eval_count))
         inference = shlex.split(transport.calls[0][-1])
@@ -155,6 +172,42 @@ class KatraOllamaBackendTests(unittest.TestCase):
             KatraOllamaDispositionBackend(model="anything")  # type: ignore[call-arg]
         with self.assertRaises(KatraOllamaBackendError):
             self.generate(KatraOllamaDispositionBackend(),({"role": "tool", "content": {}, "extra": True},))
+
+    def test_backend_rejects_durable_artifact_or_profile_mismatch(self) -> None:
+        backend = DevstralKatraOllamaDispositionBackend(FakeTransport(devstral=True))
+        messages = ({"role": "user", "content": {"fixture": "write"}},)
+        invocation = backend.invocation_for(
+            messages, "alpha-test-family-C01-t0001-abcdef",
+            protocol=SINGLE_REPOSITORY_PROTOCOL,
+        )
+        wrong_digest = ExecutionArtifactIdentity(
+            invocation.execution_identity.model_tag,
+            "0" * 64,
+            invocation.execution_identity.quantization,
+            invocation.execution_identity.runtime_profile_id,
+            invocation.execution_identity.execution_policy,
+        )
+        with self.assertRaisesRegex(KatraOllamaBackendError, "DURABLE_MODEL_BINDING_MISMATCH"):
+            backend.generate(
+                messages, protocol=SINGLE_REPOSITORY_PROTOCOL,
+                invocation=InferenceInvocation(
+                    invocation.invocation_id, invocation.prompt_sha256, wrong_digest,
+                ),
+            )
+        wrong_profile = ExecutionArtifactIdentity(
+            invocation.execution_identity.model_tag,
+            invocation.execution_identity.manifest_digest,
+            invocation.execution_identity.quantization,
+            "different-profile",
+            invocation.execution_identity.execution_policy,
+        )
+        with self.assertRaisesRegex(KatraOllamaBackendError, "DURABLE_MODEL_BINDING_MISMATCH"):
+            backend.generate(
+                messages, protocol=SINGLE_REPOSITORY_PROTOCOL,
+                invocation=InferenceInvocation(
+                    invocation.invocation_id, invocation.prompt_sha256, wrong_profile,
+                ),
+            )
 
     def test_durable_sink_precedes_disposable_cleanup_and_failure_retains_output(self) -> None:
         events: list[str] = []

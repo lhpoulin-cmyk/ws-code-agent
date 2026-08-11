@@ -175,6 +175,7 @@ class _IntentRecordingBackend:
                 "invocation_id": invocation.invocation_id,
                 "prompt_sha256": invocation.prompt_sha256,
                 "protocol_id": protocol.protocol_id,
+                **asdict(invocation.execution_identity),
             },
         )
         return self.backend.generate(

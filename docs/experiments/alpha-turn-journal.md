@@ -41,6 +41,12 @@ bind the single-repository contract; C05-A/C05-B bind the repository-qualified c
 The protocol ID is included in durable inference intent so a restart cannot
 silently render a different request surface.
 
+E10 also binds that intent to the backend-owned exact model tag, manifest
+digest, quantization, runtime-profile ID, and execution policy. Recovery
+re-derives the identity from the selected backend and fails closed with
+`DURABLE_MODEL_BINDING_MISMATCH` before remote execution if any field differs.
+The controller contains no model-specific intent label.
+
 The bounded operator entrypoint is `tools/run_alpha_experiment.py` with
 `start-task10e`, `start-task10g-r3`, `start-task10i-c05-r4`, `status`, and
 one-turn `step` commands.

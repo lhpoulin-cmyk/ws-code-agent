@@ -179,7 +179,19 @@ class AlphaExperimentController:
         suffix=hashlib.sha256(material.encode()).hexdigest()
         invocation_id=f"alpha-{hashlib.sha256(self.root.name.encode()).hexdigest()[:12]}-{case_id}-t{turn:04d}-{suffix[:12]}"
         invocation=backend.invocation_for(tuple(case["conversation"]), invocation_id, protocol=protocol)
-        case["pending_turn"]={"phase":"INFERENCE_INTENT_DURABLE","turn":turn,"invocation_id":invocation.invocation_id,"prompt_sha256":invocation.prompt_sha256,"protocol_id":protocol.protocol_id,"model":"qwen3-coder:30b","execution_policy":"gpu-primary-partial","remote_response":f"evidence/invocations/{invocation.invocation_id}/response.txt"}
+        identity = invocation.execution_identity
+        case["pending_turn"]={
+            "phase":"INFERENCE_INTENT_DURABLE", "turn":turn,
+            "invocation_id":invocation.invocation_id,
+            "prompt_sha256":invocation.prompt_sha256,
+            "protocol_id":protocol.protocol_id,
+            "model_tag":identity.model_tag,
+            "manifest_digest":identity.manifest_digest,
+            "quantization":identity.quantization,
+            "runtime_profile_id":identity.runtime_profile_id,
+            "execution_policy":identity.execution_policy,
+            "remote_response":f"evidence/invocations/{invocation.invocation_id}/response.txt",
+        }
         self._write_case(case)
         return self._invoke_intent(case, backend, processor)
 
@@ -191,7 +203,21 @@ class AlphaExperimentController:
             raise ExperimentError("durable inference protocol is not registered") from error
         if case.get("protocol_id") != protocol.protocol_id:
             raise ExperimentError("durable inference protocol mismatch")
-        invocation=InferenceInvocation(pending["invocation_id"],pending["prompt_sha256"])
+        invocation = backend.invocation_for(
+            tuple(case["conversation"]), pending["invocation_id"], protocol=protocol,
+        )
+        if invocation.prompt_sha256 != pending["prompt_sha256"]:
+            raise ExperimentError("durable invocation prompt mismatch")
+        identity = invocation.execution_identity
+        durable_identity = {
+            name: pending.get(name)
+            for name in (
+                "model_tag", "manifest_digest", "quantization",
+                "runtime_profile_id", "execution_policy",
+            )
+        }
+        if durable_identity != asdict(identity):
+            raise ExperimentError("DURABLE_MODEL_BINDING_MISMATCH")
         sink = _Sink(self, case, turn)
         # Any backend cleanup happens only after ``capture_response`` returns.
         try:

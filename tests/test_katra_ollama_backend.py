@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 import shlex
 import subprocess
@@ -25,6 +27,22 @@ class FakeTransport:
         self.fail_first = fail_first
         self.devstral = devstral
 
+    def completion_bytes(self) -> bytes:
+        model = DEVSTRAL_MODEL_TAG if self.devstral else MODEL_TAG
+        return (json.dumps({
+            "evidence_contract": "OLLAMA_RESPONSE_META_V1",
+            "model": model,
+            "done": True,
+            "done_reason_present": True,
+            "done_reason": "stop",
+            "prompt_eval_count": 17,
+            "eval_count": 23,
+            "total_duration": 101,
+            "load_duration": 11,
+            "prompt_eval_duration": 31,
+            "eval_duration": 59,
+        }, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
     def __call__(self, command, **_kwargs):
         self.calls.append(tuple(command))
         remote = shlex.split(command[-1])
@@ -32,13 +50,18 @@ class FakeTransport:
             return subprocess.CompletedProcess(command, 255, b"", b"transport failed")
         if remote[0] == REMOTE_RUNNER:
             return subprocess.CompletedProcess(command, 0, b"[job-20260810T120000Z-42] succeeded\n", b"")
+        if remote[0] == "/usr/bin/cat" and remote[-1].endswith("ollama-response-meta.json"):
+            return subprocess.CompletedProcess(command, 0, self.completion_bytes(), b"")
         if remote[0] == "/usr/bin/cat" and "meta.yaml" in remote[2]:
             digest = DEVSTRAL_MODEL_DIGEST if self.devstral else MODEL_DIGEST
             cpu, gpu = (12, 88) if self.devstral else (20, 80)
             return subprocess.CompletedProcess(command, 0, (
+                "invocation_id: alpha-test-family-C01-t0001-abcdef\n"
                 f"manifest_digest: {digest}\nquantization: {MODEL_QUANTIZATION}\nexecution_policy: {EXECUTION_POLICY}\n"
                 f"policy_result: GPU_PRIMARY_PARTIAL_OFFLOAD\nobserved_cpu_percent: {cpu}\nobserved_gpu_percent: {gpu}\n"
                 f"observed_processor: {cpu}%/{gpu}% CPU/GPU\n"
+                "response_evidence_contract: OLLAMA_RESPONSE_META_V1\n"
+                f"completion_meta_sha256: {hashlib.sha256(self.completion_bytes()).hexdigest()}\n"
             ).encode(), b"")
         if remote[0] == "/usr/bin/cat":
             return subprocess.CompletedProcess(command, 0, b'{"request_type":"NO_CHANGE","arguments":{}}\n', b"")
@@ -61,6 +84,9 @@ class KatraOllamaBackendTests(unittest.TestCase):
         self.assertEqual(MODEL_QUANTIZATION, evidence.quantization)
         self.assertEqual(EXECUTION_POLICY, evidence.execution_policy)
         self.assertEqual((20, 80), (evidence.observed_cpu_percent, evidence.observed_gpu_percent))
+        self.assertEqual("OLLAMA_RESPONSE_META_V1", evidence.completion_evidence_contract)
+        self.assertEqual("stop", evidence.done_reason)
+        self.assertEqual((17, 23), (evidence.prompt_eval_count, evidence.eval_count))
         inference = shlex.split(transport.calls[0][-1])
         self.assertEqual((REMOTE_RUNNER, "--invocation-id"), tuple(inference[:2]))
         self.assertIn(MODEL_TAG,inference)
@@ -116,6 +142,13 @@ class KatraOllamaBackendTests(unittest.TestCase):
 
         with self.assertRaises(KatraOllamaBackendError):
             self.generate(KatraOllamaDispositionBackend(BadEvidence()),({"role": "user", "content": {}},))
+
+        class NonterminalCompletion(FakeTransport):
+            def completion_bytes(self):
+                return super().completion_bytes().replace(b'"done":true', b'"done":false')
+
+        with self.assertRaises(KatraOllamaBackendError):
+            self.generate(KatraOllamaDispositionBackend(NonterminalCompletion()),({"role": "user", "content": {}},))
 
     def test_no_caller_model_or_policy_override_exists(self) -> None:
         with self.assertRaises(TypeError):

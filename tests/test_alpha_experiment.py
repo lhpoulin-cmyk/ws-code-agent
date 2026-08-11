@@ -27,7 +27,12 @@ class FakeBackend:
     def generate(self, messages, *, protocol, invocation, evidence_sink):
         self.calls += 1
         raw = self.replies.pop(0)
-        evidence_sink.capture_response(raw, RuntimeTurnEvidence(hashlib.sha256(raw.encode()).hexdigest(), f"job-{self.calls}", "digest", "Q4_K_M", "gpu-primary-partial", "GPU_PRIMARY_PARTIAL_OFFLOAD", 20, 80, "20%/80% CPU/GPU", "", ""))
+        evidence_sink.capture_response(raw, RuntimeTurnEvidence(
+            hashlib.sha256(raw.encode()).hexdigest(), f"job-{self.calls}",
+            "digest", "Q4_K_M", "gpu-primary-partial",
+            "GPU_PRIMARY_PARTIAL_OFFLOAD", 20, 80, "20%/80% CPU/GPU", "", "",
+            "OLLAMA_RESPONSE_META_V1", "a" * 64, True, True, "stop", 17, 23,
+        ))
         if self.stop_after_capture:
             raise RuntimeError("simulated session loss")
         return raw
@@ -60,6 +65,10 @@ class AlphaExperimentTests(unittest.TestCase):
             state = controller.status()["cases"][0]
             self.assertEqual("RAW_RESPONSE_DURABLE", state["pending_turn"]["phase"])
             self.assertTrue((Path(directory) / "family/cases/C03/turns/0001/raw-response.txt").exists())
+            runtime = json.loads((Path(directory) / "family/cases/C03/turns/0001/state.json").read_text())["runtime"]
+            self.assertEqual("OLLAMA_RESPONSE_META_V1", runtime["completion_evidence_contract"])
+            self.assertEqual("stop", runtime["done_reason"])
+            self.assertEqual((17, 23), (runtime["prompt_eval_count"], runtime["eval_count"]))
             result = controller.step("C03", backend, processor)
             self.assertEqual("READ", result["request_type"]); self.assertEqual(1, backend.calls)
             self.assertEqual(1, controller.status()["cases"][0]["turn_committed"])

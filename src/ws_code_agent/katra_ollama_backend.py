@@ -36,6 +36,7 @@ REMOTE_RUNNER = "/srv/gpu-compute/bin/run"
 REMOTE_STATUS = "/srv/gpu-compute/bin/run-status"
 REMOTE_EVIDENCE_ROOT = "/srv/gpu-compute/evidence"
 REMOTE_TEMP_ROOT = "/tmp"
+RESPONSE_EVIDENCE_CONTRACT = "OLLAMA_RESPONSE_META_V1"
 _JOB_ID = re.compile(r"\[?(job-[0-9]{8}T[0-9]{6}Z-[0-9]+)\]?")
 
 
@@ -62,6 +63,13 @@ class RuntimeTurnEvidence:
     processor: str
     runner_stdout: str
     runner_stderr: str
+    completion_evidence_contract: str | None = None
+    completion_meta_sha256: str | None = None
+    done: bool | None = None
+    done_reason_present: bool | None = None
+    done_reason: str | None = None
+    prompt_eval_count: int | None = None
+    eval_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -150,8 +158,9 @@ class KatraOllamaDispositionBackend:
             if raw.returncode != 0:
                 raise KatraOllamaBackendError("controlled inference output retrieval failed")
             evidence = self._fetch_evidence(job_id)
+            completion = self._fetch_completion_meta(invocation.invocation_id, evidence)
             text = raw.stdout.decode("utf-8", errors="strict")
-            turn_evidence = self._validate_evidence(text, job_id, evidence, run)
+            turn_evidence = self._validate_evidence(text, job_id, evidence, completion, run)
             # The remote output is disposable only after a trusted local sink
             # has durably accepted the exact bytes and runtime evidence.
             if evidence_sink is not None:
@@ -228,13 +237,57 @@ class KatraOllamaDispositionBackend:
         for line in text.splitlines():
             if ":" in line:
                 key, value = line.split(":", 1)
-                if key.strip() in {"manifest_digest", "quantization", "execution_policy", "policy_result", "observed_cpu_percent", "observed_gpu_percent", "observed_processor"}:
+                if key.strip() in {
+                    "invocation_id", "manifest_digest", "quantization",
+                    "execution_policy", "policy_result", "observed_cpu_percent",
+                    "observed_gpu_percent", "observed_processor",
+                    "response_evidence_contract", "completion_meta_sha256",
+                }:
                     values[key.strip()] = value.strip()
         return values
 
+    def _fetch_completion_meta(self, invocation_id: str, evidence: dict[str, str]) -> dict[str, Any]:
+        if evidence.get("invocation_id") != invocation_id:
+            raise KatraOllamaBackendError("controlled completion evidence invocation mismatch")
+        expected_sha = evidence.get("completion_meta_sha256", "")
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_sha):
+            raise KatraOllamaBackendError("controlled completion evidence identity is invalid")
+        fetched = self._ssh((
+            "/usr/bin/cat", "--",
+            f"{REMOTE_EVIDENCE_ROOT}/invocations/{invocation_id}/ollama-response-meta.json",
+        ))
+        if fetched.returncode != 0:
+            raise KatraOllamaBackendError("controlled completion evidence retrieval failed")
+        if hashlib.sha256(fetched.stdout).hexdigest() != expected_sha:
+            raise KatraOllamaBackendError("controlled completion evidence hash mismatch")
+        try:
+            completion = json.loads(fetched.stdout.decode("utf-8", errors="strict"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise KatraOllamaBackendError("controlled completion evidence is invalid") from error
+        required = {
+            "evidence_contract", "model", "done", "done_reason_present",
+            "done_reason", "prompt_eval_count", "eval_count", "total_duration",
+            "load_duration", "prompt_eval_duration", "eval_duration",
+        }
+        if not isinstance(completion, dict) or set(completion) != required:
+            raise KatraOllamaBackendError("controlled completion evidence fields are invalid")
+        counts = required - {"evidence_contract", "model", "done", "done_reason_present", "done_reason"}
+        if any(not isinstance(completion[name], int) or isinstance(completion[name], bool) or completion[name] < 0 for name in counts):
+            raise KatraOllamaBackendError("controlled completion evidence counts are invalid")
+        reason_present = completion["done_reason_present"]
+        reason = completion["done_reason"]
+        if not isinstance(reason_present, bool) or (reason_present and not isinstance(reason, str)) or (not reason_present and reason is not None):
+            raise KatraOllamaBackendError("controlled completion reason evidence is invalid")
+        return completion
+
     @classmethod
-    def _validate_evidence(cls, raw: str, job_id: str, evidence: dict[str, str], run: subprocess.CompletedProcess[bytes]) -> RuntimeTurnEvidence:
-        required = {"manifest_digest", "quantization", "execution_policy", "policy_result", "observed_cpu_percent", "observed_gpu_percent", "observed_processor"}
+    def _validate_evidence(cls, raw: str, job_id: str, evidence: dict[str, str], completion: dict[str, Any], run: subprocess.CompletedProcess[bytes]) -> RuntimeTurnEvidence:
+        required = {
+            "invocation_id", "manifest_digest", "quantization", "execution_policy",
+            "policy_result", "observed_cpu_percent", "observed_gpu_percent",
+            "observed_processor", "response_evidence_contract",
+            "completion_meta_sha256",
+        }
         if not required <= set(evidence):
             raise KatraOllamaBackendError("controlled runtime evidence is incomplete")
         try:
@@ -244,13 +297,19 @@ class KatraOllamaDispositionBackend:
         profile = cls.RUNTIME_PROFILE
         if (evidence["manifest_digest"] != profile.manifest_digest or evidence["quantization"] != profile.quantization
                 or evidence["execution_policy"] != profile.execution_policy or evidence["policy_result"] != profile.policy_result
-                or gpu < profile.minimum_gpu_percent or cpu > profile.maximum_cpu_percent):
+                or gpu < profile.minimum_gpu_percent or cpu > profile.maximum_cpu_percent
+                or evidence["response_evidence_contract"] != RESPONSE_EVIDENCE_CONTRACT
+                or completion["evidence_contract"] != RESPONSE_EVIDENCE_CONTRACT
+                or completion["model"] != profile.model_tag or completion["done"] is not True):
             raise KatraOllamaBackendError("accepted Katra runtime profile was not satisfied")
         return RuntimeTurnEvidence(
             hashlib.sha256(raw.encode("utf-8")).hexdigest(), job_id, evidence["manifest_digest"],
             evidence["quantization"], evidence["execution_policy"], evidence["policy_result"], cpu, gpu,
             evidence["observed_processor"], run.stdout.decode("utf-8", errors="replace"),
-            run.stderr.decode("utf-8", errors="replace"),
+            run.stderr.decode("utf-8", errors="replace"), RESPONSE_EVIDENCE_CONTRACT,
+            evidence["completion_meta_sha256"], completion["done"],
+            completion["done_reason_present"], completion["done_reason"],
+            completion["prompt_eval_count"], completion["eval_count"],
         )
 
 

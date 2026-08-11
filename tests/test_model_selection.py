@@ -62,20 +62,26 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn("NEXT_MODEL_CANDIDATE = UNRESOLVED", evidence)
         self.assertIn("NEXT: SELECT NEXT ELIGIBLE CHALLENGER", evidence)
 
-    def test_qwen25_coder_14b_is_selected_for_exact_4096_seam(self):
+    def test_qwen25_coder_14b_runtime_is_accepted_for_exact_4096_seam(self):
         matrix = (ROOT / "models/candidate-matrix.yaml").read_text(encoding="utf-8")
         selection = matrix.split("selected_challenger:\n", 1)[1].split("\nkatra:\n", 1)[0]
         required_selection = (
             "  id: qwen25-coder-14b-q4",
-            "  status: SELECTED_FOR_EVALUATION",
+            "  status: RUNTIME_ACCEPTED",
             "  ollama_tag: qwen2.5-coder:14b-instruct-q4_K_M",
             "  manifest_digest: 9ec8897f747e246e970bc5cfdda85d22f1123dc2e3d34978a010a75968716849",
             "  comparison_context: 4096",
             "  context_classification: QWEN25_CODER_14B_CONTEXT_4096_COMPATIBLE",
             "  artifact_generation_defaults: NONE_SPECIFIED",
-            "  acquisition_state: NOT_ACQUIRED_BY_TASK",
+            "  acquisition_state: ACQUIRED_EXACT_ARTIFACT",
             "  expected_katra_fit: FULL_GPU_CANDIDATE",
-            "  runtime_acceptance: NOT_EVALUATED",
+            "  empirical_katra_fit: FULL_GPU",
+            "    status: RUNTIME_ACCEPTED",
+            "    profile_id: qwen25-coder-14b-katra-4096",
+            "    implementation_checkpoint: fc514cb02c9a2f76c60b461f787fba9ee43e2364",
+            "    policy_acceptance_checkpoint: a84c33f68dcb14b292d791c8485e0ec4e532852c",
+            "    execution: GPU_ONLY",
+            "    effective_context: 4096",
             "  production_admission: NOT_EVALUATED",
         )
         self.assertTrue(all(value in selection for value in required_selection))
@@ -92,9 +98,18 @@ class ModelSelectionTests(unittest.TestCase):
             "    context_classification: QWEN25_CODER_14B_CONTEXT_4096_COMPATIBLE",
             "      interface: PLAIN_MACHINE_RESPONSE_COMPATIBLE",
             "    expected_katra_fit: FULL_GPU_CANDIDATE",
+            "    empirical_katra_fit: FULL_GPU",
+            "      status: RUNTIME_ACCEPTED",
+            "      profile_id: qwen25-coder-14b-katra-4096",
+            "      execution: GPU_ONLY",
+            "      observed_vram_mib: 9304",
+            "      effective_context: 4096",
+            "      neutral_probes: 3",
+            "      terminality: NORMAL_STOP_ALL_PROBES",
+            "      model_repeat_limit: NOT_OBSERVED",
+            "    production_admission: NOT_EVALUATED",
         )
         self.assertTrue(all(value in candidate for value in required_candidate))
-        self.assertNotIn("RUNTIME_ACCEPTED", candidate)
         self.assertNotIn("PRODUCTION_ADMITTED", candidate)
         qwen3 = matrix.split("  - id: qwen3-coder-30b-q4\n", 1)[1].split("\n  - id:", 1)[0]
         self.assertIn("      supervised_production_admission: NOT_ADMITTED", qwen3)
@@ -104,6 +119,11 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn("QWEN25_CODER_14B_CONTEXT_4096_COMPATIBLE", evidence)
         self.assertIn("NEXT_MODEL_CANDIDATE = qwen25-coder-14b-q4", evidence)
         self.assertIn("NEXT: RUN QWEN2.5-CODER 14B ARTIFACT/RUNTIME ACCEPTANCE", evidence)
+        runtime_evidence = (
+            ROOT / "docs/experiments/task10q-qwen25-coder-14b-runtime-acceptance.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("QWEN25_CODER_14B_RUNTIME_ACCEPTED", runtime_evidence)
+        self.assertIn("NEXT: RUN QWEN2.5-CODER 14B V2 PRODUCTION ADMISSION", runtime_evidence)
 
 
 if __name__ == "__main__":

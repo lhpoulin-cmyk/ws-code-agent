@@ -47,13 +47,13 @@ official artifact and patched-runtime compatibility resolved, but its enforced
 therefore ineligible for this exact comparison seam, not rejected as a model or
 runtime failure.
 
-`qwen25-coder-14b-q4` is now the next challenger selected for evaluation at the
-full `qwen2.5-coder:14b-instruct-q4_K_M` manifest identity. Its dense qwen2
-artifact can honor the frozen 4096 context exactly through the existing plain
-machine-response interface, and its approximately 9 GB model layer is a
-full-GPU planning candidate for Katra. It is not acquired, runtime-accepted,
-production-admitted, qualified, or selected as a default. The next boundary is
-artifact/runtime acceptance on Katra.
+`qwen25-coder-14b-q4` is the current challenger. Katra acquired and verified
+the exact `qwen2.5-coder:14b-instruct-q4_K_M` manifest, then completed exactly
+three neutral probes at effective context 4096. gpu-compute measured 100% GPU
+placement and 9,304 MiB peak VRAM, and gpu-cp accepted the exact
+`qwen25-coder-14b-katra-4096` GPU-only profile. This is runtime acceptance only:
+the candidate is not production-admitted, qualified, or selected as a default.
+The next boundary is Qwen2.5-Coder 14B V2 production admission.
 
 The inherited Doc Writer implementation remains removed from the live tree;
 witnessed history and reusable references are preserved under `lineage/`.

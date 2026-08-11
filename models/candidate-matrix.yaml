@@ -7,7 +7,7 @@ selection_rule: Selection for evaluation does not imply a default,
 
 selected_challenger:
   id: qwen25-coder-14b-q4
-  status: SELECTED_FOR_EVALUATION
+  status: RUNTIME_ACCEPTED
   selected_at: 2026-08-11
   canonical_upstream_model: Qwen/Qwen2.5-Coder-14B-Instruct
   ollama_tag: qwen2.5-coder:14b-instruct-q4_K_M
@@ -17,13 +17,23 @@ selected_challenger:
   comparison_context: 4096
   context_classification: QWEN25_CODER_14B_CONTEXT_4096_COMPATIBLE
   artifact_generation_defaults: NONE_SPECIFIED
-  acquisition_state: NOT_ACQUIRED_BY_TASK
+  acquisition_state: ACQUIRED_EXACT_ARTIFACT
   expected_katra_fit: FULL_GPU_CANDIDATE
-  runtime_acceptance: NOT_EVALUATED
+  empirical_katra_fit: FULL_GPU
+  runtime_acceptance:
+    status: RUNTIME_ACCEPTED
+    profile_id: qwen25-coder-14b-katra-4096
+    implementation_checkpoint: fc514cb02c9a2f76c60b461f787fba9ee43e2364
+    policy_acceptance_checkpoint: a84c33f68dcb14b292d791c8485e0ec4e532852c
+    execution: GPU_ONLY
+    processor_envelope: {minimum_gpu_percent: 100, maximum_cpu_percent: 0}
+    observed_vram_mib: 9304
+    effective_context: 4096
   production_admission: NOT_EVALUATED
   qualification: NOT_EVALUATED
   evidence:
     - ../docs/experiments/task10p-qwen25-coder-14b-selection.md
+    - ../docs/experiments/task10q-qwen25-coder-14b-runtime-acceptance.md
 
 katra:
   role: KATRA_TORTURE
@@ -51,7 +61,7 @@ tiers:
 
 candidates:
   - id: qwen25-coder-14b-q4
-    status: SELECTED_FOR_EVALUATION
+    status: RUNTIME_ACCEPTED
     source_verified_at: 2026-08-11
     selected_at: 2026-08-11
     normal_target_tiers: [tier_a_16gb]
@@ -61,8 +71,8 @@ candidates:
     ollama:
       display_tag: qwen2.5-coder:14b-instruct-q4_K_M
       resolved_identity: ollama-manifest-digest:9ec8897f747e246e970bc5cfdda85d22f1123dc2e3d34978a010a75968716849
-      identity_note: Resolved read-only from the official registry on 2026-08-11;
-        no artifact layer was downloaded and no model was loaded.
+      identity_note: Resolved from the official registry, then acquired and
+        hash-verified in the canonical Katra Ollama store on 2026-08-11.
       config_digest: sha256:0578f229f23ad620e123654fd0b4708405e7af3629ec1aecf3f553f54e06bc40
       config_bytes: 488
       model_layer_digest: sha256:ac9bc7a69dab38da1c790838955f1293420b55ab555ef6b4615efa1c1507b1ed
@@ -102,9 +112,24 @@ candidates:
       interface: PLAIN_MACHINE_RESPONSE_COMPATIBLE
       model_specific_adaptation: NOT_REQUIRED
       repeat_limit_patch_relevance: REPORTING_ONLY_NO_LOADING_OR_SAMPLING_CHANGE
-    acquisition_state: NOT_ACQUIRED_BY_TASK
+    acquisition_state: ACQUIRED_EXACT_ARTIFACT
     expected_katra_fit: FULL_GPU_CANDIDATE
-    runtime_acceptance: NOT_EVALUATED
+    empirical_katra_fit: FULL_GPU
+    runtime_acceptance:
+      status: RUNTIME_ACCEPTED
+      profile_id: qwen25-coder-14b-katra-4096
+      implementation_repository: gpu-compute
+      implementation_checkpoint: fc514cb02c9a2f76c60b461f787fba9ee43e2364
+      policy_repository: gpu-cp
+      policy_acceptance_checkpoint: a84c33f68dcb14b292d791c8485e0ec4e532852c
+      runtime: 0.32.0+helix.repeatlimit.1
+      execution: GPU_ONLY
+      processor_envelope: {minimum_gpu_percent: 100, maximum_cpu_percent: 0}
+      observed_vram_mib: 9304
+      effective_context: 4096
+      neutral_probes: 3
+      terminality: NORMAL_STOP_ALL_PROBES
+      model_repeat_limit: NOT_OBSERVED
     production_admission: NOT_EVALUATED
     qualification: NOT_EVALUATED
     source_references:
@@ -112,6 +137,7 @@ candidates:
       - https://registry.ollama.ai/v2/library/qwen2.5-coder/manifests/14b-instruct-q4_K_M
       - https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct
       - ../docs/experiments/task10p-qwen25-coder-14b-selection.md
+      - ../docs/experiments/task10q-qwen25-coder-14b-runtime-acceptance.md
 
   - id: gpt-oss-20b-mxfp4
     status: INELIGIBLE_FROZEN_COMPARISON_SEAM

@@ -107,7 +107,10 @@ candidates:
       full_digest: 06c1097efce0431c2045fe7b2e5108366e43bee1b4603a7aded8f21689e90bca
       context: 4096
       runtime: QUALIFIED
-      operating_envelope: [OBSERVE_ONLY, CLARIFY_AND_REPORT, SUPERVISED_SINGLE_REPO]
+      capability_operating_envelope: [OBSERVE_ONLY, CLARIFY_AND_REPORT, SUPERVISED_SINGLE_REPO]
+      supervised_production_admission: NOT_ADMITTED
+      production_protocol: WS_CODE_AGENT_REQUEST_PROTOCOL_V2_SINGLE_VALUE_FREE
+      production_protocol_render_sha256: 3c4cbbb94fa26a758dbc157c6895606f1705a7b71b8bdc4c60fcb08330cfbe4e
       autonomous_single_repository: NOT_QUALIFIED
       autonomous_multi_repository: NOT_QUALIFIED
       qualification: ../docs/qualification/qwen3-coder-30b-alpha-v1.yaml

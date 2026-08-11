@@ -1,10 +1,11 @@
 # Supervised single-repository work
 
-Status: **implemented; not accepted for real-repository use**. The first live
-synthetic acceptance on 2026-08-11 preserved all safety and durability
-properties but did not produce either required model disposition. See
-`task10k-synthetic-acceptance.md`. Do not start a real-repository session until
-that blocker is resolved under separate authority.
+Status: **implemented; Qwen production admission closed as `NOT_ADMITTED`**.
+The exact tested artifact preserved the lane's safety and durability properties
+but did not pass both required synthetic behaviors, including after P11 and the
+value-free V2 interface removed independently demonstrated defects. Task 10K
+is closed for Qwen rather than awaiting another Qwen-specific repair. Do not
+start a real-repository session for this artifact.
 
 This lane is authorized only for the exact `qwen3-coder:30b` artifact and
 profile recorded in
@@ -12,10 +13,10 @@ profile recorded in
 candidate for operator review. It never writes, commits, merges, or pushes the
 authoritative repository.
 
-The ordinary `start` path uses only the protocol currently authorized by the
-qualification manifest. The value-free V2 protocol is initially a synthetic
-acceptance candidate and cannot be selected for an operator repository while
-its qualification state is `CANDIDATE`.
+The ordinary `start` path uses only a protocol and artifact admitted by the
+qualification manifest. The value-free V2 protocol is frozen as the candidate
+production interface, but its synthetic result for Qwen is `FAIL`; the current
+manifest therefore fails closed for operator repositories.
 
 ## Start
 
@@ -57,7 +58,7 @@ after client interruption. The first isolated patch application with status
 model work and pauses for the operator; this v1 lane does not answer it in
 place.
 
-The bounded Task 10K-C acceptance surface is separate:
+The bounded Task 10K-C acceptance surface was:
 
 ```bash
 python3 tools/run_supervised_work.py start-synthetic-v2 --fixture write
@@ -66,7 +67,18 @@ python3 tools/run_supervised_work.py start-synthetic-v2 --fixture clarification
 
 These commands create fixed synthetic repositories, objectives, and authority.
 They accept no operator repository and grant neither production qualification
-nor promotion authority.
+nor promotion authority. The completed Qwen one-shot evaluation is historical;
+the failed qualification state prevents another Qwen run through this surface.
+
+## Challenger admission
+
+A different artifact may be evaluated only after explicit selection. It must
+receive the frozen V2 render and the same Task 10K-C fixtures, authority,
+eight-turn budgets, durable controller, executor, P11 behavior, containment,
+and criteria. The write task must produce an isolated accepted
+`src/message.py` candidate, and the ambiguity task must produce
+`REQUEST_CLARIFICATION`. Both are required. No challenger is currently
+designated, and this document authorizes no pull or inference.
 
 ## Review and disposition
 

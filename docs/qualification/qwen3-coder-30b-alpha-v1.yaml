@@ -14,6 +14,7 @@ artifact:
 
 harness:
   alpha_version: HELIX_CODE_AGENT_ALPHA_V1
+  status: COMPLETE
   qualification_basis_head: 51e714130e392cbc1920531e3b0f92bffb587c64
   cases: [C01, C02, C03, C04, C05-A, C05-B]
   protocols:
@@ -25,9 +26,26 @@ supervised_protocol:
   alpha_evaluation_protocol: WS_CODE_AGENT_REQUEST_PROTOCOL_V1_SINGLE
   protocol_id: WS_CODE_AGENT_REQUEST_PROTOCOL_V2_SINGLE_VALUE_FREE
   qualification_status: CANDIDATE
-  synthetic_acceptance: PENDING
+  interface_design_status: ACCEPTED
+  render_sha256: 3c4cbbb94fa26a758dbc157c6895606f1705a7b71b8bdc4c60fcb08330cfbe4e
+  synthetic_acceptance: FAIL
   production_qualified: false
   operating_class: SUPERVISED_SINGLE_REPO
+
+production_admission:
+  supervised_single_repository:
+    status: NOT_ADMITTED
+    protocol: WS_CODE_AGENT_REQUEST_PROTOCOL_V2_SINGLE_VALUE_FREE
+    evidence:
+      - task10k-synthetic-acceptance
+      - task10k-a-missing-path-semantics
+      - task10k-b-protocol-example-anchoring
+      - task10k-c-value-free-protocol-v2
+    write_requirement: isolated accepted candidate for src/message.py within 8 turns
+    clarification_requirement: REQUEST_CLARIFICATION within 8 turns
+    both_required: true
+  autonomous_single_repository: NOT_QUALIFIED
+  autonomous_multi_repository: NOT_QUALIFIED
 
 capabilities:
   bounded_observation:
@@ -65,7 +83,7 @@ runtime:
   status: QUALIFIED
   evidence: [task10g-r3-20260810T222216Z, task10i-c05-r4-20260810T231521Z]
 
-operating_envelope:
+alpha_capability_operating_envelope:
   OBSERVE_ONLY: QUALIFIED
   CLARIFY_AND_REPORT: QUALIFIED
   SUPERVISED_SINGLE_REPO: QUALIFIED
@@ -88,5 +106,7 @@ not_evaluated:
   - other contexts, sampling settings, quantizations, tags, or model revisions
 
 next_model_seam:
-  requirement: same frozen Alpha v1 cases, executor, protocols, and runtime evidence contract
-  candidate: NOT_DESIGNATED
+  requirement:
+    - same frozen Alpha v1 cases, executor, protocols, and runtime evidence contract
+    - same frozen V2 render, Task 10K-C fixtures, authority, turn limits, P11 semantics, containment, and both-required admission rule
+  candidate: UNRESOLVED

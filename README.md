@@ -11,16 +11,29 @@ The governing foundation contract is
 ## Current status
 
 Alpha v1 is frozen and the executor/harness is qualified for model evaluation.
-The exact tested `qwen3-coder:30b` artifact has completed qualification for
-`OBSERVE_ONLY`, `CLARIFY_AND_REPORT`, and `SUPERVISED_SINGLE_REPO` operation;
-autonomous single- and multi-repository operation are not qualified. C05 is a
-confirmed model failure under explicit authority and effect-state semantics.
-See the [qualification statement](docs/qualification/qwen3-coder-30b-alpha-v1.md).
-The operator-gated lane implementation and its current synthetic-acceptance
-status are documented in
-[supervised single-repository work](docs/work/supervised-single-repo.md). It is
-not approved for real-repository use until the recorded Task 10K acceptance
-blocker is resolved by a separate authorized play.
+The exact tested `qwen3-coder:30b` artifact has completed Alpha evaluation and
+demonstrated useful bounded `OBSERVE_ONLY`, `CLARIFY_AND_REPORT`, and narrow
+`SUPERVISED_SINGLE_REPO` capabilities. Those capability findings are preserved,
+but the artifact is `NOT_ADMITTED` to the supervised production lane after it
+failed both required value-free V2 synthetic behaviors. Autonomous single- and
+multi-repository operation remain `NOT_QUALIFIED`; C05 remains a confirmed
+model failure under explicit authority and effect-state semantics. See the
+[qualification statement](docs/qualification/qwen3-coder-30b-alpha-v1.md).
+
+`WS_CODE_AGENT_REQUEST_PROTOCOL_V1_SINGLE` remains frozen for Alpha v1.
+`WS_CODE_AGENT_REQUEST_PROTOCOL_V2_SINGLE_VALUE_FREE` is the frozen candidate
+supervised-production interface: its interface design is accepted, but this
+Qwen artifact did not qualify it for production use. Task 10K is closed for
+Qwen with admission failed; it is not waiting for another Qwen-specific repair.
+The operator-gated lane and challenger admission contract are documented in
+[supervised single-repository work](docs/work/supervised-single-repo.md).
+
+```text
+Alpha v1: FROZEN
+Qwen: ALPHA COMPLETE; PRODUCTION NOT ADMITTED
+V2 single-repository protocol: FROZEN CANDIDATE INTERFACE
+Task 10K: CLOSED FOR QWEN — ADMISSION FAILED
+```
 
 The inherited Doc Writer implementation remains removed from the live tree;
 witnessed history and reusable references are preserved under `lineage/`.

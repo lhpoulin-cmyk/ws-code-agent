@@ -61,6 +61,9 @@ def candidate_qualification(root: Path) -> Path:
         "  synthetic_acceptance: PASS",
         "  synthetic_acceptance: PENDING",
     ).replace(
+        "  synthetic_acceptance: FAIL",
+        "  synthetic_acceptance: PENDING",
+    ).replace(
         "  production_qualified: true",
         "  production_qualified: false",
     )
@@ -78,8 +81,15 @@ def accepted_v2_qualification(root: Path) -> Path:
         "  synthetic_acceptance: PENDING",
         "  synthetic_acceptance: PASS",
     ).replace(
+        "  synthetic_acceptance: FAIL",
+        "  synthetic_acceptance: PASS",
+    ).replace(
         "  production_qualified: false",
         "  production_qualified: true",
+    ).replace(
+        "    status: NOT_ADMITTED",
+        "    status: ADMITTED",
+        1,
     )
     path.write_text(text, encoding="utf-8")
     return path
@@ -132,7 +142,7 @@ def start(store: Path, repo: Path, head: str, *, patch_paths=("src/message.py",)
         objective="Change the message as requested.",
         read_scopes=("src",),
         patch_paths=tuple(patch_paths),
-        qualification_path=QUALIFICATION,
+        qualification_path=accepted_v2_qualification(store.parent),
         harness_sha="test-harness",
         turn_limit=3,
     )
@@ -147,12 +157,8 @@ class SupervisedWorkTests(unittest.TestCase):
             self.assertEqual(["src"], manifest["authority"]["read_scopes"])
             self.assertEqual(["src/message.py"], manifest["authority"]["patch_paths"])
             self.assertEqual("SUPERVISED_SINGLE_REPO", manifest["qualification"]["operating_class"])
-            accepted_v2 = (
-                "  qualification_status: SUPERVISED_SYNTHETIC_ACCEPTED"
-                in QUALIFICATION.read_text(encoding="utf-8")
-            )
             self.assertEqual(
-                VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID if accepted_v2 else SINGLE_REPOSITORY_PROTOCOL_ID,
+                VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID,
                 manifest["protocol_id"],
             )
             self.assertTrue(manifest["protocol_qualification"]["production_qualified"])
@@ -171,6 +177,41 @@ class SupervisedWorkTests(unittest.TestCase):
             (repo / "draft.txt").write_text("dirty")
             with self.assertRaisesRegex(SupervisedWorkError, "SOURCE_MUST_BE_CLEAN"):
                 start(root / "other", repo, head, session="work-other-session")
+
+    def test_qwen_qualification_closes_production_and_synthetic_admission(self):
+        text = QUALIFICATION.read_text(encoding="utf-8")
+        self.assertIn("  status: NOT_ADMITTED", text)
+        self.assertIn("  synthetic_acceptance: FAIL", text)
+        self.assertIn("  production_qualified: false", text)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repo, head = repository(root)
+            with self.assertRaisesRegex(
+                SupervisedWorkError,
+                "PROTOCOL_QUALIFICATION_MISMATCH",
+            ):
+                SupervisedWorkController.start(
+                    root / "closed-store",
+                    session_id="work-qwen-closed-production",
+                    repository=repo,
+                    expected_head=head,
+                    objective="Change the message as requested.",
+                    read_scopes=("src",),
+                    patch_paths=("src/message.py",),
+                    qualification_path=QUALIFICATION,
+                    harness_sha="test-harness",
+                )
+            with self.assertRaisesRegex(
+                SupervisedWorkError,
+                "V2_CANDIDATE_SESSION_NOT_AUTHORIZED",
+            ):
+                SupervisedWorkController.start_synthetic_v2(
+                    root / "closed-synthetic-store",
+                    session_id="work-qwen-closed-synthetic",
+                    fixture_kind=SYNTHETIC_V2_WRITE,
+                    qualification_path=QUALIFICATION,
+                    harness_sha="test-harness",
+                )
 
     def test_value_free_v2_is_candidate_only_and_uses_fixed_synthetic_fixtures(self):
         self.assertNotIn(

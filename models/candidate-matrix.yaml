@@ -8,6 +8,7 @@ selection_rule: Selection for evaluation does not imply a default,
 selected_challenger:
   id: qwen25-coder-32b-q4
   role: INTRA_FAMILY_SCALE_CONTROL
+  work_role: DELIBERATIVE_OVERNIGHT_CODER
   status: ADMISSION_INCONCLUSIVE_INFRASTRUCTURE
   selected_at: 2026-08-11
   canonical_upstream_model: Qwen/Qwen2.5-Coder-32B-Instruct
@@ -35,7 +36,7 @@ selected_challenger:
   production_admission: INCONCLUSIVE_INFRASTRUCTURE
   qualification: NOT_EVALUATED
   admission_binding:
-    status: IDENTITY_ROUTING_READY_VALIDATION_INCOMPLETE
+    status: IDENTITY_ROUTING_READY_VALIDATION_BOUND
     candidate_manifest: ../docs/qualification/qwen25-coder-32b-v2-admission-candidate.yaml
     session_kind: QWEN25_32B_V2_SUPERVISED_PRODUCTION_ADMISSION
     operator_command: start-qwen25-32b-v2
@@ -48,6 +49,7 @@ selected_challenger:
     - ../docs/experiments/task10t-qwen25-coder-32b-runtime-acceptance.md
     - ../docs/experiments/task10u-qwen25-coder-32b-v2-binding.md
     - ../docs/experiments/task10v-qwen25-coder-32b-v2-scale-control.md
+    - ../docs/experiments/task10w-frozen-write-validation.md
 
 katra:
   role: KATRA_TORTURE
@@ -77,6 +79,7 @@ candidates:
   - id: qwen25-coder-14b-q4
     status: EVALUATION_COMPLETE
     practical_coding_baseline: true
+    work_role: INTERACTIVE_PRACTICAL_CODER
     source_verified_at: 2026-08-11
     selected_at: 2026-08-11
     normal_target_tiers: [tier_a_16gb]
@@ -342,6 +345,7 @@ candidates:
   - id: qwen25-coder-32b-q4
     status: EVALUATION_INCONCLUSIVE
     role: INTRA_FAMILY_SCALE_CONTROL
+    work_role: DELIBERATIVE_OVERNIGHT_CODER
     source_verified_at: 2026-08-11
     selected_at: 2026-08-11
     normal_target_tiers: [tier_b_24gb]
@@ -420,7 +424,7 @@ candidates:
     production_admission: INCONCLUSIVE_INFRASTRUCTURE
     qualification: NOT_EVALUATED
     admission_binding:
-      status: IDENTITY_ROUTING_READY_VALIDATION_INCOMPLETE
+      status: IDENTITY_ROUTING_READY_VALIDATION_BOUND
       candidate_manifest: ../docs/qualification/qwen25-coder-32b-v2-admission-candidate.yaml
       session_kind: QWEN25_32B_V2_SUPERVISED_PRODUCTION_ADMISSION
       operator_command: start-qwen25-32b-v2
@@ -444,6 +448,23 @@ candidates:
       model_inferences: 3
       retry: NOT_PERFORMED
       infrastructure_blocker: NO_APPROVED_VISIBLE_OR_HIDDEN_VALIDATION_DESCRIPTOR
+    retrospective_technical_validation:
+      classification: RETROSPECTIVE_TECHNICAL_VALIDATION
+      status: PASS
+      recorded_at: 2026-08-11
+      candidate_identity: 356abfda8bf041701e01e732156e47b9f49dc62953be360325a3f7e3d729feb0
+      candidate_integrity: MATCH
+      source_snapshot_x: MATCH
+      validator_implementation_checkpoint: 09a17ca9f34b71956a316ee81f947584fa51d28b
+      visible_descriptor: task10k-c-write-visible-v1
+      visible_descriptor_identity: 84f9b4a7758cbce11588c71ceb06e83112e87d1574efa0bc903f85ff483ea467
+      visible_validation: PASS
+      hidden_descriptor: task10k-c-write-hidden-v1
+      hidden_descriptor_identity: b6c453d0e93d59356c588c691a02877c9569f76a75bcef065333465cd3f4d46f
+      hidden_validation: PASS
+      technical_correctness: VALIDATED
+      model_inferences: 0
+      historical_task10v_disposition: UNCHANGED_INCONCLUSIVE_INFRASTRUCTURE
     selection_rationale:
       changed_variable: MODEL_SCALE_14_8B_TO_32_8B
       controlled_surfaces: SAME_FAMILY_LINEAGE_ARCHITECTURE_QUANTIZATION_TEMPLATE_CONTEXT_PROTOCOL_TRANSPORT
@@ -459,6 +480,7 @@ candidates:
       - ../docs/experiments/task10t-qwen25-coder-32b-runtime-acceptance.md
       - ../docs/experiments/task10u-qwen25-coder-32b-v2-binding.md
       - ../docs/experiments/task10v-qwen25-coder-32b-v2-scale-control.md
+      - ../docs/experiments/task10w-frozen-write-validation.md
 
   - id: qwen3-coder-30b-q8
     status: CANDIDATE

@@ -239,3 +239,17 @@ V2 and fixtures, the same model-visible renderer, no more than eight turns per
 session, and no retry, tuning, hint, Markdown normalization, JSON repair,
 context change, Ollama change, 14B rescore, automatic promotion, or authority
 broadening.
+
+## Forward-only Task 10W addendum
+
+Task 10W later established the previously missing objective-derived visible and
+hidden validators, then applied them to the immutable preserved write candidate
+without model inference. Candidate identity and Source Snapshot X both matched;
+both validators passed under fixed systemd containment. The supplemental
+technical-correctness result is `VALIDATED`.
+
+This evidence did not exist during Task 10V. Therefore the historical Task 10V
+disposition remains `TASK10V_ADMISSION_INCONCLUSIVE_INFRASTRUCTURE`, its model
+turns and clarification PASS remain unchanged, and no production-admission
+score is added retroactively. The authoritative supplement is
+[`task10w-frozen-write-validation.md`](task10w-frozen-write-validation.md).

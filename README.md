@@ -47,8 +47,9 @@ official artifact and patched-runtime compatibility resolved, but its enforced
 therefore ineligible for this exact comparison seam, not rejected as a model or
 runtime failure.
 
-`qwen25-coder-14b-q4` remains the practical coding baseline after completing
-its frozen V2 challenger evaluation. Katra
+`qwen25-coder-14b-q4` remains the practical coding baseline, with operator-use
+role `INTERACTIVE_PRACTICAL_CODER`, after completing its frozen V2 challenger
+evaluation. Katra
 retained the exact accepted `qwen2.5-coder:14b-instruct-q4_K_M` artifact and
 `qwen25-coder-14b-katra-4096` profile at effective context 4096 and 100% GPU.
 The write response proposed a plausible authorized patch but wrapped it in
@@ -57,7 +58,8 @@ instead of `REQUEST_CLARIFICATION`. The strict parser accepted neither request,
 so production admission failed without changing the model's accepted runtime or
 practical-baseline disposition.
 
-`qwen25-coder-32b-q4` is retained as an intra-family scale control. Its
+`qwen25-coder-32b-q4` is retained as an intra-family scale control with
+operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and
 the exact 4096 comparison seam, while changing model scale from 14.8B to 32.8B.
 One exact pull and three no-retry neutral probes established a runtime-accepted
@@ -70,8 +72,13 @@ clarification session emitted the required materially relevant
 `REQUEST_CLARIFICATION`. The run remains admission-inconclusive rather than
 PASS or model FAIL because the frozen supervised lane has no approved
 visible/hidden validation descriptor and reports `VALIDATION_NOT_CONFIGURED`.
-The candidate is not production-admitted, preferred, or a replacement for the
-14B baseline.
+Task 10W subsequently added objective-derived, independently implemented
+visible and hidden validators and ran them against the immutable preserved
+candidate without model inference. Both passed under fixed systemd containment,
+so that candidate now has a forward-only supplemental technical-correctness
+finding of `VALIDATED`. Task 10V's historical inconclusive disposition and all
+historical turns remain unchanged. The candidate is not production-admitted,
+preferred, or a replacement for the 14B baseline.
 
 The inherited Doc Writer implementation remains removed from the live tree;
 witnessed history and reusable references are preserved under `lineage/`.

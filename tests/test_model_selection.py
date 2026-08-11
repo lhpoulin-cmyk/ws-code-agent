@@ -67,6 +67,7 @@ class ModelSelectionTests(unittest.TestCase):
         candidate = matrix.split("  - id: qwen25-coder-14b-q4\n", 1)[1].split("\n  - id:", 1)[0]
         required_candidate = (
             "    practical_coding_baseline: true",
+            "    work_role: INTERACTIVE_PRACTICAL_CODER",
             "sha256:0578f229f23ad620e123654fd0b4708405e7af3629ec1aecf3f553f54e06bc40",
             "sha256:ac9bc7a69dab38da1c790838955f1293420b55ab555ef6b4615efa1c1507b1ed",
             "      model_layer_bytes: 8988110784",
@@ -133,6 +134,7 @@ class ModelSelectionTests(unittest.TestCase):
         required_selection = (
             "  id: qwen25-coder-32b-q4",
             "  role: INTRA_FAMILY_SCALE_CONTROL",
+            "  work_role: DELIBERATIVE_OVERNIGHT_CODER",
             "  status: ADMISSION_INCONCLUSIVE_INFRASTRUCTURE",
             "  ollama_tag: qwen2.5-coder:32b-instruct-q4_K_M",
             "  manifest_digest: b92d6a0bd47ee79114298de0177bf920c05a706d12633950b3936778492bef41",
@@ -152,7 +154,7 @@ class ModelSelectionTests(unittest.TestCase):
             "    processor_envelope: {minimum_gpu_percent: 71, maximum_cpu_percent: 29}",
             "    observed_vram_mib: 14634",
             "    effective_context: 4096",
-            "    status: IDENTITY_ROUTING_READY_VALIDATION_INCOMPLETE",
+            "    status: IDENTITY_ROUTING_READY_VALIDATION_BOUND",
             "    session_kind: QWEN25_32B_V2_SUPERVISED_PRODUCTION_ADMISSION",
             "    operator_command: start-qwen25-32b-v2",
             "    backend: Qwen25_32BKatraOllamaDispositionBackend",
@@ -164,6 +166,7 @@ class ModelSelectionTests(unittest.TestCase):
         required_candidate = (
             "    status: EVALUATION_INCONCLUSIVE",
             "    role: INTRA_FAMILY_SCALE_CONTROL",
+            "    work_role: DELIBERATIVE_OVERNIGHT_CODER",
             "ollama-manifest-digest:b92d6a0bd47ee79114298de0177bf920c05a706d12633950b3936778492bef41",
             "sha256:f0676bd3c336a0f995e270c5e2c80ce09aa5cfcab0c59ff574088eca52da32ee",
             "sha256:ac3d1ba8aa77755dab3806d9024e9c385ea0d5b412d6bdf9157f8a4a7e9fc0d9",
@@ -194,7 +197,7 @@ class ModelSelectionTests(unittest.TestCase):
             "      neutral_probes: 3",
             "      terminality: NORMAL_STOP_ALL_PROBES",
             "      model_repeat_limit: NOT_OBSERVED",
-            "      status: IDENTITY_ROUTING_READY_VALIDATION_INCOMPLETE",
+            "      status: IDENTITY_ROUTING_READY_VALIDATION_BOUND",
             "      session_kind: QWEN25_32B_V2_SUPERVISED_PRODUCTION_ADMISSION",
             "      operator_command: start-qwen25-32b-v2",
             "      backend: Qwen25_32BKatraOllamaDispositionBackend",
@@ -210,6 +213,14 @@ class ModelSelectionTests(unittest.TestCase):
             "      clarification_protocol_behavior: BARE_VALID_JSON",
             "      model_inferences: 3",
             "      retry: NOT_PERFORMED",
+            "      classification: RETROSPECTIVE_TECHNICAL_VALIDATION",
+            "      candidate_identity: 356abfda8bf041701e01e732156e47b9f49dc62953be360325a3f7e3d729feb0",
+            "      validator_implementation_checkpoint: 09a17ca9f34b71956a316ee81f947584fa51d28b",
+            "      visible_validation: PASS",
+            "      hidden_validation: PASS",
+            "      technical_correctness: VALIDATED",
+            "      model_inferences: 0",
+            "      historical_task10v_disposition: UNCHANGED_INCONCLUSIVE_INFRASTRUCTURE",
         )
         self.assertTrue(all(value in candidate for value in required_candidate))
         self.assertNotIn("PRODUCTION_ADMITTED", candidate)
@@ -242,6 +253,12 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn("CLARIFICATION_PASS", admission_evidence)
         self.assertNotIn("QWEN25_CODER_32B_V2_PRODUCTION_ADMISSION_PASS", admission_evidence)
         self.assertNotIn("QWEN25_CODER_32B_V2_PRODUCTION_ADMISSION_FAIL", admission_evidence)
+        validation_evidence = (
+            ROOT / "docs/experiments/task10w-frozen-write-validation.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("TASK10W_VALIDATION_APPARATUS_READY", validation_evidence)
+        self.assertIn("TASK10V_PRESERVED_CANDIDATE_TECHNICALLY_VALIDATED", validation_evidence)
+        self.assertIn("Task 10V historical disposition: `UNCHANGED`", validation_evidence)
         self.assertEqual(
             "3c4cbbb94fa26a758dbc157c6895606f1705a7b71b8bdc4c60fcb08330cfbe4e",
             hashlib.sha256(VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL.render().encode()).hexdigest(),

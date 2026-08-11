@@ -1,8 +1,27 @@
 matrix: ws-code-agent-coding-candidates/v1
 status: evaluation-policy-only
-verified_at: 2026-08-09
-selection_rule: No candidate is a selected default. Helix Code Agent Alpha must
-  evaluate capability and obedience before any operator disposition.
+verified_at: 2026-08-11
+selection_rule: Selection for evaluation does not imply a default,
+  qualification, admission, or execution authority. The selected challenger
+  must face the frozen runtime and V2 comparison seam.
+
+selected_challenger:
+  id: devstral-small-2-q4
+  status: SELECTED_FOR_EVALUATION
+  selected_at: 2026-08-11
+  canonical_upstream_model: mistralai/Devstral-Small-2-24B-Instruct-2512
+  ollama_tag: devstral-small-2:24b-instruct-2512-q4_K_M
+  manifest_digest: 24277f07f62db8f9cb68e9dfc679ea1818a7fbac47a50eff0a701d3f645b63c8
+  quantization: Q4_K_M
+  comparison_context: 4096
+  generation_defaults:
+    temperature: 0.15
+  local_install_state: NOT_INSTALLED_AT_SELECTION
+  expected_katra_fit: PARTIAL_OFFLOAD_EXPECTED
+  runtime_acceptance: NOT_EVALUATED
+  production_admission: NOT_EVALUATED
+  alpha_qualification: NOT_EVALUATED
+  evidence: ../docs/experiments/task10m-devstral-challenger-selection.md
 
 katra:
   role: KATRA_TORTURE
@@ -141,21 +160,25 @@ candidates:
       - https://huggingface.co/Qwen/Qwen3.6-27B
 
   - id: devstral-small-2-q4
-    status: CANDIDATE
-    source_verified_at: 2026-08-09
+    status: SELECTED_FOR_EVALUATION
+    source_verified_at: 2026-08-11
     normal_target_tiers: [tier_b_24gb]
     katra_torture: true
     model_family: Devstral Small 2
     canonical_upstream_model: mistralai/Devstral-Small-2-24B-Instruct-2512
     ollama:
       display_tag: devstral-small-2:24b-instruct-2512-q4_K_M
-      resolved_identity: ollama-manifest-prefix:24277f07f62d
-      identity_note: Re-resolve the full digest immediately before a future pull.
+      resolved_identity: ollama-manifest-digest:24277f07f62db8f9cb68e9dfc679ea1818a7fbac47a50eff0a701d3f645b63c8
+      identity_note: Resolved read-only from the official registry on 2026-08-11; not installed on Katra at selection.
     parameter_class: 24B
     architecture: dense multimodal Mistral3
     quantization: Q4_K_M
     artifact_size: 15GB
     advertised_context: 384K in Ollama; upstream model card describes 256K.
+    resolved_context_metadata: 393216
+    comparison_context: 4096
+    default_generation_parameters:
+      temperature: 0.15
     specialization: agentic software engineering, tool-assisted codebase exploration,
       and multi-file editing
     tool_agent_support: Explicitly agentic and tools-capable in the Ollama entry.

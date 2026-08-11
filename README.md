@@ -35,6 +35,12 @@ V2 single-repository protocol: FROZEN CANDIDATE INTERFACE
 Task 10K: CLOSED FOR QWEN — ADMISSION FAILED
 ```
 
+The next selected challenger is `devstral-small-2-q4`, frozen as
+`SELECTED_FOR_EVALUATION` at its full Ollama manifest digest. It is neither
+installed, runtime-accepted, production-admitted, Alpha-qualified, nor selected
+as a default. The next authorized boundary is Katra runtime/artifact acceptance,
+followed by the unchanged V2 admission gate.
+
 The inherited Doc Writer implementation remains removed from the live tree;
 witnessed history and reusable references are preserved under `lineage/`.
 

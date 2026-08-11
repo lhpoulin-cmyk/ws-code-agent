@@ -41,9 +41,14 @@ research question.
 The live [candidate matrix](../models/candidate-matrix.yaml) defines a small
 experimental set for 16 GB, 24 GB, and 32 GB accelerator-memory tiers. The tier
 is an intended memory class, not a parameter-count label and not a fit guarantee.
-Every entry is `CANDIDATE` or `CONTROL`; no `SELECTED_DEFAULT` status exists.
-No next-model candidate is authoritatively designated; selection remains
-unresolved.
+The operator-selected challenger is `devstral-small-2-q4`, with status
+`SELECTED_FOR_EVALUATION`. This is not `SELECTED_DEFAULT`, `QUALIFIED`, or
+`ADMITTED`. Other entries remain `CANDIDATE` or `CONTROL`; no selected default
+exists.
+
+Devstral next faces runtime/artifact acceptance on Katra, then the unchanged V2
+synthetic write and clarification admission fixtures. Broader Alpha evaluation
+requires both admission behaviors to pass and separate authorization.
 
 The 16 GB tier establishes an accessible constrained baseline. The 24 GB tier is
 the serious daily-driver candidate set. The 32 GB tier favors higher-fidelity

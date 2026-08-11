@@ -70,17 +70,21 @@ They accept no operator repository and grant neither production qualification
 nor promotion authority. The completed Qwen one-shot evaluation is historical;
 the failed qualification state prevents another Qwen run through this surface.
 
-## Disabled adapter candidate
+## Strict and normalized lanes
 
-The live lane remains `STRICT_RAW`. Task 10X calibrated
-`SINGLE_MARKDOWN_JSON_FENCE_NORMALIZATION_V1` as a disabled
-`NORMALIZATION_CANDIDATE`. It removes only one whole-response unlabeled or
-lowercase-`json` Markdown fence while preserving the payload bytes and raw model
-evidence. It does not search prose, select objects, repair JSON or patches,
-rename requests, change values, convert `NO_CHANGE`, or retry a model. No live
-supervised path invokes it. Enabling any adapter requires a separate operator
-decision and must retain the existing parser, authority, isolation, validation,
-and review safeguards.
+The historical benchmark command `start-qwen25-v2` remains `STRICT_RAW` and
+uses no adapter. The separate operator command
+`start-qwen25-interactive-normalized` binds the Qwen2.5-Coder 14B interactive
+lane to `SINGLE_MARKDOWN_JSON_FENCE_NORMALIZATION_V1`. Both the mode and exact
+adapter version are durable session state and are checked again after restart.
+
+The normalized lane removes only one whole-response unlabeled or
+lowercase-`json` Markdown fence after raw response evidence is durable. It
+stores the normalized parser input and independent SHA-256 evidence, then calls
+the unchanged strict parser. It does not search prose, select objects, repair
+JSON or patches, rename requests, change values, convert `NO_CHANGE`, or retry
+a model. The model-visible prompt, authority, isolation, validation, and review
+safeguards are shared with the strict lane.
 
 ## Challenger admission
 

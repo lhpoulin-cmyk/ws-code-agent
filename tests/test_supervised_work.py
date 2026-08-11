@@ -14,12 +14,17 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from ws_code_agent.alpha_experiment import AlphaExperimentController  # noqa: E402
-from ws_code_agent.katra_ollama_backend import KatraOllamaDispositionBackend, RuntimeTurnEvidence  # noqa: E402
+from ws_code_agent.katra_ollama_backend import (  # noqa: E402
+    KatraOllamaDispositionBackend,
+    Qwen25KatraOllamaDispositionBackend,
+    RuntimeTurnEvidence,
+)
 from ws_code_agent import supervised_work as supervised_work_module  # noqa: E402
 from ws_code_agent.supervised_work import (  # noqa: E402
     DEVSTRAL_CANDIDATE_ID,
     DEVSTRAL_V2_SESSION_KIND,
     QWEN25_CANDIDATE_ID,
+    QWEN25_14B_INTERACTIVE_NORMALIZED_SESSION_KIND,
     QWEN25_V2_SESSION_KIND,
     QWEN25_32B_CANDIDATE_ID,
     QWEN25_32B_V2_SESSION_KIND,
@@ -29,6 +34,7 @@ from ws_code_agent.supervised_work import (  # noqa: E402
     SupervisedWorkController,
     SupervisedWorkError,
 )
+from ws_code_agent.response_normalization import ADAPTER_ID, ADAPTER_VERSION, STRICT_RAW  # noqa: E402
 from ws_code_agent.request_protocol import (  # noqa: E402
     SINGLE_REPOSITORY_PROTOCOL_ID,
     VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL,
@@ -128,6 +134,13 @@ class QueueBackend:
             raise ConnectionError("simulated client loss")
         self.replies.pop(0)
         return raw
+
+
+class Qwen25QueueBackend(QueueBackend):
+    def invocation_for(self, messages, invocation_id, *, protocol):
+        return Qwen25KatraOllamaDispositionBackend.invocation_for(
+            messages, invocation_id, protocol=protocol
+        )
 
 
 def repository(root: Path) -> tuple[Path, str]:
@@ -472,6 +485,112 @@ class SupervisedWorkTests(unittest.TestCase):
                         harness_sha="frozen-harness",
                     )
 
+    def test_qwen25_interactive_normalized_lane_is_durable_and_strict_raw_is_separate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            strict = SupervisedWorkController.start_qwen25_v2_admission(
+                root / "store",
+                session_id="work-qwen25-strict-separation",
+                fixture_kind=SYNTHETIC_V2_WRITE,
+                candidate_path=QWEN25_CANDIDATE,
+                harness_sha="frozen-harness",
+            )
+            normalized = SupervisedWorkController.start_qwen25_interactive_normalized(
+                root / "store",
+                session_id="work-qwen25-normalized-separation",
+                fixture_kind=SYNTHETIC_V2_WRITE,
+                candidate_path=QWEN25_CANDIDATE,
+                harness_sha="frozen-harness",
+            )
+            self.assertEqual(
+                {"mode": STRICT_RAW, "adapter_id": "NONE", "adapter_version": None},
+                strict.manifest()["response_adapter"],
+            )
+            expected = {
+                "mode": "INTERACTIVE_NORMALIZED",
+                "adapter_id": ADAPTER_ID,
+                "adapter_version": ADAPTER_VERSION,
+            }
+            self.assertEqual(QWEN25_14B_INTERACTIVE_NORMALIZED_SESSION_KIND, normalized.manifest()["session_kind"])
+            self.assertEqual(expected, normalized.manifest()["response_adapter"])
+            self.assertEqual(expected, normalized.status()["response_adapter"])
+            self.assertEqual(expected, normalized._turns._case("WORK")["response_adapter"])
+            self.assertEqual(
+                ["task10k-c-write-visible-v1", "task10k-c-write-hidden-v1"],
+                normalized.manifest()["validation"]["authorized_validation_ids"],
+            )
+
+            strict_content = strict._turns._case("WORK")["conversation"][0]["content"]
+            normalized_content = normalized._turns._case("WORK")["conversation"][0]["content"]
+            comparable = json.loads(json.dumps(normalized_content))
+            comparable["repository"] = strict_content["repository"]
+            self.assertEqual(strict_content, comparable)
+
+            state_path = normalized.root / "session-state.json"
+            state = json.loads(state_path.read_text())
+            state["response_adapter"] = {
+                "mode": STRICT_RAW, "adapter_id": "NONE", "adapter_version": None,
+            }
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            with self.assertRaisesRegex(SupervisedWorkError, "RESPONSE_ADAPTER_BINDING_MISMATCH"):
+                SupervisedWorkController(normalized.root).status()
+
+    def test_normalized_lane_preserves_raw_and_parses_only_exact_fence_payload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            controller = SupervisedWorkController.start_qwen25_interactive_normalized(
+                root / "store",
+                session_id="work-qwen25-normalized-evidence",
+                fixture_kind=SYNTHETIC_V2_CLARIFICATION,
+                candidate_path=QWEN25_CANDIDATE,
+                harness_sha="frozen-harness",
+            )
+            payload = request("NO_CHANGE", {})
+            raw = f"```json\n{payload}\n```"
+            result = controller.step(Qwen25QueueBackend([raw]))
+            turn = controller.root / "cases/WORK/turns/0001"
+            self.assertEqual(raw.encode(), (turn / "raw-response.txt").read_bytes())
+            self.assertEqual(payload.encode(), (turn / "normalized-parser-input.txt").read_bytes())
+            evidence = json.loads((turn / "normalization-evidence.json").read_text())
+            self.assertTrue(evidence["transformation_applied"])
+            self.assertEqual("SINGLE_MARKDOWN_JSON_FENCE_REMOVED", evidence["transformation_classification"])
+            self.assertEqual(hashlib.sha256(raw.encode()).hexdigest(), result["raw_sha256"])
+            self.assertEqual(hashlib.sha256(payload.encode()).hexdigest(), result["parser_input_sha256"])
+            self.assertEqual("NO_CHANGE", result["request_type"])
+            self.assertEqual("NO_CHANGE", result["terminal_disposition"])
+
+    def test_normalized_lane_does_not_change_patch_authority_or_strict_raw_parser(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            raw_request = request("PROPOSE_PATCH", {
+                "patch": new_file_patch("src/other.py", 'VALUE = "hello"\n'),
+                "proposed_paths": ["src/other.py"],
+            })
+            fenced = f"```json\n{raw_request}\n```"
+            normalized = SupervisedWorkController.start_qwen25_interactive_normalized(
+                root / "store",
+                session_id="work-qwen25-normalized-authority",
+                fixture_kind=SYNTHETIC_V2_WRITE,
+                candidate_path=QWEN25_CANDIDATE,
+                harness_sha="frozen-harness",
+            )
+            denied = normalized.step(Qwen25QueueBackend([fenced]))
+            self.assertEqual("DENIED_SCOPE", denied["authority_outcome"])
+            self.assertFalse(normalized.status()["candidate_effect"])
+
+            strict = SupervisedWorkController.start_qwen25_v2_admission(
+                root / "store",
+                session_id="work-qwen25-strict-fence",
+                fixture_kind=SYNTHETIC_V2_CLARIFICATION,
+                candidate_path=QWEN25_CANDIDATE,
+                harness_sha="frozen-harness",
+            )
+            malformed = strict.step(Qwen25QueueBackend([
+                f"```json\n{request('REQUEST_CLARIFICATION', {'question': 'Which representation is required?'})}\n```"
+            ]))
+            self.assertEqual("MALFORMED_REQUEST", malformed["terminal_disposition"])
+            self.assertFalse((strict.root / "cases/WORK/turns/0001/normalized-parser-input.txt").exists())
+
     def test_qwen25_32b_admission_binding_is_exact_separate_and_stale_safe(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -540,6 +659,7 @@ class SupervisedWorkTests(unittest.TestCase):
 
             cli = (ROOT / "tools/run_supervised_work.py").read_text(encoding="utf-8")
             self.assertIn('sub.add_parser("start-qwen25-v2")', cli)
+            self.assertIn('sub.add_parser("start-qwen25-interactive-normalized")', cli)
             self.assertIn('sub.add_parser("start-qwen25-32b-v2")', cli)
             self.assertIn("elif digest == QWEN25_MODEL_DIGEST:", cli)
             self.assertIn("elif digest == QWEN25_32B_MODEL_DIGEST:", cli)

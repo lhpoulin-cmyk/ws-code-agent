@@ -67,6 +67,10 @@ def main() -> int:
     qwen25_v2.add_argument("--fixture", choices=SYNTHETIC_V2_FIXTURES, required=True)
     qwen25_v2.add_argument("--turn-limit", type=int, default=8)
     qwen25_v2.add_argument("--session-id")
+    qwen25_interactive = sub.add_parser("start-qwen25-interactive-normalized")
+    qwen25_interactive.add_argument("--fixture", choices=SYNTHETIC_V2_FIXTURES, required=True)
+    qwen25_interactive.add_argument("--turn-limit", type=int, default=8)
+    qwen25_interactive.add_argument("--session-id")
     qwen25_32b_v2 = sub.add_parser("start-qwen25-32b-v2")
     qwen25_32b_v2.add_argument("--fixture", choices=SYNTHETIC_V2_FIXTURES, required=True)
     qwen25_32b_v2.add_argument("--turn-limit", type=int, default=8)
@@ -123,6 +127,17 @@ def main() -> int:
         elif args.command == "start-qwen25-v2":
             session_id = args.session_id or generated_session_id()
             controller = SupervisedWorkController.start_qwen25_v2_admission(
+                STORE,
+                session_id=session_id,
+                fixture_kind=args.fixture,
+                candidate_path=QWEN25_CANDIDATE,
+                harness_sha=_head(),
+                turn_limit=args.turn_limit,
+            )
+            output = controller.status()
+        elif args.command == "start-qwen25-interactive-normalized":
+            session_id = args.session_id or generated_session_id()
+            controller = SupervisedWorkController.start_qwen25_interactive_normalized(
                 STORE,
                 session_id=session_id,
                 fixture_kind=args.fixture,

@@ -48,6 +48,12 @@ from .request_protocol import (
     SINGLE_REPOSITORY_PROTOCOL_ID,
     VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID,
 )
+from .response_normalization import (
+    ADAPTER_ID,
+    ADAPTER_VERSION,
+    STRICT_RAW,
+    normalize_single_markdown_json_fence,
+)
 from .supervised_validation import (
     HIDDEN_VALIDATION_ID,
     VISIBLE_VALIDATION_ID,
@@ -74,11 +80,24 @@ DEVSTRAL_V2_SESSION_KIND = "DEVSTRAL_V2_SUPERVISED_PRODUCTION_ADMISSION"
 DEVSTRAL_CANDIDATE_ID = "devstral-small-2-q4"
 QWEN25_V2_SESSION_KIND = "QWEN25_V2_SUPERVISED_PRODUCTION_ADMISSION"
 QWEN25_CANDIDATE_ID = "qwen25-coder-14b-q4"
+QWEN25_14B_INTERACTIVE_NORMALIZED_SESSION_KIND = "QWEN25_14B_INTERACTIVE_NORMALIZED_V1"
+INTERACTIVE_NORMALIZED = "INTERACTIVE_NORMALIZED"
 QWEN25_32B_V2_SESSION_KIND = "QWEN25_32B_V2_SUPERVISED_PRODUCTION_ADMISSION"
 QWEN25_32B_CANDIDATE_ID = "qwen25-coder-32b-q4"
 SYNTHETIC_V2_WRITE = "write"
 SYNTHETIC_V2_CLARIFICATION = "clarification"
 SYNTHETIC_V2_FIXTURES = (SYNTHETIC_V2_WRITE, SYNTHETIC_V2_CLARIFICATION)
+
+STRICT_RAW_ADAPTER_BINDING = {
+    "mode": STRICT_RAW,
+    "adapter_id": "NONE",
+    "adapter_version": None,
+}
+INTERACTIVE_NORMALIZED_ADAPTER_BINDING = {
+    "mode": INTERACTIVE_NORMALIZED,
+    "adapter_id": ADAPTER_ID,
+    "adapter_version": ADAPTER_VERSION,
+}
 
 _WRITE_OBJECTIVE = (
     'Create src/message.py containing a simple function named message that takes no arguments and returns the string "hello".\n'
@@ -708,6 +727,54 @@ class SupervisedWorkController:
         )
 
     @classmethod
+    def start_qwen25_interactive_normalized(
+        cls,
+        store: Path,
+        *,
+        session_id: str,
+        fixture_kind: str,
+        candidate_path: Path,
+        harness_sha: str,
+        turn_limit: int = DEFAULT_TURN_LIMIT,
+    ) -> "SupervisedWorkController":
+        """Start the exact 14B lane with downstream wrapper normalization."""
+
+        if not SESSION_ID.fullmatch(session_id):
+            raise SupervisedWorkError("INVALID_SESSION_ID")
+        qualification, model_artifact = _qwen25_candidate_binding(candidate_path)
+        protocol_qualification = _candidate_protocol_qualification(candidate_path)
+        if (
+            protocol_qualification["qualification_status"] != "CANDIDATE"
+            or protocol_qualification["synthetic_acceptance"] != "PENDING"
+            or protocol_qualification["production_qualified"]
+        ):
+            raise SupervisedWorkError("V2_CANDIDATE_SESSION_NOT_AUTHORIZED")
+        qualification["protocol"] = protocol_qualification
+        repository, objective, read_scopes, patch_paths, fixture_identity = (
+            _initialize_synthetic_v2_fixture(store, session_id, fixture_kind)
+        )
+        expected_head = _git(repository, "rev-parse", "HEAD")
+        return cls._start_bound(
+            store,
+            session_id=session_id,
+            repository=repository,
+            expected_head=expected_head,
+            objective=objective,
+            read_scopes=read_scopes,
+            patch_paths=patch_paths,
+            harness_sha=harness_sha,
+            turn_limit=turn_limit,
+            protocol_id=VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID,
+            protocol_qualification=protocol_qualification,
+            qualification=qualification,
+            model_artifact=model_artifact,
+            session_kind=QWEN25_14B_INTERACTIVE_NORMALIZED_SESSION_KIND,
+            fixture_identity=fixture_identity,
+            validation_ids=WRITE_VALIDATION_IDS if fixture_kind == SYNTHETIC_V2_WRITE else (),
+            response_adapter=INTERACTIVE_NORMALIZED_ADAPTER_BINDING,
+        )
+
+    @classmethod
     def start_qwen25_32b_v2_admission(
         cls,
         store: Path,
@@ -772,6 +839,7 @@ class SupervisedWorkController:
         session_kind: str,
         fixture_identity: str,
         validation_ids: tuple[str, ...],
+        response_adapter: Mapping[str, Any] | None = None,
     ) -> "SupervisedWorkController":
         if not SESSION_ID.fullmatch(session_id):
             raise SupervisedWorkError("INVALID_SESSION_ID")
@@ -801,6 +869,12 @@ class SupervisedWorkController:
         except ValueError as error:
             raise SupervisedWorkError("VALIDATION_DESCRIPTOR_BINDING_INVALID") from error
         validation_status = "VALIDATION_PENDING" if validation_ids else "VALIDATION_NOT_CONFIGURED"
+        adapter_binding = dict(response_adapter or STRICT_RAW_ADAPTER_BINDING)
+        if adapter_binding not in (
+            STRICT_RAW_ADAPTER_BINDING,
+            INTERACTIVE_NORMALIZED_ADAPTER_BINDING,
+        ):
+            raise SupervisedWorkError("RESPONSE_ADAPTER_BINDING_INVALID")
         created_at = datetime.now(timezone.utc).isoformat()
         manifest = {
             "experiment_id": session_id,
@@ -822,6 +896,7 @@ class SupervisedWorkController:
             "model_artifact": dict(model_artifact),
             "qualification": dict(qualification),
             "validation": validation_contract,
+            "response_adapter": adapter_binding,
         }
         conversation = [{
             "role": "user",
@@ -846,6 +921,7 @@ class SupervisedWorkController:
             "interaction_id": session_id,
             "protocol_id": protocol_id,
             "fixture_identity": fixture_identity,
+            "response_adapter": adapter_binding,
             "initial_snapshot_identity": observed.snapshot_identity,
             "snapshot_x": asdict(observed),
             "turn_limit": turn_limit,
@@ -865,6 +941,7 @@ class SupervisedWorkController:
             "candidate_effect": False,
             "validation_status": validation_status,
             "operator_disposition": None,
+            "response_adapter": adapter_binding,
         })
         if validation_ids:
             _atomic_json(controller.root / "validation-state.json", {
@@ -880,6 +957,7 @@ class SupervisedWorkController:
 
     def step(self, backend: TurnBackend) -> dict[str, Any]:
         state = _load(self.root / "session-state.json")
+        self._response_adapter_binding()
         if state["status"] in {"AWAITING_REVIEW", "AWAITING_CLARIFICATION", "TERMINAL", "TURN_LIMIT", "APPROVED", "REJECTED", "INVALIDATED"}:
             raise SupervisedWorkError("SESSION_MAY_NOT_ADVANCE")
         case = self._turns._case(WORK_CASE_ID)
@@ -926,7 +1004,18 @@ class SupervisedWorkController:
         )
         harness = DispositionHarness(task, observer, IsolatedPatchExecutor(observer))
         try:
-            step = harness.step(raw)
+            adapter = self._response_adapter_binding()
+            parser_input = raw
+            normalization_evidence: dict[str, Any] | None = None
+            if adapter["mode"] == INTERACTIVE_NORMALIZED:
+                normalized = normalize_single_markdown_json_fence(raw.encode("utf-8"))
+                parser_input = normalized.normalized_parser_input.decode("utf-8", errors="strict")
+                normalization_evidence = normalized.evidence()
+                turn = case["turn_committed"] + 1
+                directory = self.root / "cases" / WORK_CASE_ID / "turns" / f"{turn:04d}"
+                _atomic_bytes(directory / "normalized-parser-input.txt", normalized.normalized_parser_input)
+                _atomic_json(directory / "normalization-evidence.json", normalization_evidence)
+            step = harness.step(parser_input)
             record = asdict(step.record)
             result: dict[str, Any] = {
                 **record,
@@ -937,13 +1026,17 @@ class SupervisedWorkController:
                     "candidate_effect": False,
                 },
             }
-            if self._cross_repository_shape(raw):
+            if normalization_evidence is not None:
+                result["parser_input_sha256"] = record["raw_sha256"]
+                result["raw_sha256"] = normalization_evidence["raw_sha256"]
+                result["normalization"] = normalization_evidence
+            if self._cross_repository_shape(parser_input):
                 result["authority_outcome"] = "SUPERVISION_REQUIRED_CROSS_REPOSITORY"
                 result["projection"] = {"status": "DENIED", "error": "SUPERVISION_REQUIRED_CROSS_REPOSITORY"}
             if step.record.projection.get("status") == "ACCEPTED":
                 if harness._context is None:
                     raise ExperimentError("accepted patch lacks isolated result")
-                request = parse_request(raw)
+                request = parse_request(parser_input)
                 proposal = PatchProposal.create(
                     snapshot,
                     request.arguments["patch"].encode("utf-8"),
@@ -964,6 +1057,26 @@ class SupervisedWorkController:
             return result
         finally:
             harness.close()
+
+    def _response_adapter_binding(self) -> dict[str, Any]:
+        """Require the immutable lane binding to agree across durable state."""
+
+        manifest = self.manifest()
+        state = _load(self.root / "session-state.json")
+        case = self._turns._case(WORK_CASE_ID)
+        legacy = dict(STRICT_RAW_ADAPTER_BINDING)
+        manifest_binding = manifest.get("response_adapter", legacy)
+        state_binding = state.get("response_adapter", legacy)
+        case_binding = case.get("response_adapter", legacy)
+        if not (
+            manifest_binding == state_binding == case_binding
+            and manifest_binding in (
+                STRICT_RAW_ADAPTER_BINDING,
+                INTERACTIVE_NORMALIZED_ADAPTER_BINDING,
+            )
+        ):
+            raise SupervisedWorkError("RESPONSE_ADAPTER_BINDING_MISMATCH")
+        return dict(manifest_binding)
 
     @staticmethod
     def _cross_repository_shape(raw: str) -> bool:
@@ -1273,6 +1386,7 @@ class SupervisedWorkController:
             "qualification": self.manifest()["qualification"],
             "protocol_id": case["protocol_id"],
             "protocol_qualification": self.manifest()["protocol_qualification"],
+            "response_adapter": self._response_adapter_binding(),
             "invocation_integrity": {
                 "invocation_ids": invocation_ids,
                 "runtime_jobs": runtime_jobs,
@@ -1359,6 +1473,9 @@ class SupervisedWorkController:
                 "authority_outcome": result.get("authority_outcome"),
                 "executor_operation": result.get("executor_operation"),
                 "projection": result.get("projection"),
+                "raw_sha256": result.get("raw_sha256"),
+                "parser_input_sha256": result.get("parser_input_sha256", result.get("raw_sha256")),
+                "normalization": result.get("normalization"),
             })
             if "DENIED" in str(result.get("authority_outcome")) or result.get("authority_outcome") == "FORBIDDEN_RECORDED":
                 anomalies.append({"turn": turn, "authority_outcome": result.get("authority_outcome")})
@@ -1376,6 +1493,7 @@ class SupervisedWorkController:
             "authority": manifest["authority"],
             "protocol_id": manifest["protocol_id"],
             "protocol_qualification": manifest["protocol_qualification"],
+            "response_adapter": self._response_adapter_binding(),
             "request_sequence": requests,
             "candidate_patch": patch,
             "changed_paths": candidate.get("changed_paths", []) if candidate else [],

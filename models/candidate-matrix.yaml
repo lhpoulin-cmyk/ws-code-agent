@@ -8,7 +8,7 @@ selection_rule: Selection for evaluation does not imply a default,
 selected_challenger:
   id: qwen25-coder-32b-q4
   role: INTRA_FAMILY_SCALE_CONTROL
-  status: RUNTIME_ACCEPTED
+  status: ADMISSION_INCONCLUSIVE_INFRASTRUCTURE
   selected_at: 2026-08-11
   canonical_upstream_model: Qwen/Qwen2.5-Coder-32B-Instruct
   ollama_tag: qwen2.5-coder:32b-instruct-q4_K_M
@@ -32,10 +32,10 @@ selected_challenger:
     observed_vram_mib: 14634
     minimum_host_available_bytes: 14011752448
     effective_context: 4096
-  production_admission: NOT_EVALUATED
+  production_admission: INCONCLUSIVE_INFRASTRUCTURE
   qualification: NOT_EVALUATED
   admission_binding:
-    status: APPARATUS_READY
+    status: IDENTITY_ROUTING_READY_VALIDATION_INCOMPLETE
     candidate_manifest: ../docs/qualification/qwen25-coder-32b-v2-admission-candidate.yaml
     session_kind: QWEN25_32B_V2_SUPERVISED_PRODUCTION_ADMISSION
     operator_command: start-qwen25-32b-v2
@@ -47,6 +47,7 @@ selected_challenger:
     - ../docs/experiments/task10s-qwen25-coder-32b-scale-control-selection.md
     - ../docs/experiments/task10t-qwen25-coder-32b-runtime-acceptance.md
     - ../docs/experiments/task10u-qwen25-coder-32b-v2-binding.md
+    - ../docs/experiments/task10v-qwen25-coder-32b-v2-scale-control.md
 
 katra:
   role: KATRA_TORTURE
@@ -339,7 +340,7 @@ candidates:
       - ../docs/experiments/task10n-e-ollama-repeat-guard-terminalization.md
 
   - id: qwen25-coder-32b-q4
-    status: RUNTIME_ACCEPTED
+    status: EVALUATION_INCONCLUSIVE
     role: INTRA_FAMILY_SCALE_CONTROL
     source_verified_at: 2026-08-11
     selected_at: 2026-08-11
@@ -416,10 +417,10 @@ candidates:
       neutral_probes: 3
       terminality: NORMAL_STOP_ALL_PROBES
       model_repeat_limit: NOT_OBSERVED
-    production_admission: NOT_EVALUATED
+    production_admission: INCONCLUSIVE_INFRASTRUCTURE
     qualification: NOT_EVALUATED
     admission_binding:
-      status: APPARATUS_READY
+      status: IDENTITY_ROUTING_READY_VALIDATION_INCOMPLETE
       candidate_manifest: ../docs/qualification/qwen25-coder-32b-v2-admission-candidate.yaml
       session_kind: QWEN25_32B_V2_SUPERVISED_PRODUCTION_ADMISSION
       operator_command: start-qwen25-32b-v2
@@ -428,6 +429,21 @@ candidates:
       protocol: WS_CODE_AGENT_REQUEST_PROTOCOL_V2_SINGLE_VALUE_FREE
       turn_limit_each: 8
       model_visible_first_turn_equivalence: PASS
+    v2_scale_control_admission:
+      status: INCONCLUSIVE_INFRASTRUCTURE
+      write: NOT_SCORED
+      write_model_behavior: BARE_JSON_CANDIDATE_READY_AFTER_PATCH_REPAIR
+      write_turns: 2
+      write_executor: SUCCESS
+      write_changed_paths: [src/message.py]
+      write_validation: VALIDATION_NOT_CONFIGURED
+      clarification: PASS
+      clarification_terminal: REQUEST_CLARIFICATION
+      clarification_protocol_behavior: BARE_VALID_JSON
+      clarification_turns: 1
+      model_inferences: 3
+      retry: NOT_PERFORMED
+      infrastructure_blocker: NO_APPROVED_VISIBLE_OR_HIDDEN_VALIDATION_DESCRIPTOR
     selection_rationale:
       changed_variable: MODEL_SCALE_14_8B_TO_32_8B
       controlled_surfaces: SAME_FAMILY_LINEAGE_ARCHITECTURE_QUANTIZATION_TEMPLATE_CONTEXT_PROTOCOL_TRANSPORT
@@ -442,6 +458,7 @@ candidates:
       - ../docs/experiments/task10s-qwen25-coder-32b-scale-control-selection.md
       - ../docs/experiments/task10t-qwen25-coder-32b-runtime-acceptance.md
       - ../docs/experiments/task10u-qwen25-coder-32b-v2-binding.md
+      - ../docs/experiments/task10v-qwen25-coder-32b-v2-scale-control.md
 
   - id: qwen3-coder-30b-q8
     status: CANDIDATE

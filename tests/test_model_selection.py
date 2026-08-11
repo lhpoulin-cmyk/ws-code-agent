@@ -127,13 +127,13 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn("CLARIFICATION_FAIL", admission_evidence)
         self.assertIn("NEXT: SELECT NEXT ELIGIBLE CHALLENGER", admission_evidence)
 
-    def test_qwen25_coder_32b_runtime_is_accepted_as_exact_scale_control(self):
+    def test_qwen25_coder_32b_scale_control_preserves_inconclusive_admission(self):
         matrix = (ROOT / "models/candidate-matrix.yaml").read_text(encoding="utf-8")
         selection = matrix.split("selected_challenger:\n", 1)[1].split("\nkatra:\n", 1)[0]
         required_selection = (
             "  id: qwen25-coder-32b-q4",
             "  role: INTRA_FAMILY_SCALE_CONTROL",
-            "  status: RUNTIME_ACCEPTED",
+            "  status: ADMISSION_INCONCLUSIVE_INFRASTRUCTURE",
             "  ollama_tag: qwen2.5-coder:32b-instruct-q4_K_M",
             "  manifest_digest: b92d6a0bd47ee79114298de0177bf920c05a706d12633950b3936778492bef41",
             "  model_layer_digest: ac3d1ba8aa77755dab3806d9024e9c385ea0d5b412d6bdf9157f8a4a7e9fc0d9",
@@ -152,17 +152,17 @@ class ModelSelectionTests(unittest.TestCase):
             "    processor_envelope: {minimum_gpu_percent: 71, maximum_cpu_percent: 29}",
             "    observed_vram_mib: 14634",
             "    effective_context: 4096",
-            "    status: APPARATUS_READY",
+            "    status: IDENTITY_ROUTING_READY_VALIDATION_INCOMPLETE",
             "    session_kind: QWEN25_32B_V2_SUPERVISED_PRODUCTION_ADMISSION",
             "    operator_command: start-qwen25-32b-v2",
             "    backend: Qwen25_32BKatraOllamaDispositionBackend",
             "    model_visible_first_turn_equivalence: PASS",
-            "  production_admission: NOT_EVALUATED",
+            "  production_admission: INCONCLUSIVE_INFRASTRUCTURE",
         )
         self.assertTrue(all(value in selection for value in required_selection))
         candidate = matrix.split("  - id: qwen25-coder-32b-q4\n", 1)[1].split("\n  - id:", 1)[0]
         required_candidate = (
-            "    status: RUNTIME_ACCEPTED",
+            "    status: EVALUATION_INCONCLUSIVE",
             "    role: INTRA_FAMILY_SCALE_CONTROL",
             "ollama-manifest-digest:b92d6a0bd47ee79114298de0177bf920c05a706d12633950b3936778492bef41",
             "sha256:f0676bd3c336a0f995e270c5e2c80ce09aa5cfcab0c59ff574088eca52da32ee",
@@ -194,13 +194,22 @@ class ModelSelectionTests(unittest.TestCase):
             "      neutral_probes: 3",
             "      terminality: NORMAL_STOP_ALL_PROBES",
             "      model_repeat_limit: NOT_OBSERVED",
-            "      status: APPARATUS_READY",
+            "      status: IDENTITY_ROUTING_READY_VALIDATION_INCOMPLETE",
             "      session_kind: QWEN25_32B_V2_SUPERVISED_PRODUCTION_ADMISSION",
             "      operator_command: start-qwen25-32b-v2",
             "      backend: Qwen25_32BKatraOllamaDispositionBackend",
             "      digest_selector: EXACT_FULL_MANIFEST",
             "      model_visible_first_turn_equivalence: PASS",
-            "    production_admission: NOT_EVALUATED",
+            "    production_admission: INCONCLUSIVE_INFRASTRUCTURE",
+            "      status: INCONCLUSIVE_INFRASTRUCTURE",
+            "      write: NOT_SCORED",
+            "      write_model_behavior: BARE_JSON_CANDIDATE_READY_AFTER_PATCH_REPAIR",
+            "      write_validation: VALIDATION_NOT_CONFIGURED",
+            "      clarification: PASS",
+            "      clarification_terminal: REQUEST_CLARIFICATION",
+            "      clarification_protocol_behavior: BARE_VALID_JSON",
+            "      model_inferences: 3",
+            "      retry: NOT_PERFORMED",
         )
         self.assertTrue(all(value in candidate for value in required_candidate))
         self.assertNotIn("PRODUCTION_ADMITTED", candidate)
@@ -225,6 +234,14 @@ class ModelSelectionTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("TASK10U_32B_ADMISSION_APPARATUS_READY", binding_evidence)
         self.assertIn("MODEL_VISIBLE_FIRST_TURN_EQUIVALENCE = PASS", binding_evidence)
+        admission_evidence = (
+            ROOT / "docs/experiments/task10v-qwen25-coder-32b-v2-scale-control.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("TASK10V_ADMISSION_INCONCLUSIVE_INFRASTRUCTURE", admission_evidence)
+        self.assertIn("VALIDATION_NOT_CONFIGURED", admission_evidence)
+        self.assertIn("CLARIFICATION_PASS", admission_evidence)
+        self.assertNotIn("QWEN25_CODER_32B_V2_PRODUCTION_ADMISSION_PASS", admission_evidence)
+        self.assertNotIn("QWEN25_CODER_32B_V2_PRODUCTION_ADMISSION_FAIL", admission_evidence)
         self.assertEqual(
             "3c4cbbb94fa26a758dbc157c6895606f1705a7b71b8bdc4c60fcb08330cfbe4e",
             hashlib.sha256(VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL.render().encode()).hexdigest(),

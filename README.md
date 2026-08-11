@@ -62,13 +62,16 @@ exact official Q4_K_M artifact preserves the 14B system/template interface and
 the exact 4096 comparison seam, while changing model scale from 14.8B to 32.8B.
 One exact pull and three no-retry neutral probes established a runtime-accepted
 `qwen25-coder-32b-katra-4096` profile: 71% GPU / 29% CPU, 14,634 MiB peak VRAM,
-effective context 4096, and no host-pressure or accelerator fault. This is
-runtime evidence only. Behavioral comparison has not run, and the candidate is
-not production-admitted, preferred, or a replacement for the 14B baseline. A
-separate exact 32B manifest, durable session kind, fixed-profile backend, and
-`start-qwen25-32b-v2` operator command now bind it to the unchanged frozen V2
-admission seam. This binding adds no model-visible accommodation and creates no
-behavioral score.
+effective context 4096, and no host-pressure or accelerator fault. Its frozen
+V2 scale-control run then produced bare parser-valid JSON in all three model
+turns. The write session repaired an initially corrupt patch and reached an
+isolated, authority-valid `src/message.py` candidate; the independent
+clarification session emitted the required materially relevant
+`REQUEST_CLARIFICATION`. The run remains admission-inconclusive rather than
+PASS or model FAIL because the frozen supervised lane has no approved
+visible/hidden validation descriptor and reports `VALIDATION_NOT_CONFIGURED`.
+The candidate is not production-admitted, preferred, or a replacement for the
+14B baseline.
 
 The inherited Doc Writer implementation remains removed from the live tree;
 witnessed history and reusable references are preserved under `lineage/`.

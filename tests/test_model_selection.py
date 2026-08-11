@@ -34,13 +34,6 @@ class ModelSelectionTests(unittest.TestCase):
 
     def test_gpt_oss_control_is_ineligible_for_exact_4096_seam(self):
         matrix = (ROOT / "models/candidate-matrix.yaml").read_text(encoding="utf-8")
-        selection = matrix.split("selected_challenger:\n", 1)[1].split("\nkatra:\n", 1)[0]
-        self.assertIn("  id: UNRESOLVED", selection)
-        self.assertIn("  status: NEXT_SELECTION_REQUIRED", selection)
-        self.assertIn("  evaluated_candidate: gpt-oss-20b-mxfp4", selection)
-        self.assertIn("  context_classification: GPT_OSS_CONTEXT_MINIMUM_EXCEEDS_4096", selection)
-        self.assertIn("  comparison_context: 4096", selection)
-        self.assertIn("  enforced_minimum_context: 8192", selection)
         candidate = matrix.split("  - id: gpt-oss-20b-mxfp4\n", 1)[1].split("\n  - id:", 1)[0]
         required = (
             "    status: INELIGIBLE_FROZEN_COMPARISON_SEAM",
@@ -68,6 +61,49 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn("GPT_OSS_CONTEXT_MINIMUM_EXCEEDS_4096", evidence)
         self.assertIn("NEXT_MODEL_CANDIDATE = UNRESOLVED", evidence)
         self.assertIn("NEXT: SELECT NEXT ELIGIBLE CHALLENGER", evidence)
+
+    def test_qwen25_coder_14b_is_selected_for_exact_4096_seam(self):
+        matrix = (ROOT / "models/candidate-matrix.yaml").read_text(encoding="utf-8")
+        selection = matrix.split("selected_challenger:\n", 1)[1].split("\nkatra:\n", 1)[0]
+        required_selection = (
+            "  id: qwen25-coder-14b-q4",
+            "  status: SELECTED_FOR_EVALUATION",
+            "  ollama_tag: qwen2.5-coder:14b-instruct-q4_K_M",
+            "  manifest_digest: 9ec8897f747e246e970bc5cfdda85d22f1123dc2e3d34978a010a75968716849",
+            "  comparison_context: 4096",
+            "  context_classification: QWEN25_CODER_14B_CONTEXT_4096_COMPATIBLE",
+            "  artifact_generation_defaults: NONE_SPECIFIED",
+            "  acquisition_state: NOT_ACQUIRED_BY_TASK",
+            "  expected_katra_fit: FULL_GPU_CANDIDATE",
+            "  runtime_acceptance: NOT_EVALUATED",
+            "  production_admission: NOT_EVALUATED",
+        )
+        self.assertTrue(all(value in selection for value in required_selection))
+        candidate = matrix.split("  - id: qwen25-coder-14b-q4\n", 1)[1].split("\n  - id:", 1)[0]
+        required_candidate = (
+            "sha256:0578f229f23ad620e123654fd0b4708405e7af3629ec1aecf3f553f54e06bc40",
+            "sha256:ac9bc7a69dab38da1c790838955f1293420b55ab555ef6b4615efa1c1507b1ed",
+            "      model_layer_bytes: 8988110784",
+            "sha256:1e65450c30670713aa47fe23e8b9662bdf4065e81cc8e3cbfaa98924fcc0d320",
+            "      parameters_layer: ABSENT",
+            "    architecture: dense / qwen2",
+            "    quantization: Q4_K_M",
+            "    resolved_context_metadata: 32768",
+            "    context_classification: QWEN25_CODER_14B_CONTEXT_4096_COMPATIBLE",
+            "      interface: PLAIN_MACHINE_RESPONSE_COMPATIBLE",
+            "    expected_katra_fit: FULL_GPU_CANDIDATE",
+        )
+        self.assertTrue(all(value in candidate for value in required_candidate))
+        self.assertNotIn("RUNTIME_ACCEPTED", candidate)
+        self.assertNotIn("PRODUCTION_ADMITTED", candidate)
+        qwen3 = matrix.split("  - id: qwen3-coder-30b-q4\n", 1)[1].split("\n  - id:", 1)[0]
+        self.assertIn("      supervised_production_admission: NOT_ADMITTED", qwen3)
+        evidence = (ROOT / "docs/experiments/task10p-qwen25-coder-14b-selection.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("QWEN25_CODER_14B_CONTEXT_4096_COMPATIBLE", evidence)
+        self.assertIn("NEXT_MODEL_CANDIDATE = qwen25-coder-14b-q4", evidence)
+        self.assertIn("NEXT: RUN QWEN2.5-CODER 14B ARTIFACT/RUNTIME ACCEPTANCE", evidence)
 
 
 if __name__ == "__main__":

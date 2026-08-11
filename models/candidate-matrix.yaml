@@ -6,18 +6,24 @@ selection_rule: Selection for evaluation does not imply a default,
   must face the frozen runtime and V2 comparison seam.
 
 selected_challenger:
-  id: UNRESOLVED
-  status: NEXT_SELECTION_REQUIRED
-  evaluated_candidate: gpt-oss-20b-mxfp4
-  evaluated_role: CONTROL
-  disposition: INELIGIBLE_FROZEN_COMPARISON_SEAM
-  context_classification: GPT_OSS_CONTEXT_MINIMUM_EXCEEDS_4096
+  id: qwen25-coder-14b-q4
+  status: SELECTED_FOR_EVALUATION
+  selected_at: 2026-08-11
+  canonical_upstream_model: Qwen/Qwen2.5-Coder-14B-Instruct
+  ollama_tag: qwen2.5-coder:14b-instruct-q4_K_M
+  manifest_digest: 9ec8897f747e246e970bc5cfdda85d22f1123dc2e3d34978a010a75968716849
+  model_layer_digest: ac9bc7a69dab38da1c790838955f1293420b55ab555ef6b4615efa1c1507b1ed
+  quantization: Q4_K_M
   comparison_context: 4096
-  enforced_minimum_context: 8192
-  blocker: The official gpt-oss implementation cannot execute the frozen 4096
-    comparison context exactly; selection may not silently change the contract.
+  context_classification: QWEN25_CODER_14B_CONTEXT_4096_COMPATIBLE
+  artifact_generation_defaults: NONE_SPECIFIED
+  acquisition_state: NOT_ACQUIRED_BY_TASK
+  expected_katra_fit: FULL_GPU_CANDIDATE
+  runtime_acceptance: NOT_EVALUATED
+  production_admission: NOT_EVALUATED
+  qualification: NOT_EVALUATED
   evidence:
-    - ../docs/experiments/task10o-gpt-oss-control-selection.md
+    - ../docs/experiments/task10p-qwen25-coder-14b-selection.md
 
 katra:
   role: KATRA_TORTURE
@@ -45,27 +51,67 @@ tiers:
 
 candidates:
   - id: qwen25-coder-14b-q4
-    status: CANDIDATE
-    source_verified_at: 2026-08-09
+    status: SELECTED_FOR_EVALUATION
+    source_verified_at: 2026-08-11
+    selected_at: 2026-08-11
     normal_target_tiers: [tier_a_16gb]
     katra_torture: false
     model_family: Qwen2.5-Coder
     canonical_upstream_model: Qwen/Qwen2.5-Coder-14B-Instruct
     ollama:
-      display_tag: qwen2.5-coder:14b
-      resolved_identity: ollama-manifest-prefix:9ec8897f747e
-      identity_note: Re-resolve the full digest immediately before a future pull.
-    parameter_class: 14.8B
-    architecture: dense
+      display_tag: qwen2.5-coder:14b-instruct-q4_K_M
+      resolved_identity: ollama-manifest-digest:9ec8897f747e246e970bc5cfdda85d22f1123dc2e3d34978a010a75968716849
+      identity_note: Resolved read-only from the official registry on 2026-08-11;
+        no artifact layer was downloaded and no model was loaded.
+      config_digest: sha256:0578f229f23ad620e123654fd0b4708405e7af3629ec1aecf3f553f54e06bc40
+      config_bytes: 488
+      model_layer_digest: sha256:ac9bc7a69dab38da1c790838955f1293420b55ab555ef6b4615efa1c1507b1ed
+      model_layer_bytes: 8988110784
+      system_digest: sha256:66b9ea09bd5b7099cbb4fc820f31b575c0366fa439b08245566692c6784e281e
+      system_bytes: 68
+      template_digest: sha256:1e65450c30670713aa47fe23e8b9662bdf4065e81cc8e3cbfaa98924fcc0d320
+      template_bytes: 1615
+      license_digest: sha256:832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e
+      license_bytes: 11343
+      parameters_layer: ABSENT
+    parameter_class: 14.8B artifact / 14.7B upstream
+    architecture: dense / qwen2
     quantization: Q4_K_M
     artifact_size: 9.0GB
     advertised_context: 32K
+    resolved_context_metadata: 32768
+    comparison_context: 4096
+    context_classification: QWEN25_CODER_14B_CONTEXT_4096_COMPATIBLE
+    default_generation_parameters:
+      artifact_overrides: NONE_SPECIFIED
+      runtime_defaults: UNCHANGED
+    template_behavior:
+      official_system: You are Qwen, created by Alibaba Cloud. You are a helpful assistant.
+      plain_prompt_transport: SUPPORTED
+      thinking_mode: NOT_PRESENT
+      model_specific_adaptation: NOT_REQUIRED
     specialization: code generation, code reasoning, code repair
     tool_agent_support: Ollama library marks the family tools-capable.
     license: Apache-2.0
-    runtime_requirements: No minimum Ollama version stated by the consulted page.
+    runtime_compatibility:
+      status: COMPATIBLE
+      ollama_version: 0.32.0+helix.repeatlimit.1
+      upstream_base: v0.32.0
+      qwen2: SUPPORTED
+      q4_k_m: SUPPORTED
+      interface: PLAIN_MACHINE_RESPONSE_COMPATIBLE
+      model_specific_adaptation: NOT_REQUIRED
+      repeat_limit_patch_relevance: REPORTING_ONLY_NO_LOADING_OR_SAMPLING_CHANGE
+    acquisition_state: NOT_ACQUIRED_BY_TASK
+    expected_katra_fit: FULL_GPU_CANDIDATE
+    runtime_acceptance: NOT_EVALUATED
+    production_admission: NOT_EVALUATED
+    qualification: NOT_EVALUATED
     source_references:
-      - https://ollama.com/library/qwen2.5-coder:14b
+      - https://ollama.com/library/qwen2.5-coder:14b-instruct-q4_K_M
+      - https://registry.ollama.ai/v2/library/qwen2.5-coder/manifests/14b-instruct-q4_K_M
+      - https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct
+      - ../docs/experiments/task10p-qwen25-coder-14b-selection.md
 
   - id: gpt-oss-20b-mxfp4
     status: INELIGIBLE_FROZEN_COMPARISON_SEAM

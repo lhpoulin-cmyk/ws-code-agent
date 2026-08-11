@@ -35,11 +35,18 @@ V2 single-repository protocol: FROZEN CANDIDATE INTERFACE
 Task 10K: CLOSED FOR QWEN — ADMISSION FAILED
 ```
 
-The next selected challenger is `devstral-small-2-q4`, frozen as
-`SELECTED_FOR_EVALUATION` at its full Ollama manifest digest. It is neither
-installed, runtime-accepted, production-admitted, Alpha-qualified, nor selected
-as a default. The next authorized boundary is Katra runtime/artifact acceptance,
-followed by the unchanged V2 admission gate.
+Devstral's historical challenger evaluation is settled: runtime acceptance
+passed, clarification passed, write failed with terminal `MODEL_REPEAT_LIMIT`,
+and Task 10N production admission failed without an authorized retry. The
+Ollama reporting defect exposed by that outcome is repaired and governed; the
+model result was not rescored.
+
+`gpt-oss-20b-mxfp4` was then evaluated as the retained control candidate. Its
+official artifact and patched-runtime compatibility resolved, but its enforced
+8192-token minimum cannot honor the frozen 4096 comparison context. It is
+therefore ineligible for this exact comparison seam, not rejected as a model or
+runtime failure. No next model is selected; the next boundary is selection of
+another eligible challenger.
 
 The inherited Doc Writer implementation remains removed from the live tree;
 witnessed history and reusable references are preserved under `lineage/`.

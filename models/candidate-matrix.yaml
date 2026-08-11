@@ -6,29 +6,18 @@ selection_rule: Selection for evaluation does not imply a default,
   must face the frozen runtime and V2 comparison seam.
 
 selected_challenger:
-  id: devstral-small-2-q4
-  status: SELECTED_FOR_EVALUATION
-  selected_at: 2026-08-11
-  canonical_upstream_model: mistralai/Devstral-Small-2-24B-Instruct-2512
-  ollama_tag: devstral-small-2:24b-instruct-2512-q4_K_M
-  manifest_digest: 24277f07f62db8f9cb68e9dfc679ea1818a7fbac47a50eff0a701d3f645b63c8
-  quantization: Q4_K_M
+  id: UNRESOLVED
+  status: NEXT_SELECTION_REQUIRED
+  evaluated_candidate: gpt-oss-20b-mxfp4
+  evaluated_role: CONTROL
+  disposition: INELIGIBLE_FROZEN_COMPARISON_SEAM
+  context_classification: GPT_OSS_CONTEXT_MINIMUM_EXCEEDS_4096
   comparison_context: 4096
-  generation_defaults:
-    temperature: 0.15
-  local_install_state: NOT_INSTALLED_AT_SELECTION
-  expected_katra_fit: PARTIAL_OFFLOAD_EXPECTED
-  runtime_acceptance: RUNTIME_ACCEPTED
-  runtime_profile_id: devstral-small-2-24b-katra-partial
-  accepted_execution: GPU_PRIMARY_PARTIAL_OFFLOAD
-  accepted_gpu_minimum_percent: 88
-  accepted_cpu_maximum_percent: 12
-  observed_vram_mib: 14648
-  production_admission: PENDING
-  alpha_qualification: NOT_EVALUATED
+  enforced_minimum_context: 8192
+  blocker: The official gpt-oss implementation cannot execute the frozen 4096
+    comparison context exactly; selection may not silently change the contract.
   evidence:
-    - ../docs/experiments/task10m-devstral-challenger-selection.md
-    - ../docs/qualification/devstral-small-2-v2-admission-candidate.yaml
+    - ../docs/experiments/task10o-gpt-oss-control-selection.md
 
 katra:
   role: KATRA_TORTURE
@@ -79,30 +68,62 @@ candidates:
       - https://ollama.com/library/qwen2.5-coder:14b
 
   - id: gpt-oss-20b-mxfp4
-    status: CONTROL
-    source_verified_at: 2026-08-09
+    status: INELIGIBLE_FROZEN_COMPARISON_SEAM
+    role: CONTROL
+    source_verified_at: 2026-08-11
     normal_target_tiers: [tier_a_16gb]
-    katra_torture: false
+    katra_torture: true
     model_family: gpt-oss
     canonical_upstream_model: openai/gpt-oss-20b
     ollama:
       display_tag: gpt-oss:20b
-      resolved_identity: ollama-manifest-prefix:17052f91a42e
-      identity_note: Re-resolve the full digest immediately before a future pull.
+      resolved_identity: ollama-manifest-digest:17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7
+      identity_note: Resolved read-only from the official registry on 2026-08-11;
+        no model layer was downloaded and the artifact is not installed on Katra.
+      config_digest: sha256:776beb3adb235076157cfea408b8ea2a2d25eae99d7f5da997f607f6b69fa0fa
+      model_layer_digest: sha256:e7b273f9636059a689e3ddcab3716e4f65abe0143ac978e46673ad0e52d09efb
+      model_layer_bytes: 13793422144
+      template_digest: sha256:fa6710a93d78da62641e192361344be7a8c0a1c3737f139cf89f20ce1626b99c
+      parameters_digest: sha256:d8ba2f9a17b3bbdeb5690efaa409b3fcb0b56296a777c7a69c78aa33bbddf182
     parameter_class: 20.9B
-    architecture: MoE
+    architecture: MoE / gptoss
     quantization: MXFP4
     artifact_size: 14GB
     advertised_context: 128K
+    resolved_context_metadata: 131072
+    comparison_context: 4096
+    enforced_minimum_context: 8192
+    context_classification: GPT_OSS_CONTEXT_MINIMUM_EXCEEDS_4096
+    default_generation_parameters:
+      temperature: 1
+      reasoning_effort_when_unspecified: medium
+      other_generation_defaults: not specified by the artifact
+      tools: not supplied by the frozen seam
+      structured_output: not requested by the frozen seam
     specialization: reasoning and agentic developer use; retained as a control,
       not a code-specialized default.
     tool_agent_support: Native function calling, structured outputs, and tool-use
       features are documented by the Ollama entry.
     license: Apache-2.0
-    runtime_requirements: Requires an Ollama release supporting native MXFP4;
-      exact version must be resolved before execution.
+    runtime_compatibility:
+      status: COMPATIBLE
+      ollama_version: 0.32.0+helix.repeatlimit.1
+      upstream_base: v0.32.0
+      gptoss: SUPPORTED
+      mxfp4: SUPPORTED
+      interface: PLAIN_MACHINE_RESPONSE_COMPATIBLE
+      model_specific_adaptation: NOT_REQUIRED
+      repeat_limit_patch_relevance: REPORTING_ONLY_NO_LOADING_OR_KERNEL_CHANGE
+    local_install_state: NOT_INSTALLED
+    expected_katra_fit: GPU_PRIMARY_PARTIAL_OFFLOAD_EXPECTED
+    selection_disposition: INELIGIBLE_FROZEN_COMPARISON_SEAM
+    selection_blocker: Enforced 8192 minimum context exceeds the frozen 4096
+      comparison context; this is not a model-quality or runtime-failure claim.
     source_references:
       - https://ollama.com/library/gpt-oss:20b
+      - https://registry.ollama.ai/v2/library/gpt-oss/manifests/20b
+      - https://github.com/ollama/ollama/issues/11711
+      - ../docs/experiments/task10o-gpt-oss-control-selection.md
 
   - id: qwen3-coder-30b-q4
     status: CANDIDATE
@@ -167,7 +188,7 @@ candidates:
       - https://huggingface.co/Qwen/Qwen3.6-27B
 
   - id: devstral-small-2-q4
-    status: SELECTED_FOR_EVALUATION
+    status: EVALUATION_COMPLETE
     source_verified_at: 2026-08-11
     normal_target_tiers: [tier_b_24gb]
     katra_torture: true
@@ -197,10 +218,17 @@ candidates:
       execution: GPU_PRIMARY_PARTIAL_OFFLOAD
       processor_envelope: {minimum_gpu_percent: 88, maximum_cpu_percent: 12}
       observed_vram_mib: 14648
-      production_admission: PENDING
+      production_admission: FAIL
+      write: FAIL
+      clarification: PASS
+      observed_model_outcome: MODEL_REPEAT_LIMIT
+      repeat_limit_terminalization_defect: REPAIRED_GOVERNED
+      admission_retry: NOT_AUTHORIZED
     source_references:
       - https://ollama.com/library/devstral-small-2:24b-instruct-2512-q4_K_M
       - https://huggingface.co/mistralai/Devstral-Small-2-24B-Instruct-2512
+      - ../docs/experiments/task10n-devstral-v2-admission.md
+      - ../docs/experiments/task10n-e-ollama-repeat-guard-terminalization.md
 
   - id: qwen25-coder-32b-q4
     status: CANDIDATE

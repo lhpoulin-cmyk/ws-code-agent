@@ -1,5 +1,11 @@
 # Supervised single-repository work
 
+Status: **implemented; not accepted for real-repository use**. The first live
+synthetic acceptance on 2026-08-11 preserved all safety and durability
+properties but did not produce either required model disposition. See
+`task10k-synthetic-acceptance.md`. Do not start a real-repository session until
+that blocker is resolved under separate authority.
+
 This lane is authorized only for the exact `qwen3-coder:30b` artifact and
 profile recorded in
 `docs/qualification/qwen3-coder-30b-alpha-v1.yaml`. It creates an isolated

@@ -16,8 +16,11 @@ The exact tested `qwen3-coder:30b` artifact has completed qualification for
 autonomous single- and multi-repository operation are not qualified. C05 is a
 confirmed model failure under explicit authority and effect-state semantics.
 See the [qualification statement](docs/qualification/qwen3-coder-30b-alpha-v1.md).
-The approved operator-gated lane is documented in
-[supervised single-repository work](docs/work/supervised-single-repo.md).
+The operator-gated lane implementation and its current synthetic-acceptance
+status are documented in
+[supervised single-repository work](docs/work/supervised-single-repo.md). It is
+not approved for real-repository use until the recorded Task 10K acceptance
+blocker is resolved by a separate authorized play.
 
 The inherited Doc Writer implementation remains removed from the live tree;
 witnessed history and reusable references are preserved under `lineage/`.

@@ -47,16 +47,23 @@ official artifact and patched-runtime compatibility resolved, but its enforced
 therefore ineligible for this exact comparison seam, not rejected as a model or
 runtime failure.
 
-`qwen25-coder-14b-q4` completed its frozen V2 challenger evaluation. Katra
+`qwen25-coder-14b-q4` remains the practical coding baseline after completing
+its frozen V2 challenger evaluation. Katra
 retained the exact accepted `qwen2.5-coder:14b-instruct-q4_K_M` artifact and
 `qwen25-coder-14b-katra-4096` profile at effective context 4096 and 100% GPU.
-The independent write and clarification sessions each terminated on their
-first response with `MALFORMED_REQUEST`: both otherwise normal responses were
-wrapped in Markdown fences, so the strict machine-response parser accepted no
-request. No executor effect or candidate occurred. Production admission failed;
-the model is not production-admitted and gains no qualification or default
-status from this result. The next boundary is selection of the next eligible
-challenger.
+The write response proposed a plausible authorized patch but wrapped it in
+Markdown; the clarification response both used Markdown and chose `NO_CHANGE`
+instead of `REQUEST_CLARIFICATION`. The strict parser accepted neither request,
+so production admission failed without changing the model's accepted runtime or
+practical-baseline disposition.
+
+`qwen25-coder-32b-q4` is selected next as an intra-family scale control. Its
+exact official Q4_K_M artifact preserves the 14B system/template interface and
+the exact 4096 comparison seam, while changing model scale from 14.8B to 32.8B.
+The 19,851,336,384-byte model layer cannot fit wholly in Katra's 16,303 MiB
+VRAM, so GPU-primary partial offload is expected and must pass a separate
+runtime acceptance. It is not acquired, runtime-accepted, production-admitted,
+preferred, or a replacement for the 14B baseline.
 
 The inherited Doc Writer implementation remains removed from the live tree;
 witnessed history and reusable references are preserved under `lineage/`.

@@ -64,36 +64,9 @@ class ModelSelectionTests(unittest.TestCase):
 
     def test_qwen25_coder_14b_runtime_remains_accepted_and_admission_is_failed(self):
         matrix = (ROOT / "models/candidate-matrix.yaml").read_text(encoding="utf-8")
-        selection = matrix.split("selected_challenger:\n", 1)[1].split("\nkatra:\n", 1)[0]
-        required_selection = (
-            "  id: qwen25-coder-14b-q4",
-            "  status: EVALUATION_COMPLETE",
-            "  ollama_tag: qwen2.5-coder:14b-instruct-q4_K_M",
-            "  manifest_digest: 9ec8897f747e246e970bc5cfdda85d22f1123dc2e3d34978a010a75968716849",
-            "  comparison_context: 4096",
-            "  context_classification: QWEN25_CODER_14B_CONTEXT_4096_COMPATIBLE",
-            "  artifact_generation_defaults: NONE_SPECIFIED",
-            "  acquisition_state: ACQUIRED_EXACT_ARTIFACT",
-            "  expected_katra_fit: FULL_GPU_CANDIDATE",
-            "  empirical_katra_fit: FULL_GPU",
-            "    status: RUNTIME_ACCEPTED",
-            "    profile_id: qwen25-coder-14b-katra-4096",
-            "    implementation_checkpoint: fc514cb02c9a2f76c60b461f787fba9ee43e2364",
-            "    policy_acceptance_checkpoint: a84c33f68dcb14b292d791c8485e0ec4e532852c",
-            "    execution: GPU_ONLY",
-            "    effective_context: 4096",
-            "  production_admission: FAIL",
-            "  qualification: NOT_EVALUATED",
-            "    status: FAIL",
-            "    write: FAIL",
-            "    write_terminal: MALFORMED_REQUEST",
-            "    clarification: FAIL",
-            "    clarification_terminal: MALFORMED_REQUEST",
-            "    model_inferences: 2",
-        )
-        self.assertTrue(all(value in selection for value in required_selection))
         candidate = matrix.split("  - id: qwen25-coder-14b-q4\n", 1)[1].split("\n  - id:", 1)[0]
         required_candidate = (
+            "    practical_coding_baseline: true",
             "sha256:0578f229f23ad620e123654fd0b4708405e7af3629ec1aecf3f553f54e06bc40",
             "sha256:ac9bc7a69dab38da1c790838955f1293420b55ab555ef6b4615efa1c1507b1ed",
             "      model_layer_bytes: 8988110784",
@@ -119,9 +92,17 @@ class ModelSelectionTests(unittest.TestCase):
             "      status: FAIL",
             "      write: FAIL",
             "      write_terminal: MALFORMED_REQUEST",
+            "      write_semantic_behavior: PLAUSIBLE_AUTHORIZED_PROPOSE_PATCH",
+            "      write_protocol_behavior: MARKDOWN_FENCED_OUTPUT",
             "      clarification: FAIL",
             "      clarification_terminal: MALFORMED_REQUEST",
+            "      clarification_semantic_behavior: NO_CHANGE_INSTEAD_OF_REQUEST_CLARIFICATION",
+            "      clarification_protocol_behavior: MARKDOWN_FENCED_OUTPUT",
             "      model_inferences: 2",
+            "      practical_coding_baseline: YES",
+            "      runtime_accepted: YES",
+            "      full_gpu_on_katra: YES",
+            "      strict_v2_production_admission: FAIL",
         )
         self.assertTrue(all(value in candidate for value in required_candidate))
         self.assertNotIn("PRODUCTION_ADMITTED", candidate)
@@ -145,6 +126,66 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn("WRITE_FAIL", admission_evidence)
         self.assertIn("CLARIFICATION_FAIL", admission_evidence)
         self.assertIn("NEXT: SELECT NEXT ELIGIBLE CHALLENGER", admission_evidence)
+
+    def test_qwen25_coder_32b_is_selected_as_exact_scale_control(self):
+        matrix = (ROOT / "models/candidate-matrix.yaml").read_text(encoding="utf-8")
+        selection = matrix.split("selected_challenger:\n", 1)[1].split("\nkatra:\n", 1)[0]
+        required_selection = (
+            "  id: qwen25-coder-32b-q4",
+            "  role: INTRA_FAMILY_SCALE_CONTROL",
+            "  status: SELECTED_FOR_EVALUATION",
+            "  ollama_tag: qwen2.5-coder:32b-instruct-q4_K_M",
+            "  manifest_digest: b92d6a0bd47ee79114298de0177bf920c05a706d12633950b3936778492bef41",
+            "  model_layer_digest: ac3d1ba8aa77755dab3806d9024e9c385ea0d5b412d6bdf9157f8a4a7e9fc0d9",
+            "  model_layer_bytes: 19851336384",
+            "  comparison_context: 4096",
+            "  context_classification: QWEN25_CODER_32B_CONTEXT_4096_COMPATIBLE",
+            "  artifact_generation_defaults: NONE_SPECIFIED",
+            "  acquisition_state: NOT_ACQUIRED",
+            "  expected_katra_fit: GPU_PRIMARY_PARTIAL_OFFLOAD_EXPECTED",
+            "  runtime_acceptance: NOT_EVALUATED",
+            "  production_admission: NOT_EVALUATED",
+        )
+        self.assertTrue(all(value in selection for value in required_selection))
+        candidate = matrix.split("  - id: qwen25-coder-32b-q4\n", 1)[1].split("\n  - id:", 1)[0]
+        required_candidate = (
+            "    status: SELECTED_FOR_EVALUATION",
+            "    role: INTRA_FAMILY_SCALE_CONTROL",
+            "ollama-manifest-digest:b92d6a0bd47ee79114298de0177bf920c05a706d12633950b3936778492bef41",
+            "sha256:f0676bd3c336a0f995e270c5e2c80ce09aa5cfcab0c59ff574088eca52da32ee",
+            "sha256:ac3d1ba8aa77755dab3806d9024e9c385ea0d5b412d6bdf9157f8a4a7e9fc0d9",
+            "      model_layer_bytes: 19851336384",
+            "sha256:1e65450c30670713aa47fe23e8b9662bdf4065e81cc8e3cbfaa98924fcc0d320",
+            "      parameters_layer: ABSENT",
+            "    parameter_class: 32.8B artifact / 32.5B upstream",
+            "    architecture: dense / qwen2",
+            "    quantization: Q4_K_M",
+            "    resolved_context_metadata: 32768",
+            "    context_classification: QWEN25_CODER_32B_CONTEXT_4096_COMPATIBLE",
+            "      artifact_overrides: NONE_SPECIFIED",
+            "      exact_14b_system_layer_match: true",
+            "      exact_14b_template_layer_match: true",
+            "      interface: PLAIN_MACHINE_RESPONSE_COMPATIBLE",
+            "      model_specific_adaptation: NOT_REQUIRED",
+            "    acquisition_state: NOT_ACQUIRED",
+            "    expected_katra_fit: GPU_PRIMARY_PARTIAL_OFFLOAD_EXPECTED",
+            "    runtime_acceptance: NOT_EVALUATED",
+            "    production_admission: NOT_EVALUATED",
+        )
+        self.assertTrue(all(value in candidate for value in required_candidate))
+        self.assertNotIn("RUNTIME_ACCEPTED", candidate)
+        self.assertNotIn("PRODUCTION_ADMITTED", candidate)
+        evidence = (
+            ROOT / "docs/experiments/task10s-qwen25-coder-32b-scale-control-selection.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("QWEN25_CODER_32B_CONTEXT_4096_COMPATIBLE", evidence)
+        self.assertIn("NEXT_MODEL_CANDIDATE = qwen25-coder-32b-q4", evidence)
+        self.assertIn("ROLE = INTRA_FAMILY_SCALE_CONTROL", evidence)
+        self.assertIn("NEXT: RUN QWEN2.5-CODER 32B ARTIFACT/RUNTIME ACCEPTANCE", evidence)
+        self.assertEqual(
+            "3c4cbbb94fa26a758dbc157c6895606f1705a7b71b8bdc4c60fcb08330cfbe4e",
+            hashlib.sha256(VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL.render().encode()).hexdigest(),
+        )
 
 
 if __name__ == "__main__":

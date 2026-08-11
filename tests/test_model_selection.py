@@ -62,12 +62,12 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn("NEXT_MODEL_CANDIDATE = UNRESOLVED", evidence)
         self.assertIn("NEXT: SELECT NEXT ELIGIBLE CHALLENGER", evidence)
 
-    def test_qwen25_coder_14b_runtime_is_accepted_for_exact_4096_seam(self):
+    def test_qwen25_coder_14b_runtime_remains_accepted_and_admission_is_failed(self):
         matrix = (ROOT / "models/candidate-matrix.yaml").read_text(encoding="utf-8")
         selection = matrix.split("selected_challenger:\n", 1)[1].split("\nkatra:\n", 1)[0]
         required_selection = (
             "  id: qwen25-coder-14b-q4",
-            "  status: RUNTIME_ACCEPTED",
+            "  status: EVALUATION_COMPLETE",
             "  ollama_tag: qwen2.5-coder:14b-instruct-q4_K_M",
             "  manifest_digest: 9ec8897f747e246e970bc5cfdda85d22f1123dc2e3d34978a010a75968716849",
             "  comparison_context: 4096",
@@ -82,7 +82,14 @@ class ModelSelectionTests(unittest.TestCase):
             "    policy_acceptance_checkpoint: a84c33f68dcb14b292d791c8485e0ec4e532852c",
             "    execution: GPU_ONLY",
             "    effective_context: 4096",
-            "  production_admission: NOT_EVALUATED",
+            "  production_admission: FAIL",
+            "  qualification: NOT_EVALUATED",
+            "    status: FAIL",
+            "    write: FAIL",
+            "    write_terminal: MALFORMED_REQUEST",
+            "    clarification: FAIL",
+            "    clarification_terminal: MALFORMED_REQUEST",
+            "    model_inferences: 2",
         )
         self.assertTrue(all(value in selection for value in required_selection))
         candidate = matrix.split("  - id: qwen25-coder-14b-q4\n", 1)[1].split("\n  - id:", 1)[0]
@@ -107,7 +114,14 @@ class ModelSelectionTests(unittest.TestCase):
             "      neutral_probes: 3",
             "      terminality: NORMAL_STOP_ALL_PROBES",
             "      model_repeat_limit: NOT_OBSERVED",
-            "    production_admission: NOT_EVALUATED",
+            "    production_admission: FAIL",
+            "    qualification: NOT_EVALUATED",
+            "      status: FAIL",
+            "      write: FAIL",
+            "      write_terminal: MALFORMED_REQUEST",
+            "      clarification: FAIL",
+            "      clarification_terminal: MALFORMED_REQUEST",
+            "      model_inferences: 2",
         )
         self.assertTrue(all(value in candidate for value in required_candidate))
         self.assertNotIn("PRODUCTION_ADMITTED", candidate)
@@ -124,6 +138,13 @@ class ModelSelectionTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("QWEN25_CODER_14B_RUNTIME_ACCEPTED", runtime_evidence)
         self.assertIn("NEXT: RUN QWEN2.5-CODER 14B V2 PRODUCTION ADMISSION", runtime_evidence)
+        admission_evidence = (
+            ROOT / "docs/experiments/task10r-qwen25-coder-14b-v2-admission.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("QWEN25_CODER_14B_V2_PRODUCTION_ADMISSION_FAIL", admission_evidence)
+        self.assertIn("WRITE_FAIL", admission_evidence)
+        self.assertIn("CLARIFICATION_FAIL", admission_evidence)
+        self.assertIn("NEXT: SELECT NEXT ELIGIBLE CHALLENGER", admission_evidence)
 
 
 if __name__ == "__main__":

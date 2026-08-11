@@ -7,7 +7,7 @@ selection_rule: Selection for evaluation does not imply a default,
 
 selected_challenger:
   id: qwen25-coder-14b-q4
-  status: RUNTIME_ACCEPTED
+  status: EVALUATION_COMPLETE
   selected_at: 2026-08-11
   canonical_upstream_model: Qwen/Qwen2.5-Coder-14B-Instruct
   ollama_tag: qwen2.5-coder:14b-instruct-q4_K_M
@@ -29,11 +29,22 @@ selected_challenger:
     processor_envelope: {minimum_gpu_percent: 100, maximum_cpu_percent: 0}
     observed_vram_mib: 9304
     effective_context: 4096
-  production_admission: NOT_EVALUATED
+  production_admission: FAIL
   qualification: NOT_EVALUATED
+  v2_production_admission:
+    status: FAIL
+    write: FAIL
+    write_terminal: MALFORMED_REQUEST
+    write_turns: 1
+    clarification: FAIL
+    clarification_terminal: MALFORMED_REQUEST
+    clarification_turns: 1
+    model_inferences: 2
+    retry: NOT_PERFORMED
   evidence:
     - ../docs/experiments/task10p-qwen25-coder-14b-selection.md
     - ../docs/experiments/task10q-qwen25-coder-14b-runtime-acceptance.md
+    - ../docs/experiments/task10r-qwen25-coder-14b-v2-admission.md
 
 katra:
   role: KATRA_TORTURE
@@ -61,7 +72,7 @@ tiers:
 
 candidates:
   - id: qwen25-coder-14b-q4
-    status: RUNTIME_ACCEPTED
+    status: EVALUATION_COMPLETE
     source_verified_at: 2026-08-11
     selected_at: 2026-08-11
     normal_target_tiers: [tier_a_16gb]
@@ -130,14 +141,25 @@ candidates:
       neutral_probes: 3
       terminality: NORMAL_STOP_ALL_PROBES
       model_repeat_limit: NOT_OBSERVED
-    production_admission: NOT_EVALUATED
+    production_admission: FAIL
     qualification: NOT_EVALUATED
+    v2_production_admission:
+      status: FAIL
+      write: FAIL
+      write_terminal: MALFORMED_REQUEST
+      write_turns: 1
+      clarification: FAIL
+      clarification_terminal: MALFORMED_REQUEST
+      clarification_turns: 1
+      model_inferences: 2
+      retry: NOT_PERFORMED
     source_references:
       - https://ollama.com/library/qwen2.5-coder:14b-instruct-q4_K_M
       - https://registry.ollama.ai/v2/library/qwen2.5-coder/manifests/14b-instruct-q4_K_M
       - https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct
       - ../docs/experiments/task10p-qwen25-coder-14b-selection.md
       - ../docs/experiments/task10q-qwen25-coder-14b-runtime-acceptance.md
+      - ../docs/experiments/task10r-qwen25-coder-14b-v2-admission.md
 
   - id: gpt-oss-20b-mxfp4
     status: INELIGIBLE_FROZEN_COMPARISON_SEAM

@@ -47,13 +47,16 @@ official artifact and patched-runtime compatibility resolved, but its enforced
 therefore ineligible for this exact comparison seam, not rejected as a model or
 runtime failure.
 
-`qwen25-coder-14b-q4` is the current challenger. Katra acquired and verified
-the exact `qwen2.5-coder:14b-instruct-q4_K_M` manifest, then completed exactly
-three neutral probes at effective context 4096. gpu-compute measured 100% GPU
-placement and 9,304 MiB peak VRAM, and gpu-cp accepted the exact
-`qwen25-coder-14b-katra-4096` GPU-only profile. This is runtime acceptance only:
-the candidate is not production-admitted, qualified, or selected as a default.
-The next boundary is Qwen2.5-Coder 14B V2 production admission.
+`qwen25-coder-14b-q4` completed its frozen V2 challenger evaluation. Katra
+retained the exact accepted `qwen2.5-coder:14b-instruct-q4_K_M` artifact and
+`qwen25-coder-14b-katra-4096` profile at effective context 4096 and 100% GPU.
+The independent write and clarification sessions each terminated on their
+first response with `MALFORMED_REQUEST`: both otherwise normal responses were
+wrapped in Markdown fences, so the strict machine-response parser accepted no
+request. No executor effect or candidate occurred. Production admission failed;
+the model is not production-admitted and gains no qualification or default
+status from this result. The next boundary is selection of the next eligible
+challenger.
 
 The inherited Doc Writer implementation remains removed from the live tree;
 witnessed history and reusable references are preserved under `lineage/`.

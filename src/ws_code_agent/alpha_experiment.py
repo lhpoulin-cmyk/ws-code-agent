@@ -168,7 +168,7 @@ class AlphaExperimentController:
         if case["turn_committed"] >= case["turn_limit"]: raise ExperimentError("turn limit reached")
         turn = case["turn_committed"] + 1
         try:
-            protocol=protocol_by_id(case["protocol_id"])
+            protocol=self._protocol(case["protocol_id"])
         except (KeyError, ValueError) as error:
             raise ExperimentError("case request protocol is not registered") from error
         case["case_status"] = "ACTIVE"
@@ -186,7 +186,7 @@ class AlphaExperimentController:
     def _invoke_intent(self, case: dict[str, Any], backend: TurnBackend, processor: Processor) -> dict[str, Any]:
         pending=case["pending_turn"]; turn=pending["turn"]
         try:
-            protocol=protocol_by_id(pending["protocol_id"])
+            protocol=self._protocol(pending["protocol_id"])
         except (KeyError, ValueError) as error:
             raise ExperimentError("durable inference protocol is not registered") from error
         if case.get("protocol_id") != protocol.protocol_id:
@@ -235,3 +235,4 @@ class AlphaExperimentController:
     def _case(self, case_id: str) -> dict[str, Any]: return _load(self.root / "cases" / case_id / "case.json")
     def _write_case(self, case: Mapping[str, Any]) -> None: _atomic_json(self.root / "cases" / str(case["case_id"]) / "case.json", case)
     def _turn_dir(self, case_id: str, turn: int) -> Path: return self.root / "cases" / case_id / "turns" / f"{turn:04d}"
+    def _protocol(self, protocol_id: str) -> ProtocolSpec: return protocol_by_id(protocol_id)

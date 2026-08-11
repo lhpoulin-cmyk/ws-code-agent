@@ -14,10 +14,11 @@ from unittest.mock import patch as mock_patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ws_code_agent.contained_validation import ContainmentUnavailable, ORACLE_SOURCE, ORACLE_STAGE_ROOT, SystemdContainedValidationRunner, WRAPPER
+from ws_code_agent.contained_validation import ContainmentUnavailable, ORACLE_SOURCE, ORACLE_STAGE_ROOT, SystemdContainedValidationRunner, VALIDATOR_STAGE_ROOT, WRAPPER
 from ws_code_agent.isolated_patch import IsolatedPatchExecutor, PatchProposal
 from ws_code_agent.readonly_executor import ReadOnlyExecutor
 from ws_code_agent.validation import DescriptorValidationExecutor, ValidationDescriptor, ValidationRole, ValidationStatus
+from ws_code_agent.supervised_validation import WRITE_VALIDATION_IDS, validation_registry
 
 
 def git(root: Path, *args: str) -> None:
@@ -174,3 +175,57 @@ class ContainedValidationTests(unittest.TestCase):
             self.assertEqual("LoadState=not-found", unit.stdout.strip())
         finally:
             self.patcher.cleanup(context)
+
+
+@unittest.skipUnless(
+    WRAPPER.is_file()
+    and "task10k-c-write-visible-v1" in WRAPPER.read_text(encoding="utf-8")
+    and ORACLE_STAGE_ROOT.is_dir()
+    and VALIDATOR_STAGE_ROOT.is_dir(),
+    "fixed Task 10W containment host gate unavailable",
+)
+class Task10WContainedValidationTests(unittest.TestCase):
+    def test_task10w_visible_and_hidden_are_independently_staged_and_contained(self):
+        with tempfile.TemporaryDirectory(prefix="task10w-contained-source-") as temporary:
+            source = Path(temporary) / "repository"
+            source.mkdir()
+            (source / "README.md").write_text("# Message\n", encoding="utf-8")
+            git(source, "init", "-q")
+            git(source, "add", "README.md")
+            subprocess.run([
+                "git", "-C", str(source), "-c", "user.name=Test",
+                "-c", "user.email=test@example.invalid", "commit", "-qm", "source",
+            ], check=True)
+            observer = ReadOnlyExecutor()
+            patcher = IsolatedPatchExecutor(observer)
+            snapshot = observer.observe_repository(source).snapshot
+            context = patcher.build_isolated_copy(snapshot)
+            proposal = PatchProposal.create(
+                snapshot,
+                b'diff --git a/src/message.py b/src/message.py\nnew file mode 100644\n--- /dev/null\n+++ b/src/message.py\n@@ -0,0 +1 @@\n+def message(): return "hello"\n',
+                ("src/message.py",),
+            )
+            applied = patcher.apply_patch_isolated(context, proposal, ("src/message.py",))
+            self.assertEqual("SUCCESS", applied.status.value)
+            stages_before = set(ORACLE_STAGE_ROOT.glob("run-*")) | set(VALIDATOR_STAGE_ROOT.glob("run-*"))
+            try:
+                executor = DescriptorValidationExecutor(
+                    validation_registry(), observer, SystemdContainedValidationRunner()
+                )
+                visible = executor.run_validation(
+                    context, applied.result_snapshot, WRITE_VALIDATION_IDS[0], WRITE_VALIDATION_IDS
+                )
+                hidden = executor.run_validation(
+                    context, applied.result_snapshot, WRITE_VALIDATION_IDS[1], WRITE_VALIDATION_IDS
+                )
+                self.assertEqual(ValidationStatus.VALIDATION_PASS, visible.status, visible.stderr)
+                self.assertEqual(ValidationStatus.VALIDATION_PASS, hidden.status, hidden.stderr)
+                self.assertEqual("task10w-systemd-v1", visible.containment_evidence["CONTAINMENT_PROFILE"])
+                self.assertEqual("task10w-systemd-v1", hidden.containment_evidence["CONTAINMENT_PROFILE"])
+                self.assertEqual(64, len(visible.containment_evidence["CONTAINMENT_VALIDATOR_SHA256"]))
+                self.assertEqual(64, len(hidden.containment_evidence["CONTAINMENT_ORACLE_SHA256"]))
+                self.assertEqual("MATCH", observer.compare_snapshot(snapshot).status.value)
+            finally:
+                patcher.cleanup(context)
+            stages_after = set(ORACLE_STAGE_ROOT.glob("run-*")) | set(VALIDATOR_STAGE_ROOT.glob("run-*"))
+            self.assertEqual(stages_before, stages_after)

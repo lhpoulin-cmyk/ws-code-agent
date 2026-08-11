@@ -1,6 +1,6 @@
 # Descriptor-only validation
 
-Status: **implemented isolated validation slice; no general containment claim**
+Status: **implemented fixed-descriptor validation slices; no general containment claim**
 
 Validation accepts only trusted registry IDs. Descriptors fix executable, argv,
 relative working directory, timeout, role, and write policy; no caller provides a
@@ -11,20 +11,38 @@ snapshot before execution and capture after-state, executable path, argv, cwd,
 timing, exit, timeout, stdout, and stderr. Exit zero with an unexpected
 repository write is `EFFECT_VIOLATION`.
 
-For the Task 10A C01 descriptors marked `containment_required`, direct process
-execution is not a fallback. They use the ws-cp fixed systemd transient-unit
-runner as `louis:louis`, with `PrivateNetwork=yes` and
-`RestrictAddressFamilies=AF_UNIX`. The unit receives a read-only isolated result
-tree. A hidden oracle receives only a fresh read-only staging directory bound at
-`/run/ws-code-agent/oracle`, containing exactly `oracle.py`; it never receives
-the evaluator-private root or its host-side path. The staging artifact digest,
-unit identity, uid/gid, network/address-family policy, and timeout result are
-retained as containment evidence. If that runner cannot establish containment,
-the result is `VALIDATION_CONTAINMENT_UNAVAILABLE`.
+For descriptors marked `containment_required`, direct process execution is not
+a fallback. The Task 10A C01 descriptors and the frozen Task 10K-C write
+descriptors use the ws-cp fixed systemd transient-unit runner as `louis:louis`,
+with `PrivateNetwork=yes` and `RestrictAddressFamilies=AF_UNIX`. The unit
+receives a read-only isolated result tree. A visible validator or hidden oracle
+receives only its own fresh read-only staging directory, containing exactly
+`validator.py` or `oracle.py`; it never receives the evaluator-private root or
+its host-side path. The staging artifact digest, unit identity, uid/gid,
+network/address-family policy, and timeout result are retained as containment
+evidence. If that runner cannot establish containment, the result is
+`VALIDATION_CONTAINMENT_UNAVAILABLE`.
 
-This proves the specific Task 10A socket-family, private-path, read-only-result,
-process-tree, and single-artifact-oracle gates. It does not prove general
-production containment for arbitrary executable workloads.
+The frozen synthetic write objective has two independently implemented trusted
+descriptors:
+
+```text
+task10k-c-write-visible-v1  VISIBLE
+task10k-c-write-hidden-v1   HIDDEN_ORACLE
+```
+
+Both verify only the objective-defined behavior of `src/message.py`: a callable
+zero-argument `message` whose return value is exactly the Python string
+`"hello"`. Neither imposes formatting, annotation, docstring, or AST-style
+requirements. Both prohibit repository writes. The visible implementation uses
+a fresh module import; the hidden implementation separately compiles and
+executes the file in a fresh namespace and repeats the call. They share trusted
+containment and snapshot machinery, not assertion logic.
+
+This proves the specific Task 10A and Task 10W socket-family, private-path,
+read-only-result, process-tree, and single-artifact validator/oracle gates. It
+does not prove general production containment for arbitrary executable
+workloads.
 
 Validation executes model-influenced code and is not general production
 containment. Before any model run, its host environment must be unprivileged and

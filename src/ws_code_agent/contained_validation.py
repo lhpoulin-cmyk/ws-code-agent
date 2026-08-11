@@ -20,6 +20,12 @@ if TYPE_CHECKING:
 WRAPPER = Path("/usr/local/libexec/ws-code-agent-contained-validation")
 ORACLE_SOURCE = Path("/home/louis/.local/share/ws-code-agent/alpha-private/C01-oracle.py")
 ORACLE_STAGE_ROOT = Path("/run/ws-code-agent-validation/oracle-staging")
+VALIDATOR_STAGE_ROOT = Path("/run/ws-code-agent-validation/validator-staging")
+ASSET_ROOT = Path(__file__).resolve().parents[2] / "validation-assets"
+TASK10K_VISIBLE_ID = "task10k-c-write-visible-v1"
+TASK10K_HIDDEN_ID = "task10k-c-write-hidden-v1"
+TASK10K_VISIBLE_SOURCE = ASSET_ROOT / f"{TASK10K_VISIBLE_ID}.py"
+TASK10K_HIDDEN_SOURCE = ASSET_ROOT / f"{TASK10K_HIDDEN_ID}.py"
 
 
 class ContainmentUnavailable(RuntimeError):
@@ -50,7 +56,8 @@ class SystemdContainedValidationRunner:
         command = ["sudo", "-n", str(self._wrapper), "--descriptor", descriptor.descriptor_id,
                    "--root", str(root), "--timeout-seconds", str(descriptor.timeout_seconds)]
         stage: Path | None = None
-        oracle_digest = ""
+        staged_digest = ""
+        staged_kind = ""
         try:
             if descriptor.descriptor_id == "C01-visible":
                 expected = ("-B", "-m", "unittest", "discover", "-s", "tests")
@@ -63,17 +70,40 @@ class SystemdContainedValidationRunner:
                     raise ContainmentUnavailable("ws-cp oracle staging root unavailable")
                 stage = Path(tempfile.mkdtemp(prefix="run-", dir=ORACLE_STAGE_ROOT))
                 oracle = stage / "oracle.py"
-                oracle_digest = hashlib.sha256(self._oracle_source.read_bytes()).hexdigest()
+                staged_digest = hashlib.sha256(self._oracle_source.read_bytes()).hexdigest()
                 shutil.copyfile(self._oracle_source, oracle)
-                if hashlib.sha256(oracle.read_bytes()).hexdigest() != oracle_digest:
+                if hashlib.sha256(oracle.read_bytes()).hexdigest() != staged_digest:
                     raise ContainmentUnavailable("staged oracle digest mismatch")
                 if tuple(path.name for path in stage.iterdir()) != ("oracle.py",):
                     raise ContainmentUnavailable("oracle stage is not single-artifact")
                 os.chmod(oracle, 0o444)
                 os.chmod(stage, 0o555)
                 command.extend(("--oracle-dir", str(stage)))
+                staged_kind = "oracle"
+            elif descriptor.descriptor_id in {TASK10K_VISIBLE_ID, TASK10K_HIDDEN_ID}:
+                source = TASK10K_VISIBLE_SOURCE if descriptor.descriptor_id == TASK10K_VISIBLE_ID else TASK10K_HIDDEN_SOURCE
+                expected = ("-B", str(source))
+                if descriptor.arguments != expected or not source.is_file() or source.is_symlink():
+                    raise ContainmentUnavailable("Task 10W descriptor does not match its fixed staged validator")
+                stage_root = VALIDATOR_STAGE_ROOT if descriptor.descriptor_id == TASK10K_VISIBLE_ID else ORACLE_STAGE_ROOT
+                if not stage_root.is_dir():
+                    raise ContainmentUnavailable("Task 10W validation staging root unavailable")
+                stage = Path(tempfile.mkdtemp(prefix="run-", dir=stage_root))
+                name = "validator.py" if descriptor.descriptor_id == TASK10K_VISIBLE_ID else "oracle.py"
+                staged = stage / name
+                staged_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+                shutil.copyfile(source, staged)
+                if hashlib.sha256(staged.read_bytes()).hexdigest() != staged_digest:
+                    raise ContainmentUnavailable("staged Task 10W validator digest mismatch")
+                if tuple(path.name for path in stage.iterdir()) != (name,):
+                    raise ContainmentUnavailable("Task 10W stage is not single-artifact")
+                os.chmod(staged, 0o444)
+                os.chmod(stage, 0o555)
+                option = "--validator-dir" if descriptor.descriptor_id == TASK10K_VISIBLE_ID else "--oracle-dir"
+                command.extend((option, str(stage)))
+                staged_kind = "validator" if descriptor.descriptor_id == TASK10K_VISIBLE_ID else "oracle"
             else:
-                raise ContainmentUnavailable("descriptor is not approved for contained Task 10A validation")
+                raise ContainmentUnavailable("descriptor is not approved for contained validation")
             process = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      timeout=descriptor.timeout_seconds + 5, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
@@ -86,7 +116,11 @@ class SystemdContainedValidationRunner:
         required = {"CONTAINMENT_MECHANISM", "CONTAINMENT_PROFILE", "CONTAINMENT_UNIT", "CONTAINMENT_UID_GID", "CONTAINMENT_NETWORK", "CONTAINMENT_RESULT"}
         if descriptor.descriptor_id == "C01-oracle":
             evidence["CONTAINMENT_ORACLE_PROJECTION"] = "single-artifact-directory"
-            evidence["CONTAINMENT_ORACLE_SHA256"] = oracle_digest
+            evidence["CONTAINMENT_ORACLE_SHA256"] = staged_digest
+        elif staged_kind == "oracle":
+            evidence["CONTAINMENT_ORACLE_SHA256"] = staged_digest
+        elif staged_kind == "validator":
+            evidence["CONTAINMENT_VALIDATOR_SHA256"] = staged_digest
         if not required <= set(evidence):
             raise ContainmentUnavailable("contained validation returned incomplete containment evidence")
         return ContainedExecution(process.returncode, process.stdout, process.stderr, evidence)

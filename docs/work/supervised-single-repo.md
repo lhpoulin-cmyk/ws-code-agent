@@ -91,15 +91,27 @@ python3 tools/run_supervised_work.py reject SESSION
 
 Review reports the frozen source identity, objective, request sequence,
 candidate diff, changed paths, application status, runtime evidence, authority
-anomalies, validation state, and isolated result location. `approve` and
-`reject` only record an operator disposition. Neither promotes the candidate.
+anomalies, validation state, and isolated result location. For the frozen
+synthetic write fixture, the session manifest binds the exact visible and hidden
+descriptor identities before inference. Once a candidate is ready, the
+evaluator advances one restart-stable validation phase per command:
+
+```bash
+python3 tools/run_supervised_work.py validate SESSION  # visible
+python3 tools/run_supervised_work.py validate SESSION  # hidden
+```
+
+The validators run only against a disposable reconstruction of the isolated
+candidate. They recheck candidate and source snapshots before and after each
+phase. A successful pair records `technical_correctness: VALIDATED`; it does
+not promote the candidate. `approve` and `reject` only record an operator
+disposition. Neither promotes the candidate.
 
 If the source no longer equals Snapshot X, review records
 `SOURCE_STATE_STALE`; approval fails closed. The lane never rebases, refreshes
-authority, or regenerates the candidate. Validation is
-`VALIDATION_NOT_CONFIGURED` unless a future registry-owned, operator-selected
-descriptor is separately approved; isolated application is not technical
-correctness.
+authority, or regenerates the candidate. Clarification fixtures and ordinary
+operator sessions remain `VALIDATION_NOT_CONFIGURED`; isolated application by
+itself is not technical correctness.
 
 ## Restrictions
 

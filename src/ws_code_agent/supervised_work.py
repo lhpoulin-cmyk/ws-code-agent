@@ -21,7 +21,8 @@ from typing import Any, Mapping
 
 from .alpha_experiment import AlphaExperimentController, ExperimentError, TurnBackend, _atomic_bytes, _atomic_json, _load
 from .disposition_harness import DispositionHarness, HarnessTask, RequestType, parse_request
-from .isolated_patch import IsolatedPatchExecutor, PatchProposal
+from .contained_validation import SystemdContainedValidationRunner
+from .isolated_patch import IsolatedContext, IsolatedPatchExecutor, PatchProposal
 from .katra_ollama_backend import (
     DEVSTRAL_MODEL_DIGEST,
     DEVSTRAL_MODEL_QUANTIZATION,
@@ -42,11 +43,21 @@ from .katra_ollama_backend import (
     QWEN25_32B_RUNTIME_PROFILE,
     ResponseEvidenceSink,
 )
-from .readonly_executor import CompareStatus, ReadOnlyExecutor, RepositorySnapshot
+from .readonly_executor import CompareStatus, ExecutorFact, ReadOnlyExecutor, RepositorySnapshot
 from .request_protocol import (
     SINGLE_REPOSITORY_PROTOCOL_ID,
     VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID,
 )
+from .supervised_validation import (
+    HIDDEN_VALIDATION_ID,
+    VISIBLE_VALIDATION_ID,
+    WRITE_VALIDATION_IDS,
+    bind_validation_ids,
+    binding_matches,
+    descriptor_binding,
+    validation_registry,
+)
+from .validation import DescriptorValidationExecutor, ValidationRole, ValidationRun, ValidationStatus
 
 
 WORK_CASE_ID = "WORK"
@@ -491,12 +502,38 @@ def _same_material(left: RepositorySnapshot, right: RepositorySnapshot) -> bool:
     )
 
 
+def _validation_evidence(run: ValidationRun, binding: Mapping[str, Any]) -> dict[str, Any]:
+    evidence = {
+        "descriptor_id": run.descriptor_id,
+        "descriptor_version": binding["version"],
+        "descriptor_identity": binding["descriptor_identity"],
+        "role": run.role.value,
+        "status": run.status.value,
+        "exit_code": run.exit_code,
+        "timed_out": run.timed_out,
+        "result_before": run.result_before.snapshot_identity,
+        "result_after": run.result_after.snapshot_identity,
+        "stdout_sha256": hashlib.sha256(run.stdout.encode()).hexdigest(),
+        "stderr_sha256": hashlib.sha256(run.stderr.encode()).hexdigest(),
+        "containment": dict(run.containment_evidence or {}),
+    }
+    evidence["evidence_identity"] = hashlib.sha256(
+        json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return evidence
+
+
 class SupervisedWorkController:
     """One-task facade over the restart-safe durable turn controller."""
 
-    def __init__(self, session_root: Path) -> None:
+    def __init__(
+        self,
+        session_root: Path,
+        contained_runner: SystemdContainedValidationRunner | None = None,
+    ) -> None:
         self.root = session_root
         self._turns = AlphaExperimentController(session_root)
+        self._contained_runner = contained_runner or SystemdContainedValidationRunner()
 
     @classmethod
     def start(
@@ -532,6 +569,7 @@ class SupervisedWorkController:
             model_artifact=_qwen_model_artifact(),
             session_kind="SUPERVISED_SINGLE_REPOSITORY_WORK_V1",
             fixture_identity="operator-repository/snapshot-v1",
+            validation_ids=(),
         )
 
     @classmethod
@@ -576,6 +614,7 @@ class SupervisedWorkController:
             model_artifact=_qwen_model_artifact(),
             session_kind=SYNTHETIC_V2_SESSION_KIND,
             fixture_identity=fixture_identity,
+            validation_ids=WRITE_VALIDATION_IDS if fixture_kind == SYNTHETIC_V2_WRITE else (),
         )
 
     @classmethod
@@ -620,6 +659,7 @@ class SupervisedWorkController:
             model_artifact=model_artifact,
             session_kind=DEVSTRAL_V2_SESSION_KIND,
             fixture_identity=fixture_identity,
+            validation_ids=WRITE_VALIDATION_IDS if fixture_kind == SYNTHETIC_V2_WRITE else (),
         )
 
     @classmethod
@@ -664,6 +704,7 @@ class SupervisedWorkController:
             model_artifact=model_artifact,
             session_kind=QWEN25_V2_SESSION_KIND,
             fixture_identity=fixture_identity,
+            validation_ids=WRITE_VALIDATION_IDS if fixture_kind == SYNTHETIC_V2_WRITE else (),
         )
 
     @classmethod
@@ -708,6 +749,7 @@ class SupervisedWorkController:
             model_artifact=model_artifact,
             session_kind=QWEN25_32B_V2_SESSION_KIND,
             fixture_identity=fixture_identity,
+            validation_ids=WRITE_VALIDATION_IDS if fixture_kind == SYNTHETIC_V2_WRITE else (),
         )
 
     @classmethod
@@ -729,6 +771,7 @@ class SupervisedWorkController:
         model_artifact: Mapping[str, Any],
         session_kind: str,
         fixture_identity: str,
+        validation_ids: tuple[str, ...],
     ) -> "SupervisedWorkController":
         if not SESSION_ID.fullmatch(session_id):
             raise SupervisedWorkError("INVALID_SESSION_ID")
@@ -753,6 +796,11 @@ class SupervisedWorkController:
         if _git(Path(observed.canonical_root), "status", "--porcelain=v1", "--untracked-files=all"):
             raise SupervisedWorkError("SOURCE_MUST_BE_CLEAN")
 
+        try:
+            validation_contract = bind_validation_ids(validation_ids)
+        except ValueError as error:
+            raise SupervisedWorkError("VALIDATION_DESCRIPTOR_BINDING_INVALID") from error
+        validation_status = "VALIDATION_PENDING" if validation_ids else "VALIDATION_NOT_CONFIGURED"
         created_at = datetime.now(timezone.utc).isoformat()
         manifest = {
             "experiment_id": session_id,
@@ -773,6 +821,7 @@ class SupervisedWorkController:
             "protocol_qualification": dict(protocol_qualification),
             "model_artifact": dict(model_artifact),
             "qualification": dict(qualification),
+            "validation": validation_contract,
         }
         conversation = [{
             "role": "user",
@@ -804,7 +853,7 @@ class SupervisedWorkController:
             "case_state": {
                 "candidate": None,
                 "clarification": None,
-                "validation_status": "VALIDATION_NOT_CONFIGURED",
+                "validation_status": validation_status,
             },
         }
         controller = AlphaExperimentController.start(store, manifest, (case,))
@@ -814,9 +863,19 @@ class SupervisedWorkController:
             "status": "READY",
             "source_state": "MATCH",
             "candidate_effect": False,
-            "validation_status": "VALIDATION_NOT_CONFIGURED",
+            "validation_status": validation_status,
             "operator_disposition": None,
         })
+        if validation_ids:
+            _atomic_json(controller.root / "validation-state.json", {
+                "contract_origin": "SESSION_MANIFEST",
+                "candidate_snapshot_identity": None,
+                "phase": "NOT_STARTED",
+                "status": "VALIDATION_PENDING",
+                "visible_validation": None,
+                "hidden_validation": None,
+                "technical_correctness": "NOT_EVALUATED",
+            })
         return cls(controller.root)
 
     def step(self, backend: TurnBackend) -> dict[str, Any]:
@@ -966,6 +1025,213 @@ class SupervisedWorkController:
     def manifest(self) -> dict[str, Any]:
         return _load(self.root / "session-manifest.json")
 
+    def bind_retrospective_validation(self, expected_candidate_identity: str) -> dict[str, Any]:
+        """Bind current trusted validators to a preserved pre-validator candidate."""
+        if (self.root / "retrospective-validation-contract.json").exists() or (self.root / "validation-state.json").exists():
+            raise SupervisedWorkError("VALIDATION_ALREADY_BOUND")
+        manifest = self.manifest()
+        case = self._turns._case(WORK_CASE_ID)
+        candidate = case["case_state"].get("candidate")
+        if (
+            case.get("fixture_identity") != "task10k-c-write/synthetic-v1"
+            or manifest.get("objective") != _WRITE_OBJECTIVE
+            or manifest.get("authority", {}).get("patch_paths") != ["src/message.py"]
+            or candidate is None
+        ):
+            raise SupervisedWorkError("RETROSPECTIVE_VALIDATION_NOT_APPLICABLE")
+        if candidate.get("candidate_snapshot_identity") != expected_candidate_identity:
+            raise SupervisedWorkError("CANDIDATE_STATE_INVALID")
+        if self._candidate_integrity(candidate) != "MATCH":
+            raise SupervisedWorkError("CANDIDATE_STATE_INVALID")
+        if ReadOnlyExecutor().compare_snapshot(_snapshot(case["snapshot_x"])).status is not CompareStatus.MATCH:
+            raise SupervisedWorkError("SOURCE_STATE_STALE")
+        contract = bind_validation_ids(WRITE_VALIDATION_IDS)
+        application_root = Path(__file__).resolve().parents[2]
+        implementation_sha = _git(application_root, "rev-parse", "HEAD")
+        supplement = {
+            "record_type": "RETROSPECTIVE_TECHNICAL_VALIDATION_BINDING",
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "session_id": self.root.name,
+            "historical_session_manifest_sha256": hashlib.sha256(
+                (self.root / "session-manifest.json").read_bytes()
+            ).hexdigest(),
+            "candidate_snapshot_identity": expected_candidate_identity,
+            "source_snapshot_identity": case["snapshot_x"]["snapshot_identity"],
+            "validator_implementation_sha": implementation_sha,
+            "validation": contract,
+        }
+        _atomic_json(self.root / "retrospective-validation-contract.json", supplement)
+        state = {
+            "contract_origin": "RETROSPECTIVE_TECHNICAL_VALIDATION",
+            "candidate_snapshot_identity": expected_candidate_identity,
+            "phase": "NOT_STARTED",
+            "status": "VALIDATION_PENDING",
+            "visible_validation": None,
+            "hidden_validation": None,
+            "technical_correctness": "NOT_EVALUATED",
+        }
+        _atomic_json(self.root / "validation-state.json", state)
+        self._set_session_validation_status(state["status"])
+        self._write_review_packet()
+        return supplement
+
+    def advance_validation(self) -> dict[str, Any]:
+        """Advance exactly one restart-safe evaluator-owned validation phase."""
+        contract = self._validation_contract()
+        state_path = self.root / "validation-state.json"
+        if not state_path.is_file():
+            raise SupervisedWorkError("VALIDATION_NOT_CONFIGURED")
+        state = _load(state_path)
+        case = self._turns._case(WORK_CASE_ID)
+        candidate = case["case_state"].get("candidate")
+        if candidate is None:
+            raise SupervisedWorkError("NO_CANDIDATE_EFFECT")
+        if self._candidate_integrity(candidate) != "MATCH":
+            raise SupervisedWorkError("CANDIDATE_STATE_INVALID")
+        if ReadOnlyExecutor().compare_snapshot(_snapshot(case["snapshot_x"])).status is not CompareStatus.MATCH:
+            raise SupervisedWorkError("SOURCE_STATE_STALE")
+        candidate_identity = candidate["candidate_snapshot_identity"]
+        if state.get("candidate_snapshot_identity") not in {None, candidate_identity}:
+            raise SupervisedWorkError("CANDIDATE_STATE_INVALID")
+        state["candidate_snapshot_identity"] = candidate_identity
+        phase = state.get("phase")
+        if phase in {"VISIBLE_VALIDATION_STARTED", "HIDDEN_VALIDATION_STARTED"}:
+            state["phase"] = "BLOCKED"
+            state["status"] = "EXECUTOR_ERROR"
+            _atomic_json(state_path, state)
+            self._set_session_validation_status(state["status"])
+            raise SupervisedWorkError("VALIDATION_OUTCOME_AMBIGUOUS")
+        if phase == "NOT_STARTED":
+            descriptor_id = VISIBLE_VALIDATION_ID
+            result_key = "visible_validation"
+            state["phase"] = "VISIBLE_VALIDATION_STARTED"
+        elif phase == "VISIBLE_COMPLETE":
+            descriptor_id = HIDDEN_VALIDATION_ID
+            result_key = "hidden_validation"
+            state["phase"] = "HIDDEN_VALIDATION_STARTED"
+        else:
+            raise SupervisedWorkError("VALIDATION_MAY_NOT_ADVANCE")
+        _atomic_json(state_path, state)
+
+        bindings = {
+            item["descriptor_id"]: item for item in contract["descriptors"]
+        }
+        binding = bindings[descriptor_id]
+        registry = validation_registry()
+        workspace: Path | None = None
+        try:
+            context, result_snapshot, workspace = self._validation_context(candidate, case)
+            run = DescriptorValidationExecutor(
+                registry,
+                ReadOnlyExecutor(),
+                self._contained_runner,
+            ).run_validation(
+                context,
+                result_snapshot,
+                descriptor_id,
+                tuple(contract["authorized_validation_ids"]),
+            )
+        finally:
+            if workspace is not None and workspace.exists():
+                shutil.rmtree(workspace)
+
+        if self._candidate_integrity(candidate) != "MATCH":
+            raise SupervisedWorkError("CANDIDATE_STATE_INVALID")
+        if ReadOnlyExecutor().compare_snapshot(_snapshot(case["snapshot_x"])).status is not CompareStatus.MATCH:
+            raise SupervisedWorkError("SOURCE_STATE_STALE")
+        evidence = _validation_evidence(run, binding)
+        evidence_dir = self.root / "evaluator" / "validation"
+        evidence_name = "visible.json" if run.role is ValidationRole.VISIBLE else "hidden.json"
+        _atomic_json(evidence_dir / evidence_name, evidence)
+        state[result_key] = evidence
+
+        if run.status is ValidationStatus.VALIDATION_PASS and result_key == "visible_validation":
+            state["phase"] = "VISIBLE_COMPLETE"
+            state["status"] = "VISIBLE_VALIDATION_PASS"
+        elif run.status is ValidationStatus.VALIDATION_PASS:
+            state["phase"] = "COMPLETE"
+            state["status"] = "VALIDATION_PASS"
+            state["technical_correctness"] = "VALIDATED"
+        else:
+            state["phase"] = "TERMINAL" if run.status is ValidationStatus.VALIDATION_FAIL else "BLOCKED"
+            if run.status is ValidationStatus.VALIDATION_FAIL:
+                state["status"] = (
+                    "VISIBLE_VALIDATION_FAIL"
+                    if result_key == "visible_validation"
+                    else "HIDDEN_VALIDATION_FAIL"
+                )
+                state["technical_correctness"] = "FAILED"
+            else:
+                state["status"] = run.status.value
+        _atomic_json(state_path, state)
+        self._set_session_validation_status(state["status"])
+        self._write_review_packet()
+        return evidence
+
+    def _validation_contract(self) -> dict[str, Any]:
+        manifest_contract = self.manifest().get("validation")
+        if manifest_contract and manifest_contract.get("authorized_validation_ids"):
+            contract = manifest_contract
+        else:
+            supplement_path = self.root / "retrospective-validation-contract.json"
+            if not supplement_path.is_file():
+                raise SupervisedWorkError("VALIDATION_NOT_CONFIGURED")
+            contract = _load(supplement_path)["validation"]
+        if not binding_matches(contract):
+            raise SupervisedWorkError("VALIDATION_DESCRIPTOR_BINDING_MISMATCH")
+        return contract
+
+    def _validation_context(
+        self,
+        candidate: Mapping[str, Any],
+        case: Mapping[str, Any],
+    ) -> tuple[IsolatedContext, RepositorySnapshot, Path]:
+        workspace = Path(tempfile.mkdtemp(prefix="ws-code-agent-isolated-validation-"))
+        repository = workspace / "repository"
+        try:
+            shutil.copytree(self.root / "candidate" / "repository", repository, symlinks=True)
+            result_snapshot = ReadOnlyExecutor().observe_repository(repository).snapshot
+            expected = _snapshot(candidate["candidate_snapshot"])
+            if not _same_material(expected, result_snapshot):
+                raise SupervisedWorkError("CANDIDATE_STATE_INVALID")
+            source = _snapshot(case["snapshot_x"])
+            context = IsolatedContext(
+                source_snapshot=source,
+                workspace_root=str(workspace),
+                isolated_root=str(repository),
+                initial_snapshot=source,
+                initial_manifest={},
+                build_fact=ExecutorFact(
+                    operation="RECONSTRUCT_CANDIDATE_FOR_VALIDATION",
+                    success=True,
+                    snapshot_identity=source.snapshot_identity,
+                    observed_result={
+                        "candidate_snapshot_identity": candidate["candidate_snapshot_identity"],
+                        "validation_copy_snapshot_identity": result_snapshot.snapshot_identity,
+                    },
+                ),
+            )
+            return context, result_snapshot, workspace
+        except Exception:
+            shutil.rmtree(workspace)
+            raise
+
+    def _validation_summary(self) -> dict[str, Any]:
+        path = self.root / "validation-state.json"
+        if path.is_file():
+            return _load(path)
+        return {
+            "status": "VALIDATION_NOT_CONFIGURED",
+            "visible_validation": None,
+            "hidden_validation": None,
+            "technical_correctness": "NOT_EVALUATED",
+        }
+
+    def _set_session_validation_status(self, status: str) -> None:
+        state = _load(self.root / "session-state.json")
+        state["validation_status"] = status
+        _atomic_json(self.root / "session-state.json", state)
+
     def status(self) -> dict[str, Any]:
         case = self._turns._case(WORK_CASE_ID)
         state = _load(self.root / "session-state.json")
@@ -1000,7 +1266,7 @@ class SupervisedWorkController:
             "candidate_effect": candidate is not None,
             "candidate_integrity": candidate_integrity,
             "changed_paths": candidate.get("changed_paths", []) if candidate else [],
-            "validation_status": case["case_state"]["validation_status"],
+            "validation_status": self._validation_summary()["status"],
             "clarification": case["case_state"].get("clarification"),
             "operator_disposition": state.get("operator_disposition"),
             "last_step_error": state.get("last_step_error"),
@@ -1100,6 +1366,7 @@ class SupervisedWorkController:
             runtime.append({"turn": turn, **turn_state.get("runtime", {})})
         source_state = ReadOnlyExecutor().compare_snapshot(_snapshot(case["snapshot_x"])).status.value
         patch = (self.root / "candidate" / "patch.diff").read_text(encoding="utf-8") if candidate else None
+        validation = self._validation_summary()
         packet = {
             "session_id": self.root.name,
             "starting_head": manifest["repository"]["expected_head"],
@@ -1113,8 +1380,10 @@ class SupervisedWorkController:
             "candidate_patch": patch,
             "changed_paths": candidate.get("changed_paths", []) if candidate else [],
             "executor_application": candidate.get("application") if candidate else None,
-            "technical_correctness": candidate.get("technical_correctness") if candidate else "NOT_EVALUATED",
-            "validation_result": case["case_state"]["validation_status"],
+            "technical_correctness": validation["technical_correctness"],
+            "validation_result": validation["status"],
+            "visible_validation": validation.get("visible_validation"),
+            "hidden_validation": validation.get("hidden_validation"),
             "runtime_evidence": runtime,
             "authority_denials_or_anomalies": anomalies,
             "isolated_result_location": candidate.get("isolated_result_location") if candidate else None,

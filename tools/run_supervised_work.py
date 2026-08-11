@@ -71,9 +71,12 @@ def main() -> int:
     qwen25_32b_v2.add_argument("--fixture", choices=SYNTHETIC_V2_FIXTURES, required=True)
     qwen25_32b_v2.add_argument("--turn-limit", type=int, default=8)
     qwen25_32b_v2.add_argument("--session-id")
-    for command in ("status", "step", "review", "approve", "reject"):
+    for command in ("status", "step", "validate", "review", "approve", "reject"):
         item = sub.add_parser(command)
         item.add_argument("session")
+    retrospective = sub.add_parser("bind-retrospective-validation")
+    retrospective.add_argument("session")
+    retrospective.add_argument("--candidate-identity", required=True)
     args = parser.parse_args()
     try:
         if args.command == "start":
@@ -155,6 +158,10 @@ def main() -> int:
                     raise SupervisedWorkError("MODEL_QUALIFICATION_MISMATCH")
                 controller.step(backend)
                 output = controller.status()
+            elif args.command == "bind-retrospective-validation":
+                output = controller.bind_retrospective_validation(args.candidate_identity)
+            elif args.command == "validate":
+                output = controller.advance_validation()
             elif args.command == "review":
                 output = controller.review()
             elif args.command in {"approve", "reject"}:

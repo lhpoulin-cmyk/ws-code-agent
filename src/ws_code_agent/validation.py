@@ -66,13 +66,13 @@ class DescriptorValidationExecutor:
         descriptor = self._descriptors.get(validation_id)
         before = self._observer.observe_repository(context.isolated_root).snapshot
         if descriptor is None or validation_id not in authorized_ids:
-            return self._error(context, before, validation_id, ValidationStatus.EXECUTOR_ERROR, "descriptor unknown or unauthorized")
+            return self._error(context, before, validation_id, ValidationStatus.EXECUTOR_ERROR, "descriptor unknown or unauthorized", role=descriptor.role if descriptor else ValidationRole.VISIBLE)
         if before.snapshot_identity != result_snapshot.snapshot_identity or (descriptor.requires_post_patch and before.snapshot_identity == context.initial_snapshot.snapshot_identity):
-            return self._error(context, before, validation_id, ValidationStatus.EXECUTOR_ERROR, "result snapshot is not the required post-patch state")
+            return self._error(context, before, validation_id, ValidationStatus.EXECUTOR_ERROR, "result snapshot is not the required post-patch state", role=descriptor.role)
         try:
             cwd = self._cwd(context, descriptor); executable = self._executable(descriptor.executable)
         except (OSError, ValueError) as error:
-            return self._error(context, before, validation_id, ValidationStatus.VALIDATION_UNAVAILABLE, str(error))
+            return self._error(context, before, validation_id, ValidationStatus.VALIDATION_UNAVAILABLE, str(error), role=descriptor.role)
         env = {"PATH": os.defpath, "LC_ALL": "C", "PYTHONDONTWRITEBYTECODE": "1"}
         if descriptor.isolated_pythonpath: env["PYTHONPATH"] = context.isolated_root
         argv, started = (executable, *descriptor.arguments), time.monotonic_ns()
@@ -80,7 +80,7 @@ class DescriptorValidationExecutor:
         try:
             if descriptor.containment_required:
                 if self._contained_runner is None:
-                    return self._error(context, before, validation_id, ValidationStatus.VALIDATION_CONTAINMENT_UNAVAILABLE, "contained validation runner unavailable", started)
+                    return self._error(context, before, validation_id, ValidationStatus.VALIDATION_CONTAINMENT_UNAVAILABLE, "contained validation runner unavailable", started, descriptor.role)
                 contained = self._contained_runner.run(context, descriptor)
                 stdout, stderr, code = contained.stdout, contained.stderr, contained.exit_code
                 timed_out, containment = code == 124, contained.evidence
@@ -92,9 +92,9 @@ class DescriptorValidationExecutor:
                     os.killpg(process.pid, signal.SIGKILL)
                     stdout, stderr = process.communicate(); code, timed_out = None, True
         except ContainmentUnavailable as error:
-            return self._error(context, before, validation_id, ValidationStatus.VALIDATION_CONTAINMENT_UNAVAILABLE, str(error), started)
+            return self._error(context, before, validation_id, ValidationStatus.VALIDATION_CONTAINMENT_UNAVAILABLE, str(error), started, descriptor.role)
         except OSError as error:
-            return self._error(context, before, validation_id, ValidationStatus.VALIDATION_UNAVAILABLE, str(error), started)
+            return self._error(context, before, validation_id, ValidationStatus.VALIDATION_UNAVAILABLE, str(error), started, descriptor.role)
         ended, after = time.monotonic_ns(), self._observer.observe_repository(context.isolated_root).snapshot
         if timed_out: status = ValidationStatus.VALIDATION_TIMEOUT
         elif before.snapshot_identity != after.snapshot_identity and not descriptor.repository_writes_allowed: status = ValidationStatus.EFFECT_VIOLATION
@@ -103,9 +103,9 @@ class DescriptorValidationExecutor:
         out, err = stdout.decode("utf-8", errors="replace"), stderr.decode("utf-8", errors="replace")
         fact = ExecutorFact(operation="RUN_VALIDATION", success=status is ValidationStatus.VALIDATION_PASS, snapshot_identity=before.snapshot_identity, error_classification=None if status is ValidationStatus.VALIDATION_PASS else status.value, observed_result={"descriptor_id": validation_id, "argv": argv, "working_directory": str(cwd), "exit_code": code, "timed_out": timed_out, "stdout": out, "stderr": err, "result_before": before.snapshot_identity, "result_after": after.snapshot_identity, "containment": containment})
         return ValidationRun(validation_id, descriptor.role, before, after, executable, argv, str(cwd), started, ended, code, timed_out, out, err, status, fact, containment)
-    def _error(self, context, snapshot, validation_id, status, detail, started=None):
+    def _error(self, context, snapshot, validation_id, status, detail, started=None, role=ValidationRole.VISIBLE):
         now = time.monotonic_ns()
-        return ValidationRun(validation_id, ValidationRole.VISIBLE, snapshot, snapshot, "", (), "", started or now, now, None, False, "", detail, status, ExecutorFact(operation="RUN_VALIDATION", success=False, snapshot_identity=snapshot.snapshot_identity, error_classification=status.value, observed_result={"descriptor_id": validation_id, "detail": detail}))
+        return ValidationRun(validation_id, role, snapshot, snapshot, "", (), "", started or now, now, None, False, "", detail, status, ExecutorFact(operation="RUN_VALIDATION", success=False, snapshot_identity=snapshot.snapshot_identity, error_classification=status.value, observed_result={"descriptor_id": validation_id, "detail": detail}))
     @staticmethod
     def _executable(value: str) -> str:
         path = Path(value) if os.path.isabs(value) else Path(shutil.which(value, path=os.defpath) or "")

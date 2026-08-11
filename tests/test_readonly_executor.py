@@ -181,6 +181,32 @@ class ReadOnlyExecutorTests(unittest.TestCase):
             self.executor.read_file(snapshot, "outside-link")
         self.assertEqual("PATH_ESCAPE_DENIED", raised.exception.fact.error_classification)
 
+    def test_read_distinguishes_bounded_absence_non_regular_and_escape(self) -> None:
+        snapshot = self.observe()
+        self.assertEqual(b"needle = 'base'\n", self.executor.read_file(snapshot, "src/app.py").content)
+        with self.assertRaises(ExecutorOperationError) as raised:
+            self.executor.read_file(snapshot, "src/missing.py")
+        self.assertEqual("PATH_NOT_FOUND", raised.exception.fact.error_classification)
+        with self.assertRaises(ExecutorOperationError) as raised:
+            self.executor.read_file(snapshot, "src")
+        self.assertEqual("NOT_A_REGULAR_FILE", raised.exception.fact.error_classification)
+
+        outside = Path(self.temporary_directory.name) / "outside-directory"
+        outside.mkdir()
+        os.symlink(outside, self.root / "parent-link")
+        os.symlink("missing-target", self.root / "dangling-link")
+        snapshot = self.observe()
+        for attempted_path in (
+            "../outside",
+            os.fspath(Path("/tmp") / "outside"),
+            "parent-link/missing.py",
+            "dangling-link",
+            ".git/config",
+        ):
+            with self.assertRaises(ExecutorOperationError) as raised:
+                self.executor.read_file(snapshot, attempted_path)
+            self.assertEqual("PATH_ESCAPE_DENIED", raised.exception.fact.error_classification)
+
     def test_search_is_local_literal_bounded_and_denies_escape(self) -> None:
         snapshot = self.observe()
         (self.root / "src" / "second.py").write_text("needle = 'second'\n", encoding="utf-8")
@@ -195,6 +221,23 @@ class ReadOnlyExecutorTests(unittest.TestCase):
         with self.assertRaises(ExecutorOperationError) as raised:
             self.executor.search(snapshot, "", scope="src")
         self.assertEqual("MALFORMED_SEARCH_REQUEST", raised.exception.fact.error_classification)
+
+    def test_search_distinguishes_missing_non_directory_and_escape_scope(self) -> None:
+        snapshot = self.observe()
+        with self.assertRaises(ExecutorOperationError) as raised:
+            self.executor.search(snapshot, "needle", scope="missing")
+        self.assertEqual("SEARCH_SCOPE_NOT_FOUND", raised.exception.fact.error_classification)
+        with self.assertRaises(ExecutorOperationError) as raised:
+            self.executor.search(snapshot, "needle", scope="README.md")
+        self.assertEqual("SEARCH_SCOPE_NOT_DIRECTORY", raised.exception.fact.error_classification)
+
+        outside = Path(self.temporary_directory.name) / "search-outside"
+        outside.mkdir()
+        os.symlink(outside, self.root / "search-link")
+        snapshot = self.observe()
+        with self.assertRaises(ExecutorOperationError) as raised:
+            self.executor.search(snapshot, "needle", scope="search-link")
+        self.assertEqual("PATH_ESCAPE_DENIED", raised.exception.fact.error_classification)
 
     def test_repository_replacement_at_same_path_changes_identity(self) -> None:
         original = self.observe()

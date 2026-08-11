@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePath
+import stat
 import subprocess
 from typing import Any, Mapping
 
@@ -202,7 +203,9 @@ class ReadOnlyExecutor:
         operation = "READ_FILE"
         if self.compare_snapshot(snapshot).status is not CompareStatus.MATCH:
             raise self._error(operation, "STATE_STALE", "bound snapshot is stale", snapshot.snapshot_identity)
-        path = self._resolve_inside(snapshot, relative_path, operation)
+        path = self._resolve_inside(
+            snapshot, relative_path, operation, missing_classification="PATH_NOT_FOUND"
+        )
         try:
             if not path.is_file():
                 raise self._error(operation, "NOT_A_REGULAR_FILE", relative_path, snapshot.snapshot_identity)
@@ -237,7 +240,9 @@ class ReadOnlyExecutor:
             raise self._error(operation, "MALFORMED_SEARCH_REQUEST", "literal must be non-empty", snapshot.snapshot_identity)
         if not isinstance(result_limit, int) or result_limit < 1 or result_limit > 1000:
             raise self._error(operation, "MALFORMED_SEARCH_REQUEST", "result_limit must be 1..1000", snapshot.snapshot_identity)
-        root = self._resolve_inside(snapshot, scope, operation)
+        root = self._resolve_inside(
+            snapshot, scope, operation, missing_classification="SEARCH_SCOPE_NOT_FOUND"
+        )
         if not root.is_dir():
             raise self._error(operation, "SEARCH_SCOPE_NOT_DIRECTORY", scope, snapshot.snapshot_identity)
 
@@ -376,19 +381,59 @@ class ReadOnlyExecutor:
             entries.append((relative, kind, identity))
         return sorted(entries)
 
-    def _resolve_inside(self, snapshot: RepositorySnapshot, relative_path: str, operation: str) -> Path:
+    def _resolve_inside(
+        self,
+        snapshot: RepositorySnapshot,
+        relative_path: str,
+        operation: str,
+        *,
+        missing_classification: str,
+    ) -> Path:
         if not isinstance(relative_path, str) or not relative_path:
             raise self._error(operation, "MALFORMED_PATH", "path must be a non-empty relative string", snapshot.snapshot_identity)
         candidate_input = PurePath(relative_path)
-        if candidate_input.is_absolute() or ".." in candidate_input.parts:
+        if (
+            candidate_input.is_absolute()
+            or ".." in candidate_input.parts
+            or ".git" in candidate_input.parts
+        ):
             raise self._error(operation, "PATH_ESCAPE_DENIED", relative_path, snapshot.snapshot_identity)
         root = Path(snapshot.canonical_root)
-        try:
-            candidate = (root / candidate_input).resolve(strict=True)
-            candidate.relative_to(root)
-        except (OSError, ValueError) as error:
-            raise self._error(operation, "PATH_ESCAPE_DENIED", relative_path, snapshot.snapshot_identity) from error
-        return candidate
+        current = root
+        for component in candidate_input.parts:
+            candidate = current / component
+            try:
+                candidate_stat = candidate.lstat()
+            except (FileNotFoundError, NotADirectoryError) as error:
+                raise self._error(
+                    operation,
+                    missing_classification,
+                    relative_path,
+                    snapshot.snapshot_identity,
+                ) from error
+            except OSError as error:
+                raise self._error(
+                    operation, "PATH_ESCAPE_DENIED", relative_path, snapshot.snapshot_identity
+                ) from error
+
+            if stat.S_ISLNK(candidate_stat.st_mode):
+                try:
+                    current = candidate.resolve(strict=True)
+                except OSError as error:
+                    # A dangling or otherwise indeterminate link is not ordinary
+                    # absence inside the granted repository surface.
+                    raise self._error(
+                        operation, "PATH_ESCAPE_DENIED", relative_path, snapshot.snapshot_identity
+                    ) from error
+            else:
+                current = candidate
+            try:
+                current.relative_to(root)
+            except ValueError as error:
+                raise self._error(
+                    operation, "PATH_ESCAPE_DENIED", relative_path, snapshot.snapshot_identity
+                ) from error
+        return current
 
     def _git(self, root: Path, *arguments: str, operation: str) -> bytes:
         result = self._git_result(root, *arguments)

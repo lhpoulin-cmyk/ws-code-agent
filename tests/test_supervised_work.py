@@ -28,6 +28,18 @@ def patch(path: str, old: str, new: str) -> str:
     return f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-{old}\n+{new}\n"
 
 
+def new_file_patch(path: str, content: str) -> str:
+    lines = content.splitlines()
+    added = "\n".join(f"+{line}" for line in lines)
+    return (
+        f"diff --git a/{path} b/{path}\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        f"+++ b/{path}\n"
+        f"@@ -0,0 +1,{len(lines)} @@\n{added}\n"
+    )
+
+
 class QueueBackend:
     def __init__(self, replies: list[str], disconnect_after_capture: bool = False):
         self.replies = list(replies)
@@ -204,6 +216,40 @@ class SupervisedWorkTests(unittest.TestCase):
             self.assertEqual("RuntimeError", state["last_step_error"]["type"])
             self.assertEqual("INFERENCE_INTENT_DURABLE", controller.status()["pending_turn"]["phase"])
             self.assertEqual(0, controller.status()["current_turn"])
+
+    def test_missing_authorized_read_can_progress_to_isolated_candidate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); repo, _ = repository(root)
+            (repo / "src/message.py").unlink()
+            subprocess.run(["git", "-C", str(repo), "add", "-u"], check=True)
+            subprocess.run([
+                "git", "-C", str(repo), "-c", "user.name=Test",
+                "-c", "user.email=test@example.invalid", "commit", "-qm", "missing target",
+            ], check=True)
+            head = subprocess.check_output(
+                ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+            ).strip()
+            controller = start(root / "store", repo, head)
+
+            observed = controller.step(QueueBackend([request("READ", {"path": "src/message.py"})]))
+            self.assertEqual("PATH_NOT_FOUND", observed["authority_outcome"])
+            self.assertEqual(
+                {"status": "ERROR", "error": "PATH_NOT_FOUND"}, observed["projection"]
+            )
+
+            candidate_content = 'def message():\n    return "hello"\n'
+            resumed = SupervisedWorkController(controller.root)
+            accepted = resumed.step(QueueBackend([request("PROPOSE_PATCH", {
+                "patch": new_file_patch("src/message.py", candidate_content),
+                "proposed_paths": ["src/message.py"],
+            })]))
+            self.assertEqual("CANDIDATE_READY", accepted["terminal_disposition"])
+            review = resumed.review()
+            self.assertEqual(["src/message.py"], review["changed_paths"])
+            self.assertEqual("SUCCESS", review["executor_application"])
+            self.assertEqual("MATCH", review["source_state"])
+            self.assertFalse((repo / "src/message.py").exists())
+            self.assertTrue((resumed.root / "review-packet.json").is_file())
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from pathlib import Path
 import subprocess
@@ -14,7 +15,17 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from ws_code_agent.alpha_experiment import AlphaExperimentController  # noqa: E402
 from ws_code_agent.katra_ollama_backend import KatraOllamaDispositionBackend, RuntimeTurnEvidence  # noqa: E402
-from ws_code_agent.supervised_work import SupervisedWorkController, SupervisedWorkError  # noqa: E402
+from ws_code_agent.supervised_work import (  # noqa: E402
+    SYNTHETIC_V2_CLARIFICATION,
+    SYNTHETIC_V2_SESSION_KIND,
+    SYNTHETIC_V2_WRITE,
+    SupervisedWorkController,
+    SupervisedWorkError,
+)
+from ws_code_agent.request_protocol import (  # noqa: E402
+    SINGLE_REPOSITORY_PROTOCOL_ID,
+    VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID,
+)
 
 
 QUALIFICATION = ROOT / "docs/qualification/qwen3-coder-30b-alpha-v1.yaml"
@@ -38,6 +49,40 @@ def new_file_patch(path: str, content: str) -> str:
         f"+++ b/{path}\n"
         f"@@ -0,0 +1,{len(lines)} @@\n{added}\n"
     )
+
+
+def candidate_qualification(root: Path) -> Path:
+    path = root / "candidate-qualification.yaml"
+    text = QUALIFICATION.read_text(encoding="utf-8")
+    text = text.replace(
+        "  qualification_status: SUPERVISED_SYNTHETIC_ACCEPTED",
+        "  qualification_status: CANDIDATE",
+    ).replace(
+        "  synthetic_acceptance: PASS",
+        "  synthetic_acceptance: PENDING",
+    ).replace(
+        "  production_qualified: true",
+        "  production_qualified: false",
+    )
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def accepted_v2_qualification(root: Path) -> Path:
+    path = root / "accepted-v2-qualification.yaml"
+    text = QUALIFICATION.read_text(encoding="utf-8")
+    text = text.replace(
+        "  qualification_status: CANDIDATE",
+        "  qualification_status: SUPERVISED_SYNTHETIC_ACCEPTED",
+    ).replace(
+        "  synthetic_acceptance: PENDING",
+        "  synthetic_acceptance: PASS",
+    ).replace(
+        "  production_qualified: false",
+        "  production_qualified: true",
+    )
+    path.write_text(text, encoding="utf-8")
+    return path
 
 
 class QueueBackend:
@@ -102,7 +147,15 @@ class SupervisedWorkTests(unittest.TestCase):
             self.assertEqual(["src"], manifest["authority"]["read_scopes"])
             self.assertEqual(["src/message.py"], manifest["authority"]["patch_paths"])
             self.assertEqual("SUPERVISED_SINGLE_REPO", manifest["qualification"]["operating_class"])
-            self.assertEqual("WS_CODE_AGENT_REQUEST_PROTOCOL_V1_SINGLE", manifest["protocol_id"])
+            accepted_v2 = (
+                "  qualification_status: SUPERVISED_SYNTHETIC_ACCEPTED"
+                in QUALIFICATION.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID if accepted_v2 else SINGLE_REPOSITORY_PROTOCOL_ID,
+                manifest["protocol_id"],
+            )
+            self.assertTrue(manifest["protocol_qualification"]["production_qualified"])
             self.assertNotIn("repositories", manifest)
             altered = root / "qualification.yaml"
             altered.write_text(QUALIFICATION.read_text().replace(
@@ -118,6 +171,153 @@ class SupervisedWorkTests(unittest.TestCase):
             (repo / "draft.txt").write_text("dirty")
             with self.assertRaisesRegex(SupervisedWorkError, "SOURCE_MUST_BE_CLEAN"):
                 start(root / "other", repo, head, session="work-other-session")
+
+    def test_value_free_v2_is_candidate_only_and_uses_fixed_synthetic_fixtures(self):
+        self.assertNotIn(
+            "protocol_id",
+            inspect.signature(SupervisedWorkController.start).parameters,
+        )
+        self.assertNotIn(
+            "repository",
+            inspect.signature(SupervisedWorkController.start_synthetic_v2).parameters,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write = SupervisedWorkController.start_synthetic_v2(
+                root / "store",
+                session_id="work-v2-write-test",
+                fixture_kind=SYNTHETIC_V2_WRITE,
+                qualification_path=candidate_qualification(root),
+                harness_sha="test-harness",
+            )
+            manifest = write.manifest()
+            self.assertEqual(SYNTHETIC_V2_SESSION_KIND, manifest["session_kind"])
+            self.assertEqual(VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID, manifest["protocol_id"])
+            self.assertEqual(
+                {
+                    "id": VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID,
+                    "qualification_status": "CANDIDATE",
+                    "production_qualified": False,
+                    "synthetic_acceptance": "PENDING",
+                    "operating_class": "SUPERVISED_SINGLE_REPO",
+                    "alpha_evaluation_protocol": SINGLE_REPOSITORY_PROTOCOL_ID,
+                },
+                manifest["protocol_qualification"],
+            )
+            self.assertEqual(["."], manifest["authority"]["read_scopes"])
+            self.assertEqual(["src/message.py"], manifest["authority"]["patch_paths"])
+            self.assertNotIn("repositories", manifest)
+            self.assertTrue(
+                Path(manifest["repository"]["canonical_path"]).is_relative_to(
+                    root / "store" / "_synthetic-v2-fixtures"
+                )
+            )
+
+            clarification = SupervisedWorkController.start_synthetic_v2(
+                root / "store",
+                session_id="work-v2-clarification-test",
+                fixture_kind=SYNTHETIC_V2_CLARIFICATION,
+                qualification_path=candidate_qualification(root),
+                harness_sha="test-harness",
+            )
+            self.assertEqual([], clarification.manifest()["authority"]["patch_paths"])
+            self.assertEqual(
+                VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID,
+                clarification.status()["protocol_id"],
+            )
+
+            repo, head = repository(root / "accepted-production")
+            accepted = SupervisedWorkController.start(
+                root / "accepted-store",
+                session_id="work-v2-accepted-production",
+                repository=repo,
+                expected_head=head,
+                objective="Change the message as requested.",
+                read_scopes=("src",),
+                patch_paths=("src/message.py",),
+                qualification_path=accepted_v2_qualification(root),
+                harness_sha="test-harness",
+            )
+            self.assertEqual(
+                VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID,
+                accepted.manifest()["protocol_id"],
+            )
+            with self.assertRaisesRegex(
+                SupervisedWorkError,
+                "V2_CANDIDATE_SESSION_NOT_AUTHORIZED",
+            ):
+                SupervisedWorkController.start_synthetic_v2(
+                    root / "accepted-candidate-store",
+                    session_id="work-v2-accepted-candidate",
+                    fixture_kind=SYNTHETIC_V2_WRITE,
+                    qualification_path=accepted_v2_qualification(root),
+                    harness_sha="test-harness",
+                )
+
+    def test_value_free_v2_synthetic_write_and_clarification_use_normal_durable_lane(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write = SupervisedWorkController.start_synthetic_v2(
+                root / "store",
+                session_id="work-v2-write-flow",
+                fixture_kind=SYNTHETIC_V2_WRITE,
+                qualification_path=candidate_qualification(root),
+                harness_sha="test-harness",
+            )
+            observed = write.step(QueueBackend([
+                request("READ", {"path": "src/message.py"}),
+            ]))
+            self.assertEqual("PATH_NOT_FOUND", observed["authority_outcome"])
+            candidate_content = 'def message():\n    return "hello"\n'
+            accepted = SupervisedWorkController(write.root).step(QueueBackend([
+                request("PROPOSE_PATCH", {
+                    "patch": new_file_patch("src/message.py", candidate_content),
+                    "proposed_paths": ["src/message.py"],
+                }),
+            ]))
+            self.assertEqual("CANDIDATE_READY", accepted["terminal_disposition"])
+            review = write.review()
+            self.assertEqual(["src/message.py"], review["changed_paths"])
+            self.assertEqual(VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID, review["protocol_id"])
+            self.assertEqual("MATCH", review["source_state"])
+            self.assertFalse(
+                Path(write.manifest()["repository"]["canonical_path"], "src/message.py").exists()
+            )
+            intent = json.loads(
+                (write.root / "cases/WORK/turns/0001/inference-intent.json").read_text()
+            )
+            self.assertEqual(VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID, intent["protocol_id"])
+
+            clarification = SupervisedWorkController.start_synthetic_v2(
+                root / "store",
+                session_id="work-v2-clarification-flow",
+                fixture_kind=SYNTHETIC_V2_CLARIFICATION,
+                qualification_path=candidate_qualification(root),
+                harness_sha="test-harness",
+            )
+            question = "Should the representation be display-oriented or identifier-oriented?"
+            clarification.step(QueueBackend([
+                request("REQUEST_CLARIFICATION", {"question": question}),
+            ]))
+            status = SupervisedWorkController(clarification.root).status()
+            self.assertEqual("AWAITING_CLARIFICATION", status["session_status"])
+            self.assertEqual(question, status["clarification"]["question"])
+            self.assertFalse(status["candidate_effect"])
+
+    def test_value_free_v2_cannot_broaden_to_second_repository(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            controller = SupervisedWorkController.start_synthetic_v2(
+                Path(temporary) / "store",
+                session_id="work-v2-cross-repo",
+                fixture_kind=SYNTHETIC_V2_WRITE,
+                qualification_path=candidate_qualification(Path(temporary)),
+                harness_sha="test-harness",
+            )
+            denied = controller.step(QueueBackend([
+                request("READ", {"path": "../peer/target"}),
+            ]))
+            self.assertEqual("SUPERVISION_REQUIRED_CROSS_REPOSITORY", denied["authority_outcome"])
+            self.assertFalse(controller.status()["candidate_effect"])
 
     def test_candidate_review_and_operator_disposition_never_promote_source(self):
         with tempfile.TemporaryDirectory() as temporary:

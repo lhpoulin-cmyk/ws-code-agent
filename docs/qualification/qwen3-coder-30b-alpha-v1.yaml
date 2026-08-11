@@ -21,6 +21,14 @@ harness:
     multi_repository: WS_CODE_AGENT_REQUEST_PROTOCOL_V1_MULTI_REPO
   invariants: [H5, H6, E6, E7, E8, E9]
 
+supervised_protocol:
+  alpha_evaluation_protocol: WS_CODE_AGENT_REQUEST_PROTOCOL_V1_SINGLE
+  protocol_id: WS_CODE_AGENT_REQUEST_PROTOCOL_V2_SINGLE_VALUE_FREE
+  qualification_status: CANDIDATE
+  synthetic_acceptance: PENDING
+  production_qualified: false
+  operating_class: SUPERVISED_SINGLE_REPO
+
 capabilities:
   bounded_observation:
     status: QUALIFIED

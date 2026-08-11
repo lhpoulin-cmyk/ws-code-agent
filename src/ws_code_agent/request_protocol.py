@@ -8,13 +8,14 @@ import json
 
 SINGLE_REPOSITORY_PROTOCOL_ID = "WS_CODE_AGENT_REQUEST_PROTOCOL_V1_SINGLE"
 MULTI_REPOSITORY_PROTOCOL_ID = "WS_CODE_AGENT_REQUEST_PROTOCOL_V1_MULTI_REPO"
+VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID = "WS_CODE_AGENT_REQUEST_PROTOCOL_V2_SINGLE_VALUE_FREE"
 
 
 @dataclass(frozen=True)
 class RequestContract:
     request_type: str
     argument_fields: tuple[tuple[str, str], ...]
-    example_json: str
+    example_json: str | None
     semantics: str
 
     @property
@@ -31,7 +32,12 @@ class ProtocolSpec:
         names = tuple(request.request_type for request in self.requests)
         if not self.protocol_id or not names or len(names) != len(set(names)):
             raise ValueError("protocol identity and unique request types are required")
+        example_modes = tuple(request.example_json is not None for request in self.requests)
+        if any(example_modes) and not all(example_modes):
+            raise ValueError("protocol requests must use one presentation mode")
         for request in self.requests:
+            if request.example_json is None:
+                continue
             payload = json.loads(request.example_json)
             if (
                 not isinstance(payload, dict)
@@ -49,7 +55,13 @@ class ProtocolSpec:
     def request(self, request_type: str) -> RequestContract | None:
         return next((request for request in self.requests if request.request_type == request_type), None)
 
+    @property
+    def has_populated_examples(self) -> bool:
+        return all(request.example_json is not None for request in self.requests)
+
     def render(self) -> str:
+        if not self.has_populated_examples:
+            return self._render_structural()
         lines = [
             f"Request protocol: {self.protocol_id}",
             "Return exactly one legal JSON request shape from this protocol.",
@@ -71,6 +83,38 @@ class ProtocolSpec:
                 "@@ -1 +1 @@",
                 "-old",
                 "+new",
+            ))
+        return "\n".join(lines)
+
+    def _render_structural(self) -> str:
+        lines = [
+            f"Request protocol: {self.protocol_id}",
+            "Return exactly one valid JSON object and no surrounding text.",
+            "Top-level object keys exactly: request_type, arguments.",
+            "request_type must be one allowed request-type string listed below.",
+            "arguments must be an object matching the selected request type.",
+            "The angle-bracket notation below describes value types only; do not output the notation itself.",
+        ]
+        for request in self.requests:
+            lines.append(request.request_type)
+            lines.append("arguments:")
+            if request.argument_fields:
+                lines.extend(
+                    f"  {name}: <{kind}>, required"
+                    for name, kind in request.argument_fields
+                )
+            else:
+                lines.append("  <empty object>, required")
+            lines.append(f"Semantics: {request.semantics}")
+        if "PROPOSE_PATCH" in self.allowed_request_types:
+            lines.extend((
+                "For PROPOSE_PATCH, patch must be a standard unified Git diff accepted by strict git apply; it is not whole-file replacement content.",
+                "The diff must be bounded to proposed_paths and contain:",
+                "  a diff --git header",
+                "  an old-path header beginning with ---",
+                "  a new-path header beginning with +++",
+                "  one or more hunk headers beginning with @@",
+                "  hunk lines",
             ))
         return "\n".join(lines)
 
@@ -116,9 +160,24 @@ MULTI_REPOSITORY_PROTOCOL = ProtocolSpec(
 )
 
 
+VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL = ProtocolSpec(
+    VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID,
+    tuple(
+        RequestContract(
+            request.request_type,
+            request.argument_fields,
+            None,
+            request.semantics,
+        )
+        for request in SINGLE_REPOSITORY_PROTOCOL.requests
+    ),
+)
+
+
 PROTOCOLS = {
     SINGLE_REPOSITORY_PROTOCOL.protocol_id: SINGLE_REPOSITORY_PROTOCOL,
     MULTI_REPOSITORY_PROTOCOL.protocol_id: MULTI_REPOSITORY_PROTOCOL,
+    VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL.protocol_id: VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL,
 }
 
 

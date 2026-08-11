@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from ws_code_agent.alpha_experiment import ExperimentError  # noqa: E402
 from ws_code_agent.katra_ollama_backend import KatraOllamaBackendError, KatraOllamaDispositionBackend  # noqa: E402
 from ws_code_agent.supervised_work import (  # noqa: E402
+    SYNTHETIC_V2_FIXTURES,
     SupervisedWorkController,
     SupervisedWorkError,
     generated_session_id,
@@ -41,6 +42,10 @@ def main() -> int:
     start.add_argument("--allow-patch", action="append", default=[])
     start.add_argument("--turn-limit", type=int, default=8)
     start.add_argument("--session-id")
+    synthetic_v2 = sub.add_parser("start-synthetic-v2")
+    synthetic_v2.add_argument("--fixture", choices=SYNTHETIC_V2_FIXTURES, required=True)
+    synthetic_v2.add_argument("--turn-limit", type=int, default=8)
+    synthetic_v2.add_argument("--session-id")
     for command in ("status", "step", "review", "approve", "reject"):
         item = sub.add_parser(command)
         item.add_argument("session")
@@ -60,6 +65,17 @@ def main() -> int:
                 objective=args.objective.read_text(encoding="utf-8"),
                 read_scopes=tuple(args.allow_read),
                 patch_paths=tuple(args.allow_patch),
+                qualification_path=QUALIFICATION,
+                harness_sha=_head(),
+                turn_limit=args.turn_limit,
+            )
+            output = controller.status()
+        elif args.command == "start-synthetic-v2":
+            session_id = args.session_id or generated_session_id()
+            controller = SupervisedWorkController.start_synthetic_v2(
+                STORE,
+                session_id=session_id,
+                fixture_kind=args.fixture,
                 qualification_path=QUALIFICATION,
                 harness_sha=_head(),
                 turn_limit=args.turn_limit,

@@ -26,6 +26,14 @@ effect retention, replay denial, remaining authorized effects, and terminal
 semantics explicit. Human review and the bounded executor remain mandatory for
 all consequential effect promotion.
 
+The frozen Alpha v1 evidence remains bound to
+`WS_CODE_AGENT_REQUEST_PROTOCOL_V1_SINGLE`. Following the independent Task
+10K-B anchoring result, `WS_CODE_AGENT_REQUEST_PROTOCOL_V2_SINGLE_VALUE_FREE`
+is registered only as a `CANDIDATE` for supervised synthetic acceptance. It is
+not production-qualified by this candidate declaration, and ordinary operator
+repository sessions do not select it unless a later durable acceptance record
+changes that qualification state.
+
 ## Evidence precedence
 
 Precedence follows valid current harness semantics, not the most favorable

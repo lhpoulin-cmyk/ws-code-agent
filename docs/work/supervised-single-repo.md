@@ -12,6 +12,11 @@ profile recorded in
 candidate for operator review. It never writes, commits, merges, or pushes the
 authoritative repository.
 
+The ordinary `start` path uses only the protocol currently authorized by the
+qualification manifest. The value-free V2 protocol is initially a synthetic
+acceptance candidate and cannot be selected for an operator repository while
+its qualification state is `CANDIDATE`.
+
 ## Start
 
 The source must be a clean Git worktree at the exact expected HEAD. Authority
@@ -51,6 +56,17 @@ after client interruption. The first isolated patch application with status
 `SUCCESS` becomes the candidate and ends model work. A clarification also ends
 model work and pauses for the operator; this v1 lane does not answer it in
 place.
+
+The bounded Task 10K-C acceptance surface is separate:
+
+```bash
+python3 tools/run_supervised_work.py start-synthetic-v2 --fixture write
+python3 tools/run_supervised_work.py start-synthetic-v2 --fixture clarification
+```
+
+These commands create fixed synthetic repositories, objectives, and authority.
+They accept no operator repository and grant neither production qualification
+nor promotion authority.
 
 ## Review and disposition
 

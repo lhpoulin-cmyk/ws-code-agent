@@ -1,7 +1,9 @@
 # Task 10K-C value-free single-repository protocol V2
 
-Date: 2026-08-11  
-Starting HEAD: `c29867f95b2b747fbc55c1c89bc0c0970b3ee1bc`  
+Date: 2026-08-11
+
+Starting HEAD: `c29867f95b2b747fbc55c1c89bc0c0970b3ee1bc`
+
 Frozen implementation HEAD: `4de8949d29f9314d9a4c14021a612b40ef002f7a`
 
 This is a forward-only synthetic acceptance record. It does not modify or
@@ -68,10 +70,14 @@ argument kinds, and semantics.
 
 ## Write synthetic session
 
-Session: `work-20260811T034116Z-106d6e9a67df`  
-Evidence: `~/.local/share/ws-code-agent/work/work-20260811T034116Z-106d6e9a67df`  
-Fixture HEAD: `c89aaeba6f1e39612ed33e8f09b22e67a74f55af`  
-Repository identity: `8ec3a5c4c4f2056a1fedf56c5774732b76792f9f4406035ead00018b28aa9a14`  
+Session: `work-20260811T034116Z-106d6e9a67df`
+
+Evidence: `~/.local/share/ws-code-agent/work/work-20260811T034116Z-106d6e9a67df`
+
+Fixture HEAD: `c89aaeba6f1e39612ed33e8f09b22e67a74f55af`
+
+Repository identity: `8ec3a5c4c4f2056a1fedf56c5774732b76792f9f4406035ead00018b28aa9a14`
+
 Snapshot identity: `037f3f7520586086ee7e44b1dd109cc896bbe28edb5372b2fcdd9be818b0517c`
 
 The objective and authority were the frozen Task 10K-A write inputs. The
@@ -101,10 +107,14 @@ hash chain passed.
 
 ## Clarification synthetic session
 
-Session: `work-20260811T034325Z-5f9f28568beb`  
-Evidence: `~/.local/share/ws-code-agent/work/work-20260811T034325Z-5f9f28568beb`  
-Fixture HEAD: `e6c3acf410be36895d21149a7def1069dec37cb2`  
-Repository identity: `223be632d62021ca0c339a6d94bcb7373afe09cee6bca344ee52f4ed7add1773`  
+Session: `work-20260811T034325Z-5f9f28568beb`
+
+Evidence: `~/.local/share/ws-code-agent/work/work-20260811T034325Z-5f9f28568beb`
+
+Fixture HEAD: `e6c3acf410be36895d21149a7def1069dec37cb2`
+
+Repository identity: `223be632d62021ca0c339a6d94bcb7373afe09cee6bca344ee52f4ed7add1773`
+
 Snapshot identity: `81a24ccdc722b6b652c424cefcc9677cdb6529bfd3e62a6c8affe15ed279093c`
 
 The objective, fixture, no-patch authority, model, runtime, and turn limit were

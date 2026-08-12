@@ -24,12 +24,15 @@ from ws_code_agent.request_protocol import (  # noqa: E402
     SINGLE_REPOSITORY_PROTOCOL_ID,
     VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL,
     VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID,
+    STRUCTURED_EDIT_PROTOCOL,
+    STRUCTURED_EDIT_PROTOCOL_ID,
 )
 
 
 V1_SINGLE_RENDER_SHA256 = "c9e7082955f796cad94c49f037acda3033728a80aec2f25d176f7378ec2d9367"
 V1_MULTI_RENDER_SHA256 = "74ace33121cbc1d077509bf2d6aa3afb2933e6dbc994a66575d3fcfaf3991bd9"
 V2_VALUE_FREE_RENDER_SHA256 = "3c4cbbb94fa26a758dbc157c6895606f1705a7b71b8bdc4c60fcb08330cfbe4e"
+V3_STRUCTURED_EDIT_RENDER_SHA256 = "d060b7b15538ce781ecd50cee1478a3395a1122c3476047e8e02efc6b7f36993"
 
 
 class RequestProtocolTests(unittest.TestCase):
@@ -213,6 +216,62 @@ class RequestProtocolTests(unittest.TestCase):
         patch = parse_request(SINGLE_REPOSITORY_PROTOCOL.request("PROPOSE_PATCH").example_json)
         self.assertEqual("REQUEST_CLARIFICATION", clarification.request_type.value)
         self.assertEqual("PROPOSE_PATCH", patch.request_type.value)
+
+    def test_v3_structured_edit_is_value_free_and_excludes_unified_diff(self) -> None:
+        self.assertEqual(STRUCTURED_EDIT_PROTOCOL_ID, STRUCTURED_EDIT_PROTOCOL.protocol_id)
+        self.assertEqual(
+            ("READ", "SEARCH", "PROPOSE_TEXT_REPLACEMENT", "REQUEST_CLARIFICATION", "NO_CHANGE"),
+            STRUCTURED_EDIT_PROTOCOL.allowed_request_types,
+        )
+        rendered = STRUCTURED_EDIT_PROTOCOL.render()
+        self.assertFalse(STRUCTURED_EDIT_PROTOCOL.has_populated_examples)
+        self.assertEqual(
+            V3_STRUCTURED_EDIT_RENDER_SHA256,
+            hashlib.sha256(rendered.encode()).hexdigest(),
+        )
+        self.assertIn("old_text must exactly match one contiguous region", rendered)
+        self.assertIn("Do not generate unified diff syntax.", rendered)
+        self.assertNotIn("PROPOSE_PATCH", rendered)
+        for task_value in ("src/message.py", "message()", '"hi"', '"hello"'):
+            self.assertNotIn(task_value, rendered)
+        self.assertEqual(
+            V2_VALUE_FREE_RENDER_SHA256,
+            hashlib.sha256(VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL.render().encode()).hexdigest(),
+        )
+
+    def test_v3_parser_is_selected_explicitly_and_preserves_exact_values(self) -> None:
+        payload = {
+            "request_type": "PROPOSE_TEXT_REPLACEMENT",
+            "arguments": {
+                "path": "generated-target",
+                "old_text": "old bytes\\n",
+                "new_text": "new bytes\\n",
+            },
+        }
+        raw = json.dumps(payload, separators=(",", ":"))
+        with self.assertRaises(RequestParseError):
+            parse_request(raw)
+        parsed = parse_request(raw, protocol=STRUCTURED_EDIT_PROTOCOL)
+        self.assertEqual("PROPOSE_TEXT_REPLACEMENT", parsed.request_type.value)
+        self.assertEqual(payload["arguments"], parsed.arguments)
+        for invalid in (
+            {"path": "generated-target", "old_text": "", "new_text": "new"},
+            {"path": "generated-target", "old_text": "old"},
+            {"path": "generated-target", "old_text": "old", "new_text": "new", "extra": True},
+        ):
+            with self.assertRaises(RequestParseError):
+                parse_request(json.dumps({"request_type": "PROPOSE_TEXT_REPLACEMENT", "arguments": invalid}), protocol=STRUCTURED_EDIT_PROTOCOL)
+        with self.assertRaises(RequestParseError):
+            parse_request(
+                '{"request_type":"PROPOSE_TEXT_REPLACEMENT","arguments":{"path":"generated-target","old_text":"\\ud800","new_text":"new"}}',
+                protocol=STRUCTURED_EDIT_PROTOCOL,
+            )
+
+    def test_v3_candidate_has_no_live_supervised_lane_selector(self) -> None:
+        supervised = (Path(__file__).resolve().parents[1] / "src/ws_code_agent/supervised_work.py").read_text(encoding="utf-8")
+        command = (Path(__file__).resolve().parents[1] / "tools/run_supervised_work.py").read_text(encoding="utf-8")
+        self.assertNotIn(STRUCTURED_EDIT_PROTOCOL_ID, supervised)
+        self.assertNotIn("start-structured", command)
 
 
 if __name__ == "__main__":

@@ -108,6 +108,20 @@ result is `PATCH_SERIALIZATION_INTERFACE_MISMATCH_CONFIRMED`. This is a
 forensic finding only: production patch transport, authority, and the Task 11A
 escalation remain unchanged.
 
+Task 11C responds to that interface finding with the candidate-only,
+value-free `WS_CODE_AGENT_REQUEST_PROTOCOL_V3_SINGLE_STRUCTURED_EDIT` and its
+`PROPOSE_TEXT_REPLACEMENT` operation. The model owns the authorized path and
+the exact old/new text. A dedicated executor requires one exact match in an
+existing UTF-8 file, applies the unchanged values only in an isolated
+candidate, observes the resulting path set, and generates the review diff as
+evaluator evidence. It performs no fuzzy match, semantic repair, occurrence
+selection, new-file creation, or source promotion. Both preserved Task 11A
+edits replayed through this transport and passed the independent visible and
+hidden validators; historical new-file cases correctly remained outside V3's
+narrow scope. The result is `STRUCTURED_EDIT_TRANSPORT_CANDIDATE_READY`.
+V2, `INTERACTIVE_BOUNDED_WORK_V1`, and the live interactive lane remain
+unchanged pending a fresh V3 acceptance run.
+
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and

@@ -9,6 +9,7 @@ import json
 SINGLE_REPOSITORY_PROTOCOL_ID = "WS_CODE_AGENT_REQUEST_PROTOCOL_V1_SINGLE"
 MULTI_REPOSITORY_PROTOCOL_ID = "WS_CODE_AGENT_REQUEST_PROTOCOL_V1_MULTI_REPO"
 VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID = "WS_CODE_AGENT_REQUEST_PROTOCOL_V2_SINGLE_VALUE_FREE"
+STRUCTURED_EDIT_PROTOCOL_ID = "WS_CODE_AGENT_REQUEST_PROTOCOL_V3_SINGLE_STRUCTURED_EDIT"
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,14 @@ class ProtocolSpec:
                 "  one or more hunk headers beginning with @@",
                 "  hunk lines",
             ))
+        if "PROPOSE_TEXT_REPLACEMENT" in self.allowed_request_types:
+            lines.extend((
+                "For PROPOSE_TEXT_REPLACEMENT, use it only to edit an existing text file.",
+                "path must be one repository-relative file within patch authority.",
+                "old_text must exactly match one contiguous region of the current file.",
+                "new_text must be the exact desired replacement text; it may be empty.",
+                "Do not generate unified diff syntax.",
+            ))
         return "\n".join(lines)
 
 
@@ -174,10 +183,28 @@ VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL = ProtocolSpec(
 )
 
 
+STRUCTURED_EDIT_PROTOCOL = ProtocolSpec(
+    STRUCTURED_EDIT_PROTOCOL_ID,
+    (
+        RequestContract("READ", (("path", "string"),), None, "Read one authorized repository-relative file."),
+        RequestContract("SEARCH", (("literal", "string"), ("scope", "string")), None, "Search for one literal inside an authorized repository-relative scope."),
+        RequestContract(
+            "PROPOSE_TEXT_REPLACEMENT",
+            (("path", "repository-relative string"), ("old_text", "non-empty exact current text string"), ("new_text", "exact replacement text string")),
+            None,
+            "Propose one exact, authority-bounded replacement inside an existing text file.",
+        ),
+        RequestContract("REQUEST_CLARIFICATION", (("question", "non-empty string"),), None, "Request bounded task clarification."),
+        RequestContract("NO_CHANGE", (), None, "Record a no-change disposition."),
+    ),
+)
+
+
 PROTOCOLS = {
     SINGLE_REPOSITORY_PROTOCOL.protocol_id: SINGLE_REPOSITORY_PROTOCOL,
     MULTI_REPOSITORY_PROTOCOL.protocol_id: MULTI_REPOSITORY_PROTOCOL,
     VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL.protocol_id: VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL,
+    STRUCTURED_EDIT_PROTOCOL.protocol_id: STRUCTURED_EDIT_PROTOCOL,
 }
 
 

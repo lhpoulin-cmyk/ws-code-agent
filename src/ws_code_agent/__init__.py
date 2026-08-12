@@ -11,6 +11,12 @@ from .readonly_executor import (
 )
 from .isolated_patch import ApplicationStatus, IsolatedPatchExecutor, PatchProposal
 from .validation import DescriptorValidationExecutor, ValidationDescriptor, ValidationRole, ValidationStatus
+from .structured_edit import (
+    StructuredTextReplacement,
+    StructuredTextReplacementExecutor,
+    StructuredTextReplacementResult,
+    TextReplacementStatus,
+)
 
 __all__ = [
     "CompareResult",
@@ -27,4 +33,8 @@ __all__ = [
     "ValidationDescriptor",
     "ValidationRole",
     "ValidationStatus",
+    "StructuredTextReplacement",
+    "StructuredTextReplacementExecutor",
+    "StructuredTextReplacementResult",
+    "TextReplacementStatus",
 ]

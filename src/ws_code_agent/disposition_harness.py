@@ -12,7 +12,7 @@ from typing import Any, Protocol
 from .executor_feedback import bounded_executor_feedback
 from .isolated_patch import ApplicationStatus, IsolatedContext, IsolatedPatchExecutor, PatchProposal
 from .readonly_executor import ExecutorOperationError, RepositorySnapshot, ReadOnlyExecutor
-from .request_protocol import SINGLE_REPOSITORY_PROTOCOL
+from .request_protocol import ProtocolSpec, SINGLE_REPOSITORY_PROTOCOL
 
 
 MAX_RAW_RESPONSE_BYTES = 32_768
@@ -27,6 +27,7 @@ class RequestType(str, Enum):
     READ = "READ"
     SEARCH = "SEARCH"
     PROPOSE_PATCH = "PROPOSE_PATCH"
+    PROPOSE_TEXT_REPLACEMENT = "PROPOSE_TEXT_REPLACEMENT"
     REQUEST_CLARIFICATION = "REQUEST_CLARIFICATION"
     NO_CHANGE = "NO_CHANGE"
     STOP_STATE_STALE = "STOP_STATE_STALE"
@@ -240,8 +241,18 @@ class DispositionHarness:
         return HarnessStep(record, projection)
 
 
-def parse_request(raw_response: str) -> ModelRequest:
-    if not isinstance(raw_response, str) or len(raw_response.encode("utf-8")) > MAX_RAW_RESPONSE_BYTES:
+def parse_request(
+    raw_response: str,
+    *,
+    protocol: ProtocolSpec = SINGLE_REPOSITORY_PROTOCOL,
+) -> ModelRequest:
+    if not isinstance(raw_response, str):
+        raise RequestParseError("response is not a bounded UTF-8 string")
+    try:
+        raw_bytes = raw_response.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise RequestParseError("response is not a bounded UTF-8 string") from error
+    if len(raw_bytes) > MAX_RAW_RESPONSE_BYTES:
         raise RequestParseError("response is not a bounded UTF-8 string")
     try:
         payload = json.loads(raw_response)
@@ -256,12 +267,16 @@ def parse_request(raw_response: str) -> ModelRequest:
     arguments = payload["arguments"]
     if not isinstance(arguments, dict):
         raise RequestParseError("arguments must be an object")
-    _validate_arguments(request_type, arguments)
-    return ModelRequest(request_type, arguments, hashlib.sha256(raw_response.encode("utf-8")).hexdigest())
+    _validate_arguments(request_type, arguments, protocol)
+    return ModelRequest(request_type, arguments, hashlib.sha256(raw_bytes).hexdigest())
 
 
-def _validate_arguments(request_type: RequestType, arguments: dict[str, Any]) -> None:
-    contract = SINGLE_REPOSITORY_PROTOCOL.request(request_type.value)
+def _validate_arguments(
+    request_type: RequestType,
+    arguments: dict[str, Any],
+    protocol: ProtocolSpec,
+) -> None:
+    contract = protocol.request(request_type.value)
     if contract is None or set(arguments) != set(contract.argument_names):
         raise RequestParseError("unexpected or missing arguments")
     if request_type is RequestType.READ and (not isinstance(arguments["path"], str) or len(arguments["path"]) > 512):
@@ -274,5 +289,20 @@ def _validate_arguments(request_type: RequestType, arguments: dict[str, Any]) ->
         paths = arguments["proposed_paths"]
         if not isinstance(paths, list) or not 1 <= len(paths) <= MAX_PATHS or any(not isinstance(path, str) or len(path) > 512 for path in paths):
             raise RequestParseError("invalid proposed paths")
+    if request_type is RequestType.PROPOSE_TEXT_REPLACEMENT:
+        path = arguments["path"]
+        old_text = arguments["old_text"]
+        new_text = arguments["new_text"]
+        if not isinstance(path, str) or not path or len(path) > 512:
+            raise RequestParseError("invalid replacement path")
+        if not isinstance(old_text, str) or not old_text or not isinstance(new_text, str):
+            raise RequestParseError("invalid replacement text")
+        try:
+            old_bytes = old_text.encode("utf-8")
+            new_bytes = new_text.encode("utf-8")
+        except UnicodeEncodeError as error:
+            raise RequestParseError("invalid replacement text") from error
+        if len(old_bytes) > MAX_PATCH_BYTES or len(new_bytes) > MAX_PATCH_BYTES:
+            raise RequestParseError("invalid replacement text")
     if request_type is RequestType.REQUEST_CLARIFICATION and (not isinstance(arguments["question"], str) or not arguments["question"] or len(arguments["question"]) > MAX_CLARIFICATION_CHARS):
         raise RequestParseError("invalid clarification question")

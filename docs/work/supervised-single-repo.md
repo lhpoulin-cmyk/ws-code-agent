@@ -86,6 +86,24 @@ JSON or patches, rename requests, change values, convert `NO_CHANGE`, or retry
 a model. The model-visible prompt, authority, isolation, validation, and review
 safeguards are shared with the strict lane.
 
+## Candidate structured-edit transport
+
+`WS_CODE_AGENT_REQUEST_PROTOCOL_V3_SINGLE_STRUCTURED_EDIT` is implemented as a
+candidate interface but is not selectable by any live supervised-work command.
+Its `PROPOSE_TEXT_REPLACEMENT` request names one existing authorized path, one
+non-empty exact `old_text` value, and one exact `new_text` value. The dedicated
+executor accepts the request only when `old_text` occurs exactly once in a
+supported UTF-8 file. It applies the unchanged values in a disposable
+candidate, independently observes the changed path, and creates a canonical
+diff for evaluator evidence and review.
+
+V3 does not fuzzy-match, select an occurrence, infer whitespace, create files,
+repair code, or expand authority. `new_text` may be empty as an exact region
+deletion, but the file itself remains present. Validation and operator review
+remain separate requirements. V2 and the current interactive production lane
+remain the live authority until a fresh, explicitly authorized V3 acceptance
+play succeeds.
+
 ## Challenger admission
 
 A different artifact may be evaluated only after explicit selection. It must

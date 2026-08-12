@@ -1,0 +1,139 @@
+schema_version: 1
+envelope_id: INTERACTIVE_PRACTICAL_CODER_V3_PRODUCTION_ENVELOPE_V1
+status: FROZEN
+real_repository_pilot: NOT_YET_RUN
+general_production_use: NOT_YET_GRANTED
+
+worker:
+  work_role: INTERACTIVE_PRACTICAL_CODER
+  model: qwen2.5-coder:14b-instruct-q4_K_M
+  manifest: 9ec8897f747e246e970bc5cfdda85d22f1123dc2e3d34978a010a75968716849
+  quantization: Q4_K_M
+  runtime_profile: qwen25-coder-14b-katra-4096
+  context: 4096
+  placement: GPU_ONLY
+  minimum_gpu_percent: 100
+  maximum_cpu_percent: 0
+
+protocol:
+  id: WS_CODE_AGENT_REQUEST_PROTOCOL_V3_SINGLE_STRUCTURED_EDIT
+  render_sha256: d060b7b15538ce781ecd50cee1478a3395a1122c3476047e8e02efc6b7f36993
+  write_primitive: PROPOSE_TEXT_REPLACEMENT
+  model_owned_values: [path, old_text, new_text]
+  model_generates_unified_diff: false
+
+normalizer:
+  id: SINGLE_MARKDOWN_JSON_FENCE_NORMALIZATION_V1
+  version: v1
+
+source_grounding:
+  policy_id: SOURCE_GROUNDED_STRUCTURED_EDIT_V1
+  exact_same_session_read_required: true
+  source_snapshot_x_binding_required: true
+  write_before_read: SOURCE_READ_REQUIRED
+  consecutive_ungrounded_writes_before_escalation: 2
+  escalation_reason: SOURCE_GROUNDING_NONCOMPLIANCE
+
+work_boundary:
+  policy_id: INTERACTIVE_BOUNDED_WORK_V1
+  requirements_status: COMPLETE
+  repository_count: 1
+  explicit_objective_required: true
+  explicit_read_authority_required: true
+  explicit_patch_authority_required: true
+  validators_prebound_required: true
+  clean_frozen_source_required: true
+  exact_worker_runtime_binding_required: true
+
+write_scope:
+  existing_file_only: true
+  regular_file: true
+  encoding: UTF-8
+  nul_allowed: false
+  replacement: EXACT_LITERAL
+  old_text_non_empty: true
+  required_occurrence_count: 1
+  authorized_writable_file_count: 1
+
+repair_limits:
+  ungrounded_write_consumes_match_repair: false
+  grounded_match_failures_before_escalation: 2
+  forward_match_repair_opportunities: 1
+  consecutive_ungrounded_writes_before_escalation: 2
+
+validation:
+  visible:
+    id: task10k-c-write-visible-v1
+    version: v1
+    descriptor_identity: 84f9b4a7758cbce11588c71ceb06e83112e87d1574efa0bc903f85ff483ea467
+  hidden:
+    id: task10k-c-write-hidden-v1
+    version: v1
+    descriptor_identity: b6c453d0e93d59356c588c691a02877c9569f76a75bcef065333465cd3f4d46f
+  both_required: true
+  containment_required: true
+  repository_writes_allowed: false
+  technical_correctness_required: VALIDATED
+  candidate_integrity_required: MATCH
+  source_snapshot_required: MATCH
+
+operator_boundary:
+  success_state: AWAITING_OPERATOR_REVIEW
+  promotion_authority: OPERATOR_ONLY
+  automatic_source_mutation: false
+  automatic_commit: false
+  automatic_merge: false
+  automatic_push: false
+  automatic_deploy: false
+  automatic_handoff: false
+
+excluded_capabilities:
+  - NEW_FILE_CREATION
+  - WHOLE_FILE_DELETION
+  - MULTIPLE_WRITABLE_FILES
+  - MULTI_REPOSITORY_WORK
+  - CROSS_REPOSITORY_EDITS
+  - FUZZY_MATCHING
+  - REGEX_REPLACEMENT
+  - REPLACE_ALL
+  - OCCURRENCE_SELECTION
+  - AST_REPAIR
+  - SEMANTIC_REPAIR
+  - REQUIREMENTS_DISCOVERY
+  - ARCHITECTURE_SELECTION
+  - UNRESOLVED_PRODUCT_AMBIGUITY
+  - SECURITY_POLICY_INTERPRETATION
+  - AUTOMATIC_PROMOTION
+  - AUTOMATIC_OVERNIGHT_CODER_INVOCATION
+
+evidence_contract:
+  retain_raw_and_normalized_responses: true
+  retain_protocol_and_lane_identity: true
+  retain_grounding_and_read_evidence: true
+  retain_exact_model_owned_values: true
+  retain_executor_result_and_match_count: true
+  retain_candidate_and_validation_evidence: true
+  canonical_diff_origin: evaluator
+  retain_runtime_and_turn_hash_chain: true
+
+acceptance:
+  checkpoint: TASK11F-FRESH-V3-SOURCE-GROUNDED-INTERACTIVE-ACCEPTANCE
+  disposition: INTERACTIVE_PRACTICAL_CODER_V3_SOURCE_GROUNDED_ACCEPTANCE_PASS
+  commit: 762f5e21ddcaab09815679384240a8f75131023d
+  evidence: ../experiments/task11f-source-grounded-v3-interactive-acceptance.md
+  evidence_sha256: 83bcd7ebceae55ad4bb6f6da1fe8509694a73181cbd6e4134a7daa319462a660
+  fixture_id: task11f-source-grounded-structured-existing-file/synthetic-v1
+  fixture_contract_sha256: 2e11f5fac2952ee90dba867e129466a7f6b619c057a952348713035ddc33ed16
+  source_snapshot_x: b1e5f6c43fe763645bb62f349e42661b6f2402cf94d29cc405d10dcb160e297f
+  candidate_identity: ac813e35c939b2bfc64aaa4a5fd3237e284ca80fbd2dbaac351fe25ad755d7a5
+  canonical_diff_sha256: 52f56438548ceb2ae079583b4fb357d130d8adac1514510965ec1740c0a4389c
+  final_state: AWAITING_OPERATOR_REVIEW
+
+failure_lineage:
+  task10x: REPRESENTATION_WRAPPER_ISOLATED
+  task11a: CORRECT_SEMANTIC_EDIT_UNIFIED_DIFF_TRANSPORT_FAILED
+  task11b: PATCH_SERIALIZATION_INTERFACE_MISMATCH_CONFIRMED
+  task11c: DETERMINISTIC_STRUCTURED_EDIT_TRANSPORT_CREATED
+  task11d: STRUCTURED_TRANSPORT_EXPOSED_MISSING_SOURCE_GROUNDING
+  task11e: SOURCE_GROUNDING_PRECONDITION_CREATED
+  task11f: SOURCE_GROUNDED_V3_ACCEPTANCE_PASS

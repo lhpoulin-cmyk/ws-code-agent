@@ -315,6 +315,32 @@ candidates:
           model_inferences_32b: 0
           automatic_promotion: false
           historical_rescore: false
+        task11g_frozen_production_envelope:
+          envelope_id: INTERACTIVE_PRACTICAL_CODER_V3_PRODUCTION_ENVELOPE_V1
+          status: FROZEN
+          worker_role: INTERACTIVE_PRACTICAL_CODER
+          protocol: WS_CODE_AGENT_REQUEST_PROTOCOL_V3_SINGLE_STRUCTURED_EDIT
+          protocol_render_sha256: d060b7b15538ce781ecd50cee1478a3395a1122c3476047e8e02efc6b7f36993
+          normalizer: SINGLE_MARKDOWN_JSON_FENCE_NORMALIZATION_V1
+          grounding_policy: SOURCE_GROUNDED_STRUCTURED_EDIT_V1
+          work_boundary: INTERACTIVE_BOUNDED_WORK_V1
+          existing_file_only: true
+          authorized_writable_file_count: 1
+          match_repair_opportunities: 1
+          visible_validation_required: true
+          hidden_validation_required: true
+          success_state: AWAITING_OPERATOR_REVIEW
+          acceptance_checkpoint: TASK11F-FRESH-V3-SOURCE-GROUNDED-INTERACTIVE-ACCEPTANCE
+          acceptance_disposition: INTERACTIVE_PRACTICAL_CODER_V3_SOURCE_GROUNDED_ACCEPTANCE_PASS
+          pilot_policy_id: INTERACTIVE_PRACTICAL_CODER_REAL_REPOSITORY_PILOT_V1
+          real_repository_pilot: NOT_YET_RUN
+          pilot_target: REAL_REPOSITORY_PILOT_TARGET_PENDING_OPERATOR_SELECTION
+          general_production_use: NOT_YET_GRANTED
+          promotion_authority: OPERATOR_ONLY
+          automatic_handoff: false
+          model_inferences_14b: 0
+          model_inferences_32b: 0
+          historical_rescore: false
         task11b_patch_serialization_forensics:
           status: COMPLETE
           disposition: PATCH_SERIALIZATION_INTERFACE_MISMATCH_CONFIRMED
@@ -355,6 +381,10 @@ candidates:
       - ../docs/experiments/task11d-v3-structured-edit-acceptance.md
       - ../docs/experiments/task11e-source-grounded-structured-edit-precondition.md
       - ../docs/experiments/task11f-source-grounded-v3-interactive-acceptance.md
+      - ../docs/experiments/task11g-interactive-v3-production-envelope.md
+      - ../docs/work/interactive-v3-production-envelope-v1.yaml
+      - ../docs/work/interactive-v3-real-repository-pilot-v1.md
+      - ../docs/work/interactive-v3-real-repository-pilot-v1.yaml
 
   - id: gpt-oss-20b-mxfp4
     status: INELIGIBLE_FROZEN_COMPARISON_SEAM

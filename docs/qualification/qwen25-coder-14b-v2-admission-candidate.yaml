@@ -43,3 +43,21 @@ admission:
   turn_limit_each: 8
   both_required: true
   alpha_qualification: NOT_EVALUATED
+
+production_envelope:
+  envelope_id: INTERACTIVE_PRACTICAL_CODER_V3_PRODUCTION_ENVELOPE_V1
+  status: FROZEN
+  work_role: INTERACTIVE_PRACTICAL_CODER
+  protocol_id: WS_CODE_AGENT_REQUEST_PROTOCOL_V3_SINGLE_STRUCTURED_EDIT
+  protocol_render_sha256: d060b7b15538ce781ecd50cee1478a3395a1122c3476047e8e02efc6b7f36993
+  write_primitive: PROPOSE_TEXT_REPLACEMENT
+  normalizer: SINGLE_MARKDOWN_JSON_FENCE_NORMALIZATION_V1
+  source_grounding: SOURCE_GROUNDED_STRUCTURED_EDIT_V1
+  work_boundary: INTERACTIVE_BOUNDED_WORK_V1
+  existing_file_only: true
+  authorized_writable_file_count: 1
+  acceptance_checkpoint: TASK11F-FRESH-V3-SOURCE-GROUNDED-INTERACTIVE-ACCEPTANCE
+  acceptance_disposition: INTERACTIVE_PRACTICAL_CODER_V3_SOURCE_GROUNDED_ACCEPTANCE_PASS
+  real_repository_pilot: NOT_YET_RUN
+  general_production_use: NOT_YET_GRANTED
+  promotion_authority: OPERATOR_ONLY

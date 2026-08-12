@@ -1,14 +1,17 @@
 # Supervised single-repository work
 
-Status: **implemented; Qwen production admission closed as `NOT_ADMITTED`**.
-The exact tested artifact preserved the lane's safety and durability properties
-but did not pass both required synthetic behaviors, including after P11 and the
-value-free V2 interface removed independently demonstrated defects. Task 10K
-is closed for Qwen rather than awaiting another Qwen-specific repair. Do not
-start a real-repository session for this artifact.
+Status: **implemented; strict V2 Qwen admission remains `NOT_ADMITTED`; the
+separate source-grounded V3 envelope is `FROZEN` pending its first real pilot**.
+The exact tested artifact did not pass both historical V2 synthetic behaviors,
+including after P11 and the value-free V2 interface removed independently
+demonstrated defects. Task 10K remains closed and unchanged. Later forward-only
+evidence produced the distinct
+`INTERACTIVE_PRACTICAL_CODER_V3_PRODUCTION_ENVELOPE_V1`; it does not rescore V2
+or grant general production use. Do not start a real-repository session until
+an operator authorizes a complete Pilot V1 packet.
 
-This lane is authorized only for the exact `qwen3-coder:30b` artifact and
-profile recorded in
+The legacy ordinary `start` lane is authorized only for the exact
+`qwen3-coder:30b` artifact and profile recorded in
 `docs/qualification/qwen3-coder-30b-alpha-v1.yaml`. It creates an isolated
 candidate for operator review. It never writes, commits, merges, or pushes the
 authoritative repository.
@@ -86,23 +89,33 @@ JSON or patches, rename requests, change values, convert `NO_CHANGE`, or retry
 a model. The model-visible prompt, authority, isolation, validation, and review
 safeguards are shared with the strict lane.
 
-## Candidate structured-edit transport
+## Frozen source-grounded structured-edit envelope
 
-`WS_CODE_AGENT_REQUEST_PROTOCOL_V3_SINGLE_STRUCTURED_EDIT` is implemented as a
-candidate interface but is not selectable by any live supervised-work command.
-Its `PROPOSE_TEXT_REPLACEMENT` request names one existing authorized path, one
-non-empty exact `old_text` value, and one exact `new_text` value. The dedicated
-executor accepts the request only when `old_text` occurs exactly once in a
-supported UTF-8 file. It applies the unchanged values in a disposable
-candidate, independently observes the changed path, and creates a canonical
-diff for evaluator evidence and review.
+`INTERACTIVE_PRACTICAL_CODER_V3_PRODUCTION_ENVELOPE_V1` freezes the exact
+source-grounded V3 combination accepted by Task 11F. It is production-capable
+inside that envelope, but general production use remains `NOT_YET_GRANTED` and
+the first real-repository pilot remains `NOT_YET_RUN`. Existing V2 commands and
+historical dispositions are unchanged; no command is silently replaced.
 
-V3 does not fuzzy-match, select an occurrence, infer whitespace, create files,
-repair code, or expand authority. `new_text` may be empty as an exact region
-deletion, but the file itself remains present. Validation and operator review
-remain separate requirements. V2 and the current interactive production lane
-remain the live authority until a fresh, explicitly authorized V3 acceptance
-play succeeds.
+`WS_CODE_AGENT_REQUEST_PROTOCOL_V3_SINGLE_STRUCTURED_EDIT` exposes
+`PROPOSE_TEXT_REPLACEMENT` with one existing authorized path, one non-empty
+exact `old_text` value, and one exact `new_text` value. The model owns those
+three semantic values and never supplies a unified diff. The evaluator requires
+a prior same-session exact-path `READ_FILE` bound to current Source Snapshot X,
+then counts occurrences, applies an exactly-once replacement in a disposable
+candidate, independently observes the changed path, and creates the canonical
+review diff with evaluator provenance.
+
+V1 permits exactly one authorized writable regular UTF-8 existing file. It does
+not fuzzy-match, select an occurrence, infer whitespace, create files, repair
+code, or expand authority. `new_text` may be empty as an exact region deletion,
+but the file itself remains present. Both pre-bound contained validators must
+pass before `AWAITING_OPERATOR_REVIEW`; promotion is never automatic.
+
+The first real-repository pilot is defined by
+`INTERACTIVE_PRACTICAL_CODER_REAL_REPOSITORY_PILOT_V1`. Its target is pending
+operator selection. A complete exact manifest and a separate authorized pilot
+play are required before any real-repository inference.
 
 ## Challenger admission
 

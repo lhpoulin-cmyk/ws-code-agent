@@ -1,0 +1,127 @@
+schema_version: 1
+pilot_policy_id: INTERACTIVE_PRACTICAL_CODER_REAL_REPOSITORY_PILOT_V1
+status: DESIGN_READY
+target_status: REAL_REPOSITORY_PILOT_TARGET_PENDING_OPERATOR_SELECTION
+worker_envelope_id: INTERACTIVE_PRACTICAL_CODER_V3_PRODUCTION_ENVELOPE_V1
+real_repository_pilot: NOT_YET_RUN
+model_inference_count: 0
+
+selection_criteria:
+  real_repository: true
+  repository_count: 1
+  clean_worktree: true
+  production_critical: false
+  requirements_status: COMPLETE
+  existing_writable_file_count: 1
+  writable_file_encoding: UTF-8
+  small_bounded_modification: true
+  objective_independently_understandable: true
+  secret_material_required: false
+  cross_domain_authority: false
+  deployment_side_effect: false
+  deterministic_visible_validator: true
+  independent_hidden_validator: true
+  easy_human_review: true
+  easy_abandonment: true
+
+rejected_task_shapes:
+  - ARCHITECTURE
+  - SECURITY_CONTROLS
+  - CREDENTIALS
+  - NETWORK_CONFIGURATION
+  - HYPERVISOR_MUTATION
+  - PRODUCTION_SERVICE_BEHAVIOR
+  - SCHEMA_MIGRATIONS
+  - STORAGE_MUTATION
+  - CROSS_REPOSITORY_COORDINATION
+  - MULTIPLE_WRITABLE_FILES
+  - NEW_FILE_CREATION
+  - AMBIGUOUS_REQUIREMENTS
+  - DEPLOYMENT
+
+required_manifest:
+  top_level_fields:
+    - pilot_id
+    - pilot_policy_id
+    - repository
+    - authority
+    - requirements_status
+    - objective
+    - read_scopes
+    - patch_paths
+    - validation
+    - worker_envelope_id
+    - runtime_profile
+    - protocol
+    - grounding_policy
+    - normalizer
+    - turn_limit
+    - promotion_authority
+  repository_fields:
+    - identity
+    - head
+    - source_snapshot_x
+    - index_identity
+    - tracked_worktree_identity
+    - untracked_identity
+    - clean
+    - frozen
+  authority_fields:
+    - owning_domain
+    - authorization_reference
+  exact_bindings:
+    requirements_status: COMPLETE
+    writable_path_count: 1
+    runtime_profile: qwen25-coder-14b-katra-4096
+    protocol_id: WS_CODE_AGENT_REQUEST_PROTOCOL_V3_SINGLE_STRUCTURED_EDIT
+    protocol_render_sha256: d060b7b15538ce781ecd50cee1478a3395a1122c3476047e8e02efc6b7f36993
+    grounding_policy: SOURCE_GROUNDED_STRUCTURED_EDIT_V1
+    normalizer_id: SINGLE_MARKDOWN_JSON_FENCE_NORMALIZATION_V1
+    normalizer_version: v1
+    turn_limit: 8
+    promotion_authority: OPERATOR_ONLY
+
+source_protection:
+  model_and_executor_source_access: READ_ONLY
+  candidate_mechanism: ISOLATED
+  require_head_unchanged: true
+  require_index_unchanged: true
+  require_worktree_unchanged: true
+  require_untracked_set_unchanged: true
+
+success_criteria:
+  entry: INTERACTIVE_ENTRY_ACCEPTED
+  target_source: SOURCE_GROUNDED
+  structured_edit: STRUCTURED_EDIT_ACCEPTED
+  authorized_changed_path_count: 1
+  visible_validation: VALIDATION_PASS
+  hidden_validation: VALIDATION_PASS
+  technical_correctness: VALIDATED
+  candidate_integrity: MATCH
+  source_integrity: MATCH
+  authority_anomaly: false
+  duplicate_inference: 0
+  turn_hash_chain: PASS
+  final_state: AWAITING_OPERATOR_REVIEW
+
+stop_conditions:
+  - SOURCE_STATE_DRIFT
+  - AUTHORITY_DISAGREEMENT
+  - SOURCE_GROUNDING_NONCOMPLIANCE
+  - STRUCTURED_EDIT_REPAIR_EXHAUSTED
+  - VALIDATION_FAILED
+  - VALIDATION_INFRASTRUCTURE_FAILURE
+  - RUNTIME_BINDING_DRIFT
+  - UNEXPECTED_CHANGED_PATH
+  - CROSS_REPOSITORY_REQUEST
+  - TURN_LIMIT
+  - MODEL_REPEAT_LIMIT
+
+promotion_boundary:
+  authority: OPERATOR_ONLY
+  automatic_source_mutation: false
+  automatic_commit: false
+  automatic_merge: false
+  automatic_push: false
+  automatic_deploy: false
+  automatic_handoff: false

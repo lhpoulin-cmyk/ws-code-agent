@@ -168,6 +168,18 @@ single-path candidate; both contained validators passed. The final state is
 inferences were consumed, no 32B inference or automatic promotion occurred,
 and strict V2 history remains unchanged.
 
+Task 11G freezes that demonstrated combination as
+`INTERACTIVE_PRACTICAL_CODER_V3_PRODUCTION_ENVELOPE_V1`. The envelope binds the
+exact 14B artifact and GPU-only profile, V3 render, fence-only normalizer,
+same-session source grounding, bounded-work entry policy, one-existing-file
+exact-replacement scope, fixed repair limits, both validators, and the terminal
+`AWAITING_OPERATOR_REVIEW` boundary. It is `FROZEN`, while real-repository pilot
+state remains `NOT_YET_RUN` and general production use remains
+`NOT_YET_GRANTED`. The separately defined
+`INTERACTIVE_PRACTICAL_CODER_REAL_REPOSITORY_PILOT_V1` requires one boring,
+requirements-complete, operator-authorized task with one writable file. No
+pilot target was fabricated or selected.
+
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and

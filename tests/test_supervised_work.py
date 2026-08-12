@@ -31,6 +31,8 @@ from ws_code_agent.supervised_work import (  # noqa: E402
     SYNTHETIC_V2_CLARIFICATION,
     SYNTHETIC_V2_SESSION_KIND,
     SYNTHETIC_V2_WRITE,
+    TASK11A_FIXTURE_ID,
+    TASK11A_INTERACTIVE_ACCEPTANCE_SESSION_KIND,
     SupervisedWorkController,
     SupervisedWorkError,
 )
@@ -204,6 +206,58 @@ class SupervisedWorkTests(unittest.TestCase):
                 separators=(",", ":"),
             ).encode()
             self.assertEqual(expected, hashlib.sha256(payload).hexdigest())
+
+    def test_task11a_fixture_and_complete_entry_are_new_exact_and_prebound(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaisesRegex(
+                SupervisedWorkError, "INTERACTIVE_ENTRY_DENIED_REQUIREMENTS_UNRESOLVED"
+            ):
+                SupervisedWorkController.start_task11a_interactive_acceptance(
+                    root / "store",
+                    session_id="work-task11a-unresolved-test",
+                    candidate_path=QWEN25_CANDIDATE,
+                    harness_sha="task11a-harness",
+                    requirements_status="UNRESOLVED",
+                )
+            self.assertFalse((root / "store/_task11a-fixtures/work-task11a-unresolved-test").exists())
+
+            controller = SupervisedWorkController.start_task11a_interactive_acceptance(
+                root / "store",
+                session_id="work-task11a-positive-test",
+                candidate_path=QWEN25_CANDIDATE,
+                harness_sha="task11a-harness",
+                requirements_status="COMPLETE",
+            )
+            manifest = controller.manifest()
+            case = controller._turns._case("WORK")
+            repository = Path(manifest["repository"]["canonical_path"])
+            self.assertEqual(TASK11A_INTERACTIVE_ACCEPTANCE_SESSION_KIND, manifest["session_kind"])
+            self.assertEqual(TASK11A_FIXTURE_ID, case["fixture_identity"])
+            self.assertEqual('def message():\n    return "hi"\n', (repository / "src/message.py").read_text())
+            self.assertEqual(
+                'Change message() in src/message.py so that calling message()\n'
+                'returns exactly the string "hello".\n\nMake no other functional change.\n',
+                manifest["objective"],
+            )
+            self.assertEqual(["."], manifest["authority"]["read_scopes"])
+            self.assertEqual(["src/message.py"], manifest["authority"]["patch_paths"])
+            self.assertEqual("COMPLETE", manifest["interactive_work_boundary"]["requirements_status"])
+            self.assertEqual("INTERACTIVE_ENTRY_ACCEPTED", manifest["interactive_work_boundary"]["entry_status"])
+            self.assertEqual(
+                ["task10k-c-write-visible-v1", "task10k-c-write-hidden-v1"],
+                manifest["validation"]["authorized_validation_ids"],
+            )
+            self.assertEqual(
+                "98f2f772b26b287735956a41fe7972e3d33cdfa364e15025951068e23afd49d7",
+                manifest["fixture"]["content_sha256"],
+            )
+            self.assertEqual(
+                "0e3358da82716ecf114edb4359fc1aafbf506d89f2d0911c5d8fe4ba49ec805e",
+                manifest["fixture"]["contract_sha256"],
+            )
+            self.assertEqual("MATCH", controller.status()["source_state"])
+            self.assertEqual(0, controller.status()["current_turn"])
 
     def test_manifest_binds_clean_source_explicit_scope_and_qualification(self):
         with tempfile.TemporaryDirectory() as temporary:

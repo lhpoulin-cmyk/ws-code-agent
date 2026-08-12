@@ -148,6 +148,28 @@ class SupervisedValidationTests(unittest.TestCase):
         for source in bad:
             self._run_assets(source, expected=1)
 
+    def test_task11a_existing_file_calibration_reuses_only_the_exact_behavioral_contract(self):
+        # Task 11A changes an existing file, but its final behavioral contract is
+        # exactly the already-independent Task 10W descriptor contract.
+        for source in (
+            'def message():\n    return "hello"\n',
+            'def message(): return "hello"\n',
+            'def message() -> str:\n    """Greeting."""\n    return "hello"\n',
+        ):
+            self._run_assets(source, expected=0)
+        for source in (
+            'def message():\n    return "hi"\n',
+            'def message(value=None): return "hello"\n',
+            'message = "hello"\n',
+            'def message(): return b"hello"\n',
+        ):
+            self._run_assets(source, expected=1)
+        contract = bind_validation_ids(WRITE_VALIDATION_IDS)
+        self.assertNotEqual(
+            contract["descriptors"][0]["source_sha256"],
+            contract["descriptors"][1]["source_sha256"],
+        )
+
     def _run_assets(self, source: str | None, *, expected: int):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

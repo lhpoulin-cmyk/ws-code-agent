@@ -77,6 +77,14 @@ def main() -> int:
         required=True,
         help="operator/spec-authority assertion required by INTERACTIVE_BOUNDED_WORK_V1",
     )
+    task11a = sub.add_parser("start-task11a-interactive")
+    task11a.add_argument("--turn-limit", type=int, default=8)
+    task11a.add_argument("--session-id")
+    task11a.add_argument(
+        "--requirements-status",
+        choices=("COMPLETE", "UNRESOLVED"),
+        required=True,
+    )
     qwen25_32b_v2 = sub.add_parser("start-qwen25-32b-v2")
     qwen25_32b_v2.add_argument("--fixture", choices=SYNTHETIC_V2_FIXTURES, required=True)
     qwen25_32b_v2.add_argument("--turn-limit", type=int, default=8)
@@ -147,6 +155,17 @@ def main() -> int:
                 STORE,
                 session_id=session_id,
                 fixture_kind=args.fixture,
+                candidate_path=QWEN25_CANDIDATE,
+                harness_sha=_head(),
+                requirements_status=args.requirements_status,
+                turn_limit=args.turn_limit,
+            )
+            output = controller.status()
+        elif args.command == "start-task11a-interactive":
+            session_id = args.session_id or generated_session_id()
+            controller = SupervisedWorkController.start_task11a_interactive_acceptance(
+                STORE,
+                session_id=session_id,
                 candidate_path=QWEN25_CANDIDATE,
                 harness_sha=_head(),
                 requirements_status=args.requirements_status,

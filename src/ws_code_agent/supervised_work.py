@@ -95,6 +95,8 @@ DEVSTRAL_CANDIDATE_ID = "devstral-small-2-q4"
 QWEN25_V2_SESSION_KIND = "QWEN25_V2_SUPERVISED_PRODUCTION_ADMISSION"
 QWEN25_CANDIDATE_ID = "qwen25-coder-14b-q4"
 QWEN25_14B_INTERACTIVE_NORMALIZED_SESSION_KIND = "QWEN25_14B_INTERACTIVE_NORMALIZED_V1"
+TASK11A_INTERACTIVE_ACCEPTANCE_SESSION_KIND = "TASK11A_INTERACTIVE_BOUNDED_WORK_V1"
+TASK11A_FIXTURE_ID = "task11a-interactive-positive-existing-file/synthetic-v1"
 INTERACTIVE_NORMALIZED = "INTERACTIVE_NORMALIZED"
 QWEN25_32B_V2_SESSION_KIND = "QWEN25_32B_V2_SUPERVISED_PRODUCTION_ADMISSION"
 QWEN25_32B_CANDIDATE_ID = "qwen25-coder-32b-q4"
@@ -131,6 +133,12 @@ _CLARIFICATION_SOURCE = (
     '    """Return the product-approved release-label representation."""\n'
     "    raise NotImplementedError\n"
 )
+_TASK11A_OBJECTIVE = (
+    "Change message() in src/message.py so that calling message()\n"
+    "returns exactly the string \"hello\".\n\n"
+    "Make no other functional change.\n"
+)
+_TASK11A_SOURCE = 'def message():\n    return "hi"\n'
 
 
 class SupervisedWorkError(RuntimeError):
@@ -515,6 +523,76 @@ def _initialize_synthetic_v2_fixture(
     return repository, objective, (".",), patch_paths, f"task10k-c-{fixture_kind}/synthetic-v1"
 
 
+def _task11a_fixture_contract_sha256() -> str:
+    payload = json.dumps(
+        [
+            _TASK11A_OBJECTIVE,
+            _TASK11A_SOURCE,
+            TASK11A_FIXTURE_ID,
+            (".",),
+            ("src/message.py",),
+        ],
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _initialize_task11a_fixture(
+    store: Path,
+    session_id: str,
+) -> tuple[Path, str, tuple[str, ...], tuple[str, ...], str]:
+    repository = store / "_task11a-fixtures" / session_id / "repository"
+    if repository.exists():
+        raise SupervisedWorkError("TASK11A_FIXTURE_EXISTS")
+    repository.mkdir(mode=0o700, parents=True)
+    (repository / "src").mkdir(mode=0o700)
+    (repository / "src" / "message.py").write_text(_TASK11A_SOURCE, encoding="utf-8")
+    result = subprocess.run(
+        ["git", "-C", str(repository), "init", "-q"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode:
+        raise SupervisedWorkError("TASK11A_FIXTURE_GIT_FAILURE")
+    result = subprocess.run(
+        ["git", "-C", str(repository), "add", "src/message.py"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode:
+        raise SupervisedWorkError("TASK11A_FIXTURE_GIT_FAILURE")
+    environment = dict(os.environ)
+    environment.update({
+        "GIT_AUTHOR_NAME": "Task11A",
+        "GIT_AUTHOR_EMAIL": "task11a@example.invalid",
+        "GIT_AUTHOR_DATE": "2000-01-01T00:00:00+0000",
+        "GIT_COMMITTER_NAME": "Task11A",
+        "GIT_COMMITTER_EMAIL": "task11a@example.invalid",
+        "GIT_COMMITTER_DATE": "2000-01-01T00:00:00+0000",
+    })
+    result = subprocess.run(
+        ["git", "-C", str(repository), "commit", "-qm", "Task 11A bounded positive fixture"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=environment,
+        check=False,
+    )
+    if result.returncode:
+        raise SupervisedWorkError("TASK11A_FIXTURE_GIT_FAILURE")
+    return (
+        repository,
+        _TASK11A_OBJECTIVE,
+        (".",),
+        ("src/message.py",),
+        TASK11A_FIXTURE_ID,
+    )
+
+
 def _same_material(left: RepositorySnapshot, right: RepositorySnapshot) -> bool:
     return (
         left.head_commit,
@@ -795,6 +873,59 @@ class SupervisedWorkController:
         )
 
     @classmethod
+    def start_task11a_interactive_acceptance(
+        cls,
+        store: Path,
+        *,
+        session_id: str,
+        candidate_path: Path,
+        harness_sha: str,
+        requirements_status: str,
+        turn_limit: int = DEFAULT_TURN_LIMIT,
+    ) -> "SupervisedWorkController":
+        """Start the requirements-complete Task 11A bounded positive fixture."""
+
+        if not SESSION_ID.fullmatch(session_id):
+            raise SupervisedWorkError("INVALID_SESSION_ID")
+        if requirements_status != REQUIREMENTS_COMPLETE:
+            raise SupervisedWorkError("INTERACTIVE_ENTRY_DENIED_REQUIREMENTS_UNRESOLVED")
+        qualification, model_artifact = _qwen25_candidate_binding(candidate_path)
+        protocol_qualification = _candidate_protocol_qualification(candidate_path)
+        if (
+            protocol_qualification["qualification_status"] != "CANDIDATE"
+            or protocol_qualification["synthetic_acceptance"] != "PENDING"
+            or protocol_qualification["production_qualified"]
+        ):
+            raise SupervisedWorkError("V2_CANDIDATE_SESSION_NOT_AUTHORIZED")
+        qualification["protocol"] = protocol_qualification
+        repository, objective, read_scopes, patch_paths, fixture_identity = (
+            _initialize_task11a_fixture(store, session_id)
+        )
+        expected_head = _git(repository, "rev-parse", "HEAD")
+        return cls._start_bound(
+            store,
+            session_id=session_id,
+            repository=repository,
+            expected_head=expected_head,
+            objective=objective,
+            read_scopes=read_scopes,
+            patch_paths=patch_paths,
+            harness_sha=harness_sha,
+            turn_limit=turn_limit,
+            protocol_id=VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID,
+            protocol_qualification=protocol_qualification,
+            qualification=qualification,
+            model_artifact=model_artifact,
+            session_kind=TASK11A_INTERACTIVE_ACCEPTANCE_SESSION_KIND,
+            fixture_identity=fixture_identity,
+            fixture_contract_sha256=_task11a_fixture_contract_sha256(),
+            fixture_content_sha256=hashlib.sha256(_TASK11A_SOURCE.encode()).hexdigest(),
+            validation_ids=WRITE_VALIDATION_IDS,
+            response_adapter=INTERACTIVE_NORMALIZED_ADAPTER_BINDING,
+            interactive_requirements_status=requirements_status,
+        )
+
+    @classmethod
     def start_qwen25_32b_v2_admission(
         cls,
         store: Path,
@@ -858,6 +989,8 @@ class SupervisedWorkController:
         model_artifact: Mapping[str, Any],
         session_kind: str,
         fixture_identity: str,
+        fixture_contract_sha256: str | None = None,
+        fixture_content_sha256: str | None = None,
         validation_ids: tuple[str, ...],
         response_adapter: Mapping[str, Any] | None = None,
         interactive_requirements_status: str | None = None,
@@ -897,7 +1030,10 @@ class SupervisedWorkController:
         ):
             raise SupervisedWorkError("RESPONSE_ADAPTER_BINDING_INVALID")
         interactive_boundary = None
-        if session_kind == QWEN25_14B_INTERACTIVE_NORMALIZED_SESSION_KIND:
+        if session_kind in {
+            QWEN25_14B_INTERACTIVE_NORMALIZED_SESSION_KIND,
+            TASK11A_INTERACTIVE_ACCEPTANCE_SESSION_KIND,
+        }:
             try:
                 interactive_boundary = bind_interactive_entry(
                     requirements_status=str(interactive_requirements_status),
@@ -939,6 +1075,12 @@ class SupervisedWorkController:
             "validation": validation_contract,
             "response_adapter": adapter_binding,
         }
+        if fixture_contract_sha256 is not None:
+            manifest["fixture"] = {
+                "fixture_id": fixture_identity,
+                "contract_sha256": fixture_contract_sha256,
+                "content_sha256": fixture_content_sha256,
+            }
         if interactive_boundary is not None:
             manifest["interactive_work_boundary"] = interactive_boundary
         conversation = [{

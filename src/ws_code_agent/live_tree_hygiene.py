@@ -13,6 +13,12 @@ HISTORICAL_RECORDS = {
     "docs/contracts/CODING_AGENT_FOUNDATION_CONTRACT.md",
     "docs/experiments/task11j-first-real-local-repository-v3-pilot.md",
 }
+PILOT_MANIFESTS = {
+    "docs/work/task11j-ws-doc-writer-real-repository-pilot-v1.json":
+        "TASK11J-FIRST-REAL-LOCAL-REPOSITORY-V3-PILOT",
+    "docs/work/task11l-ws-doc-writer-real-repository-pilot-v1.json":
+        "TASK11L-FRESH-REAL-REPOSITORY-PILOT-UNDER-REPAIRED-APPARATUS",
+}
 PILOT_MANIFEST = "docs/work/task11j-ws-doc-writer-real-repository-pilot-v1.json"
 EXACT_PILOT_SURFACES = {
     "tests/test_task11j_real_repository_pilot.py",
@@ -93,7 +99,7 @@ def _python_inherits_active_identity(content: str) -> bool:
     return False
 
 
-def _pilot_manifest_is_external_target_record(content: str) -> bool:
+def _pilot_manifest_is_external_target_record(content: str, checkpoint: str) -> bool:
     try:
         record = json.loads(content)
         source = record["source_binding"]
@@ -102,7 +108,7 @@ def _pilot_manifest_is_external_target_record(content: str) -> bool:
         return False
     if (
         record.get("schema_version") != 1
-        or record.get("checkpoint") != "TASK11J-FIRST-REAL-LOCAL-REPOSITORY-V3-PILOT"
+        or record.get("checkpoint") != checkpoint
         or source.get("canonical_path") != "/home/louis/src/ws-doc-writer"
         or source.get("origin") != "git@github.com:lhpoulin-cmyk/ws-doc-writer.git"
         or pilot.get("authority", {}).get("owning_domain") != "ws-doc-writer application authority"
@@ -129,7 +135,9 @@ def hygiene_violations(root: Path, relative: str) -> tuple[str, ...]:
     lowered = content.lower()
     if not any(marker in lowered for marker in MARKERS):
         return ()
-    if relative == PILOT_MANIFEST and _pilot_manifest_is_external_target_record(content):
+    if relative in PILOT_MANIFESTS and _pilot_manifest_is_external_target_record(
+        content, PILOT_MANIFESTS[relative]
+    ):
         return ()
     if relative in EXACT_PILOT_SURFACES:
         return ()

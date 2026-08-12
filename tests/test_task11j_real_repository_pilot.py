@@ -22,7 +22,9 @@ from ws_code_agent.production_envelope import (  # noqa: E402
     TASK11J_TARGET_HEAD,
     TASK11J_TARGET_ORIGIN,
     TASK11J_TARGET_PATH,
+    TASK11L_PILOT_INSTANCE_ID,
     task11j_pilot_instance,
+    task11l_pilot_instance,
 )
 from ws_code_agent.request_protocol import STRUCTURED_EDIT_PROTOCOL  # noqa: E402
 from ws_code_agent.supervised_validation import (  # noqa: E402
@@ -30,6 +32,7 @@ from ws_code_agent.supervised_validation import (  # noqa: E402
     TASK11J_VALIDATION_IDS,
     TASK11J_VISIBLE_SOURCE,
     bind_validation_ids,
+    bound_descriptor_ids_by_role,
 )
 
 
@@ -125,6 +128,43 @@ class Task11JRealRepositoryPilotTests(unittest.TestCase):
         self.assertIn("TASK11J_REAL_REPOSITORY_SESSION_KIND", controller)
         self.assertIn('"live_default": False', controller)
         self.assertEqual(ENVELOPE_STATUS, "FROZEN")
+
+    def test_task11l_is_a_fresh_exact_instance_with_unchanged_objective_and_validators(self):
+        task11j = task11j_pilot_instance(ROOT)
+        task11l = task11l_pilot_instance(ROOT)
+        self.assertEqual(TASK11L_PILOT_INSTANCE_ID, task11l["pilot_instance_id"])
+        self.assertNotEqual(task11j["pilot_instance_id"], task11l["pilot_instance_id"])
+        self.assertEqual(task11j["source_binding"], task11l["source_binding"])
+        self.assertEqual(task11j["model_binding"], task11l["model_binding"])
+        self.assertEqual(
+            task11j["pilot_manifest"]["objective"],
+            task11l["pilot_manifest"]["objective"],
+        )
+        self.assertEqual(
+            task11j["pilot_manifest"]["validation"],
+            task11l["pilot_manifest"]["validation"],
+        )
+        self.assertEqual("COMPLETE", task11l["validation_result"]["manifest_status"])
+
+    def test_task11l_session_contract_resolves_only_the_exact_task11j_validators(self):
+        contract = task11l_pilot_instance(ROOT)["pilot_manifest"]["validation"]
+        roles = bound_descriptor_ids_by_role(contract)
+        self.assertEqual(
+            {
+                "VISIBLE": "task11j-ws-doc-writer-src-readme-visible-v1",
+                "HIDDEN_ORACLE": "task11j-ws-doc-writer-src-readme-hidden-v1",
+            },
+            {role.value: descriptor_id for role, descriptor_id in roles.items()},
+        )
+        self.assertNotIn("task10k-c-write-visible-v1", roles.values())
+
+    def test_task11l_selector_is_explicit_and_does_not_replace_task11j(self):
+        cli = (ROOT / "tools/run_supervised_work.py").read_text(encoding="utf-8")
+        controller = (ROOT / "src/ws_code_agent/supervised_work.py").read_text(encoding="utf-8")
+        self.assertIn('sub.add_parser("start-task11j-real-local-pilot")', cli)
+        self.assertIn('sub.add_parser("start-task11l-real-local-pilot")', cli)
+        self.assertIn("start_task11j_real_repository_pilot", controller)
+        self.assertIn("start_task11l_real_repository_pilot", controller)
 
 
 if __name__ == "__main__":

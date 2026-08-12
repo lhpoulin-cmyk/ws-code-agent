@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from ws_code_agent.live_tree_hygiene import (  # noqa: E402
     PILOT_MANIFEST,
+    PILOT_MANIFESTS,
     hygiene_violations,
     publication_paths,
     publication_tree_violations,
@@ -37,6 +38,11 @@ class LiveTreeHygieneTests(unittest.TestCase):
             target.parent.mkdir(parents=True)
             target.write_text(json.dumps(source), encoding="utf-8")
             self.assertEqual((PILOT_MANIFEST,), hygiene_violations(root, PILOT_MANIFEST))
+
+    def test_each_exact_pilot_instance_is_permitted_only_as_external_target_evidence(self) -> None:
+        for relative in PILOT_MANIFESTS:
+            with self.subTest(relative=relative):
+                self.assertEqual((), hygiene_violations(ROOT, relative))
 
     def test_runtime_provider_executor_and_import_controls_remain_forbidden(self) -> None:
         external_identity = "ws-" + "doc" + "-writer"

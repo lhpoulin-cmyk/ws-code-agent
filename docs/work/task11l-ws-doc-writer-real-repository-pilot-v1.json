@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "pilot_instance_id": "task11l-ws-doc-writer-src-readme-stale-boundary/v1",
+  "checkpoint": "TASK11L-FRESH-REAL-REPOSITORY-PILOT-UNDER-REPAIRED-APPARATUS",
+  "source_binding": {
+    "canonical_path": "/home/louis/src/ws-doc-writer",
+    "origin": "git@github.com:lhpoulin-cmyk/ws-doc-writer.git",
+    "branch": "work/multi-backend-multi-model-v1-20260809",
+    "remote_ref": "refs/heads/work/multi-backend-multi-model-v1-20260809",
+    "readme_path": "src/README.md",
+    "readme_sha256": "a52645c6f822f7a4a845ed971e4bab7de70898997c1e195d90e26dd331eee970",
+    "submodule_identity": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "model_binding": {
+    "work_role": "INTERACTIVE_PRACTICAL_CODER",
+    "model": "qwen2.5-coder:14b-instruct-q4_K_M",
+    "manifest": "9ec8897f747e246e970bc5cfdda85d22f1123dc2e3d34978a010a75968716849",
+    "runtime_profile": "qwen25-coder-14b-katra-4096",
+    "context": 4096,
+    "placement": "GPU_ONLY"
+  },
+  "pilot_manifest": {
+    "pilot_id": "task11l-ws-doc-writer-src-readme-stale-boundary/v1",
+    "pilot_policy_id": "INTERACTIVE_PRACTICAL_CODER_REAL_REPOSITORY_PILOT_V1",
+    "repository": {
+      "identity": "253abe844e08a8e5cc311326406fae24a3233c7ecd4e1a98ee92cb73788ec0a2",
+      "head": "d52c923d4a13949a2345fb5791ee59a82d389c4e",
+      "source_snapshot_x": "6a4a913f0258a0e35c812d147ee2a5e4b1830684bfae56978e41911202d82047",
+      "index_identity": "96c5ca9f06bc21817c4de1a3ac9430b7dae760322bc316077643d3b27994d0d4",
+      "tracked_worktree_identity": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untracked_identity": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "clean": true,
+      "frozen": true
+    },
+    "authority": {
+      "owning_domain": "ws-doc-writer application authority",
+      "authorization_reference": "TASK11L-FRESH-REAL-REPOSITORY-PILOT-UNDER-REPAIRED-APPARATUS"
+    },
+    "requirements_status": "COMPLETE",
+    "objective": "Replace the stale paragraph in src/README.md with exactly:\n\nThe `src/docwriter_web` package contains the Doc Writer application\nimplementation. It must not execute infrastructure commands.\n\nMake no other change.\n",
+    "read_scopes": [
+      "src/README.md"
+    ],
+    "patch_paths": [
+      "src/README.md"
+    ],
+    "validation": {
+      "authorized_validation_ids": [
+        "task11j-ws-doc-writer-src-readme-visible-v1",
+        "task11j-ws-doc-writer-src-readme-hidden-v1"
+      ],
+      "descriptors": [
+        {
+          "descriptor_id": "task11j-ws-doc-writer-src-readme-visible-v1",
+          "version": "v1",
+          "role": "VISIBLE",
+          "executable": "/usr/bin/python3",
+          "arguments": [
+            "-B",
+            "/home/louis/src/ws-code-agent/validation-assets/task11j-ws-doc-writer-src-readme-visible-v1.py"
+          ],
+          "working_directory": ".",
+          "timeout_seconds": 10,
+          "model_visible_by_id_only": true,
+          "repository_writes_allowed": false,
+          "requires_post_patch": true,
+          "containment_required": true,
+          "source_sha256": "fcc09165982a520b264fe880635d9fc2eac9ca3fcd020b90e77b4440c344b315",
+          "descriptor_identity": "4f2f865bf1734b1117a5fc56eeb046b87e244b2bb5f0c35a1e20ba00a453550a"
+        },
+        {
+          "descriptor_id": "task11j-ws-doc-writer-src-readme-hidden-v1",
+          "version": "v1",
+          "role": "HIDDEN_ORACLE",
+          "executable": "/usr/bin/python3",
+          "arguments": [
+            "-B",
+            "/home/louis/src/ws-code-agent/validation-assets/task11j-ws-doc-writer-src-readme-hidden-v1.py"
+          ],
+          "working_directory": ".",
+          "timeout_seconds": 10,
+          "model_visible_by_id_only": true,
+          "repository_writes_allowed": false,
+          "requires_post_patch": true,
+          "containment_required": true,
+          "source_sha256": "f5bd302451767c7102396183be6f0ae5dad8d0120d53e7ba8338b2b0f5eb3155",
+          "descriptor_identity": "e172f6ae72baadc989d0440ab331a3fcfb04a2a977368bd6e695704b1d76dd3f"
+        }
+      ]
+    },
+    "worker_envelope_id": "INTERACTIVE_PRACTICAL_CODER_V3_PRODUCTION_ENVELOPE_V1",
+    "runtime_profile": "qwen25-coder-14b-katra-4096",
+    "protocol": {
+      "id": "WS_CODE_AGENT_REQUEST_PROTOCOL_V3_SINGLE_STRUCTURED_EDIT",
+      "render_sha256": "d060b7b15538ce781ecd50cee1478a3395a1122c3476047e8e02efc6b7f36993"
+    },
+    "grounding_policy": "SOURCE_GROUNDED_STRUCTURED_EDIT_V1",
+    "normalizer": {
+      "id": "SINGLE_MARKDOWN_JSON_FENCE_NORMALIZATION_V1",
+      "version": "v1"
+    },
+    "turn_limit": 8,
+    "promotion_authority": "OPERATOR_ONLY"
+  }
+}

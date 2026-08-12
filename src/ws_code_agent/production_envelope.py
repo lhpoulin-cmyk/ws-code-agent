@@ -50,6 +50,10 @@ TASK11J_PILOT_INSTANCE_PATH = Path(
     "docs/work/task11j-ws-doc-writer-real-repository-pilot-v1.json"
 )
 TASK11J_PILOT_INSTANCE_ID = "task11j-ws-doc-writer-src-readme-stale-boundary/v1"
+TASK11L_PILOT_INSTANCE_PATH = Path(
+    "docs/work/task11l-ws-doc-writer-real-repository-pilot-v1.json"
+)
+TASK11L_PILOT_INSTANCE_ID = "task11l-ws-doc-writer-src-readme-stale-boundary/v1"
 TASK11J_TARGET_PATH = "/home/louis/src/ws-doc-writer"
 TASK11J_TARGET_ORIGIN = "git@github.com:lhpoulin-cmyk/ws-doc-writer.git"
 TASK11J_TARGET_BRANCH = "work/multi-backend-multi-model-v1-20260809"
@@ -376,6 +380,62 @@ def task11j_pilot_instance(root: Path | None = None) -> dict[str, Any]:
         or pilot.get("patch_paths") != ["src/README.md"]
     ):
         raise PilotManifestError("TASK11J_PILOT_BINDING_MISMATCH")
+    return {**instance, "validation_result": validated}
+
+
+def task11l_pilot_instance(root: Path | None = None) -> dict[str, Any]:
+    """Load and verify the fresh Task 11L real-repository pilot packet."""
+
+    repository = root or Path(__file__).resolve().parents[2]
+    path = repository / TASK11L_PILOT_INSTANCE_PATH
+    try:
+        instance = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise PilotManifestError("TASK11L_PILOT_INSTANCE_UNAVAILABLE") from error
+    if set(instance) != {
+        "schema_version", "pilot_instance_id", "checkpoint", "source_binding",
+        "model_binding", "pilot_manifest",
+    }:
+        raise PilotManifestError("TASK11L_PILOT_INSTANCE_FIELDS_MISMATCH")
+    if (
+        instance.get("schema_version") != 1
+        or instance.get("pilot_instance_id") != TASK11L_PILOT_INSTANCE_ID
+        or instance.get("checkpoint") != "TASK11L-FRESH-REAL-REPOSITORY-PILOT-UNDER-REPAIRED-APPARATUS"
+    ):
+        raise PilotManifestError("TASK11L_PILOT_INSTANCE_IDENTITY_MISMATCH")
+    source = instance.get("source_binding")
+    expected_source = {
+        "canonical_path": TASK11J_TARGET_PATH,
+        "origin": TASK11J_TARGET_ORIGIN,
+        "branch": TASK11J_TARGET_BRANCH,
+        "remote_ref": f"refs/heads/{TASK11J_TARGET_BRANCH}",
+        "readme_path": "src/README.md",
+        "readme_sha256": TASK11J_README_SHA256,
+        "submodule_identity": hashlib.sha256(b"").hexdigest(),
+    }
+    if source != expected_source:
+        raise PilotManifestError("TASK11L_SOURCE_BINDING_MISMATCH")
+    envelope = frozen_envelope(repository)
+    expected_model = {
+        "work_role": WORK_ROLE,
+        "model": envelope["worker"]["model"],
+        "manifest": envelope["worker"]["manifest"],
+        "runtime_profile": envelope["worker"]["runtime_profile"],
+        "context": envelope["worker"]["context"],
+        "placement": envelope["worker"]["placement"],
+    }
+    if instance.get("model_binding") != expected_model:
+        raise PilotManifestError("TASK11L_MODEL_BINDING_MISMATCH")
+    pilot = instance.get("pilot_manifest")
+    validated = validate_pilot_manifest(pilot)
+    if (
+        pilot.get("pilot_id") != TASK11L_PILOT_INSTANCE_ID
+        or pilot.get("repository", {}).get("head") != TASK11J_TARGET_HEAD
+        or pilot.get("repository", {}).get("source_snapshot_x") != TASK11J_TARGET_SNAPSHOT
+        or pilot.get("read_scopes") != ["src/README.md"]
+        or pilot.get("patch_paths") != ["src/README.md"]
+    ):
+        raise PilotManifestError("TASK11L_PILOT_BINDING_MISMATCH")
     return {**instance, "validation_result": validated}
 
 

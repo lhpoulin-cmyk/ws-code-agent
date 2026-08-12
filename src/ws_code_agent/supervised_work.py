@@ -77,7 +77,9 @@ from .production_envelope import (
     TASK11J_TARGET_HEAD,
     TASK11J_TARGET_ORIGIN,
     TASK11J_TARGET_PATH,
+    TASK11L_PILOT_INSTANCE_ID,
     task11j_pilot_instance,
+    task11l_pilot_instance,
 )
 from .supervised_validation import (
     WRITE_VALIDATION_IDS,
@@ -1190,20 +1192,68 @@ class SupervisedWorkController:
     ) -> "SupervisedWorkController":
         """Start the exact published Task 11J pilot against frozen ws-doc-writer."""
 
-        if not SESSION_ID.fullmatch(session_id):
-            raise SupervisedWorkError("INVALID_SESSION_ID")
-        root = Path(__file__).resolve().parents[2]
         try:
-            instance = task11j_pilot_instance(root)
+            instance = task11j_pilot_instance(Path(__file__).resolve().parents[2])
         except Exception as error:
             raise SupervisedWorkError(str(error)) from error
+        return cls._start_bound_real_repository_pilot(
+            store,
+            session_id=session_id,
+            candidate_path=candidate_path,
+            harness_sha=harness_sha,
+            instance=instance,
+            fixture_identity=TASK11J_PILOT_INSTANCE_ID,
+            error_prefix="TASK11J",
+        )
+
+    @classmethod
+    def start_task11l_real_repository_pilot(
+        cls,
+        store: Path,
+        *,
+        session_id: str,
+        candidate_path: Path,
+        harness_sha: str,
+    ) -> "SupervisedWorkController":
+        """Start the fresh Task 11L pilot through the repaired apparatus."""
+
+        try:
+            instance = task11l_pilot_instance(Path(__file__).resolve().parents[2])
+        except Exception as error:
+            raise SupervisedWorkError(str(error)) from error
+        return cls._start_bound_real_repository_pilot(
+            store,
+            session_id=session_id,
+            candidate_path=candidate_path,
+            harness_sha=harness_sha,
+            instance=instance,
+            fixture_identity=TASK11L_PILOT_INSTANCE_ID,
+            error_prefix="TASK11L",
+        )
+
+    @classmethod
+    def _start_bound_real_repository_pilot(
+        cls,
+        store: Path,
+        *,
+        session_id: str,
+        candidate_path: Path,
+        harness_sha: str,
+        instance: Mapping[str, Any],
+        fixture_identity: str,
+        error_prefix: str,
+    ) -> "SupervisedWorkController":
+        """Start one exact immutable real-repository pilot instance."""
+
+        if not SESSION_ID.fullmatch(session_id):
+            raise SupervisedWorkError("INVALID_SESSION_ID")
         pilot = instance["pilot_manifest"]
         source = instance["source_binding"]
         repository = Path(source["canonical_path"])
         if str(repository.resolve()) != TASK11J_TARGET_PATH:
-            raise SupervisedWorkError("TASK11J_SOURCE_PATH_MISMATCH")
+            raise SupervisedWorkError(f"{error_prefix}_SOURCE_PATH_MISMATCH")
         if _git(repository, "remote", "get-url", "origin") != TASK11J_TARGET_ORIGIN:
-            raise SupervisedWorkError("TASK11J_SOURCE_ORIGIN_MISMATCH")
+            raise SupervisedWorkError(f"{error_prefix}_SOURCE_ORIGIN_MISMATCH")
         remote = subprocess.run(
             ["git", "-C", str(repository), "ls-remote", "--exit-code", "origin", source["remote_ref"]],
             stdin=subprocess.DEVNULL,
@@ -1213,7 +1263,7 @@ class SupervisedWorkController:
             check=False,
         )
         if remote.returncode or remote.stdout.split() != [TASK11J_TARGET_HEAD, source["remote_ref"]]:
-            raise SupervisedWorkError("TASK11J_DIRECT_REMOTE_PARITY_MISMATCH")
+            raise SupervisedWorkError(f"{error_prefix}_DIRECT_REMOTE_PARITY_MISMATCH")
         observed = ReadOnlyExecutor().observe_repository(repository).snapshot
         expected = pilot["repository"]
         actual = {
@@ -1225,16 +1275,16 @@ class SupervisedWorkController:
             "untracked_identity": observed.untracked_identity,
         }
         if any(actual[key] != expected[key] for key in actual):
-            raise SupervisedWorkError("TASK11J_SOURCE_STATE_MISMATCH")
+            raise SupervisedWorkError(f"{error_prefix}_SOURCE_STATE_MISMATCH")
         if observed.submodule_identity != source["submodule_identity"]:
-            raise SupervisedWorkError("TASK11J_SOURCE_STATE_MISMATCH")
+            raise SupervisedWorkError(f"{error_prefix}_SOURCE_STATE_MISMATCH")
         target = repository / source["readme_path"]
         if (
             not target.is_file()
             or target.is_symlink()
             or hashlib.sha256(target.read_bytes()).hexdigest() != TASK11J_README_SHA256
         ):
-            raise SupervisedWorkError("TASK11J_SOURCE_STATE_MISMATCH")
+            raise SupervisedWorkError(f"{error_prefix}_SOURCE_STATE_MISMATCH")
         qualification, model_artifact = _qwen25_candidate_binding(candidate_path)
         if hashlib.sha256(STRUCTURED_EDIT_PROTOCOL.render().encode()).hexdigest() != _V3_RENDER_SHA256:
             raise SupervisedWorkError("V3_PROTOCOL_RENDER_MISMATCH")
@@ -1271,7 +1321,7 @@ class SupervisedWorkController:
             qualification=qualification,
             model_artifact=model_artifact,
             session_kind=TASK11J_REAL_REPOSITORY_SESSION_KIND,
-            fixture_identity=TASK11J_PILOT_INSTANCE_ID,
+            fixture_identity=fixture_identity,
             fixture_contract_sha256=fixture_contract_sha256,
             fixture_content_sha256=TASK11J_README_SHA256,
             validation_ids=TASK11J_VALIDATION_IDS,

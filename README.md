@@ -97,6 +97,17 @@ This is `INTERACTIVE_PRACTICAL_CODER_RESTRICTED_ACCEPTANCE_ESCALATED`, not an
 infrastructure failure or acceptance. No overnight worker was invoked and no
 source effect was promoted.
 
+Task 11B then bound the exact preserved patch bytes from Tasks 10R, 10Y, 10V,
+and 11A and separated code intent from unified-diff grammar. Every analyzed 14B
+patch selected `src/message.py` and represented the objective-correct edit;
+each rejected patch became `git apply` compatible through a unique mechanical
+correction to counts, file envelope, context prefix, or terminal newline. The
+32B control preserved identical semantics between its rejected and accepted
+turns and crossed the executor boundary by correcting serialization. The
+result is `PATCH_SERIALIZATION_INTERFACE_MISMATCH_CONFIRMED`. This is a
+forensic finding only: production patch transport, authority, and the Task 11A
+escalation remain unchanged.
+
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and

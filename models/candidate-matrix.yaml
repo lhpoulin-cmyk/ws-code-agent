@@ -248,6 +248,23 @@ candidates:
           duplicate_inference: 0
           recommended_next_worker: DELIBERATIVE_OVERNIGHT_CODER
           automatic_handoff_performed: false
+        task11b_patch_serialization_forensics:
+          status: COMPLETE
+          disposition: PATCH_SERIALIZATION_INTERFACE_MISMATCH_CONFIRMED
+          evidence_binding: PASS
+          analyzed_14b_patches: 4
+          analyzed_32b_control_patches: 2
+          semantic_edit_correct: 6
+          semantic_edit_incorrect: 0
+          rejected_14b_patch_root_cause: MECHANICAL_PATCH_SERIALIZATION
+          canonical_diff_controls: PASS
+          deterministic_minimum_corrections: PASS
+          semantic_bytes_preserved: PASS
+          authority_preserved: PASS
+          production_behavior_changed: false
+          model_inferences_14b: 0
+          model_inferences_32b: 0
+          historical_rescore: false
     baseline_disposition:
       practical_coding_baseline: YES
       runtime_accepted: YES
@@ -266,6 +283,7 @@ candidates:
       - ../docs/experiments/task10y-qwen25-coder-14b-normalized-production-lane.md
       - ../docs/experiments/task10z-interactive-practical-coder-boundary.md
       - ../docs/experiments/task11a-restricted-interactive-coder-acceptance.md
+      - ../docs/experiments/task11b-interactive-patch-serialization-forensics.md
 
   - id: gpt-oss-20b-mxfp4
     status: INELIGIBLE_FROZEN_COMPARISON_SEAM

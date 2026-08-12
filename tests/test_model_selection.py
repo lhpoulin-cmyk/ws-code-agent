@@ -199,6 +199,21 @@ class ModelSelectionTests(unittest.TestCase):
             candidate,
         )
         self.assertIn("reason: PATCH_REPAIR_EXHAUSTED", candidate)
+        task11b_evidence = (
+            ROOT / "docs/experiments/task11b-interactive-patch-serialization-forensics.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("PATCH_SERIALIZATION_INTERFACE_MISMATCH_CONFIRMED", task11b_evidence)
+        self.assertIn("MODEL_INFERENCE_COUNT = 0", task11b_evidence)
+        self.assertIn("Task 11A escalation: UNCHANGED", task11b_evidence)
+        self.assertIn(
+            "NEXT: DESIGN A DETERMINISTIC STRUCTURED EDIT TRANSPORT FOR THE INTERACTIVE/PRACTICAL CODER WITHOUT CHANGING SEMANTIC AUTHORITY",
+            task11b_evidence,
+        )
+        self.assertIn(
+            "disposition: PATCH_SERIALIZATION_INTERFACE_MISMATCH_CONFIRMED",
+            candidate,
+        )
+        self.assertIn("production_behavior_changed: false", candidate)
 
     def test_qwen25_coder_32b_scale_control_preserves_inconclusive_admission(self):
         matrix = (ROOT / "models/candidate-matrix.yaml").read_text(encoding="utf-8")

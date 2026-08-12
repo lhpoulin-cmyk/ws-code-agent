@@ -113,6 +113,10 @@ def main() -> int:
     retrospective = sub.add_parser("bind-retrospective-validation")
     retrospective.add_argument("session")
     retrospective.add_argument("--candidate-identity", required=True)
+    recover = sub.add_parser("recover-validation-preexecution")
+    recover.add_argument("session")
+    recover.add_argument("--candidate-identity", required=True)
+    recover.add_argument("--descriptor-identity", required=True)
     args = parser.parse_args()
     try:
         if args.command == "start":
@@ -250,6 +254,11 @@ def main() -> int:
                 output = controller.status()
             elif args.command == "bind-retrospective-validation":
                 output = controller.bind_retrospective_validation(args.candidate_identity)
+            elif args.command == "recover-validation-preexecution":
+                output = controller.recover_preexecution_validation(
+                    args.candidate_identity,
+                    args.descriptor_identity,
+                )
             elif args.command == "validate":
                 output = controller.advance_validation()
             elif args.command == "review":

@@ -80,12 +80,11 @@ from .production_envelope import (
     task11j_pilot_instance,
 )
 from .supervised_validation import (
-    HIDDEN_VALIDATION_ID,
-    VISIBLE_VALIDATION_ID,
     WRITE_VALIDATION_IDS,
     TASK11J_VALIDATION_IDS,
     bind_validation_ids,
     binding_matches,
+    bound_descriptor_ids_by_role,
     descriptor_binding,
     validation_registry,
 )
@@ -1940,6 +1939,10 @@ class SupervisedWorkController:
     def advance_validation(self) -> dict[str, Any]:
         """Advance exactly one restart-safe evaluator-owned validation phase."""
         contract = self._validation_contract()
+        try:
+            descriptors_by_role = bound_descriptor_ids_by_role(contract)
+        except ValueError as error:
+            raise SupervisedWorkError("VALIDATION_DESCRIPTOR_BINDING_MISMATCH") from error
         state_path = self.root / "validation-state.json"
         if not state_path.is_file():
             raise SupervisedWorkError("VALIDATION_NOT_CONFIGURED")
@@ -1964,11 +1967,11 @@ class SupervisedWorkController:
             self._set_session_validation_status(state["status"])
             raise SupervisedWorkError("VALIDATION_OUTCOME_AMBIGUOUS")
         if phase == "NOT_STARTED":
-            descriptor_id = VISIBLE_VALIDATION_ID
+            descriptor_id = descriptors_by_role[ValidationRole.VISIBLE]
             result_key = "visible_validation"
             state["phase"] = "VISIBLE_VALIDATION_STARTED"
         elif phase == "VISIBLE_COMPLETE":
-            descriptor_id = HIDDEN_VALIDATION_ID
+            descriptor_id = descriptors_by_role[ValidationRole.HIDDEN_ORACLE]
             result_key = "hidden_validation"
             state["phase"] = "HIDDEN_VALIDATION_STARTED"
         else:
@@ -2031,6 +2034,77 @@ class SupervisedWorkController:
         self._refresh_state()
         self._write_review_packet()
         return evidence
+
+    def recover_preexecution_validation(
+        self,
+        expected_candidate_identity: str,
+        expected_descriptor_identity: str,
+    ) -> dict[str, Any]:
+        """Audit and reopen a validation phase proven to have failed pre-execution."""
+
+        contract = self._validation_contract()
+        try:
+            descriptors_by_role = bound_descriptor_ids_by_role(contract)
+        except ValueError as error:
+            raise SupervisedWorkError("VALIDATION_DESCRIPTOR_BINDING_MISMATCH") from error
+        state_path = self.root / "validation-state.json"
+        if not state_path.is_file():
+            raise SupervisedWorkError("VALIDATION_NOT_CONFIGURED")
+        state_bytes = state_path.read_bytes()
+        state = json.loads(state_bytes)
+        phase = state.get("phase")
+        phase_roles = {
+            "VISIBLE_VALIDATION_STARTED": (ValidationRole.VISIBLE, "NOT_STARTED", "visible_validation"),
+            "HIDDEN_VALIDATION_STARTED": (ValidationRole.HIDDEN_ORACLE, "VISIBLE_COMPLETE", "hidden_validation"),
+        }
+        if phase not in phase_roles or state.get("status") != "VALIDATION_PENDING":
+            raise SupervisedWorkError("VALIDATION_PREEXECUTION_RECOVERY_NOT_APPLICABLE")
+        role, recovered_phase, result_key = phase_roles[phase]
+        descriptor_id = descriptors_by_role[role]
+        bindings = {item["descriptor_id"]: item for item in contract["descriptors"]}
+        binding = bindings[descriptor_id]
+        if binding.get("descriptor_identity") != expected_descriptor_identity:
+            raise SupervisedWorkError("VALIDATION_DESCRIPTOR_BINDING_MISMATCH")
+        case = self._turns._case(WORK_CASE_ID)
+        candidate = case["case_state"].get("candidate")
+        if (
+            candidate is None
+            or candidate.get("candidate_snapshot_identity") != expected_candidate_identity
+            or state.get("candidate_snapshot_identity") != expected_candidate_identity
+            or self._candidate_integrity(candidate) != "MATCH"
+        ):
+            raise SupervisedWorkError("CANDIDATE_STATE_INVALID")
+        if ReadOnlyExecutor().compare_snapshot(_snapshot(case["snapshot_x"])).status is not CompareStatus.MATCH:
+            raise SupervisedWorkError("SOURCE_STATE_STALE")
+        if state.get(result_key) is not None:
+            raise SupervisedWorkError("VALIDATION_OUTCOME_AMBIGUOUS")
+        evidence_path = self.root / "evaluator" / "validation" / (
+            "visible.json" if role is ValidationRole.VISIBLE else "hidden.json"
+        )
+        if evidence_path.exists():
+            raise SupervisedWorkError("VALIDATION_OUTCOME_AMBIGUOUS")
+        recovery_path = self.root / "validation-preexecution-recovery.json"
+        if recovery_path.exists():
+            raise SupervisedWorkError("VALIDATION_PREEXECUTION_RECOVERY_ALREADY_RECORDED")
+        record = {
+            "record_type": "VALIDATION_PREEXECUTION_RECOVERY",
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "session_id": self.root.name,
+            "candidate_snapshot_identity": expected_candidate_identity,
+            "descriptor_id": descriptor_id,
+            "descriptor_identity": expected_descriptor_identity,
+            "descriptor_role": role.value,
+            "prior_phase": phase,
+            "prior_state_sha256": hashlib.sha256(state_bytes).hexdigest(),
+            "evaluator_evidence_present": False,
+            "recovered_phase": recovered_phase,
+        }
+        _atomic_json(recovery_path, record)
+        state["phase"] = recovered_phase
+        _atomic_json(state_path, state)
+        self._set_session_validation_status(state["status"])
+        self._write_review_packet()
+        return record
 
     def _validation_contract(self) -> dict[str, Any]:
         manifest_contract = self.manifest().get("validation")

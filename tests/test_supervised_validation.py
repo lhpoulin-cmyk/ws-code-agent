@@ -23,6 +23,7 @@ from ws_code_agent.supervised_validation import (  # noqa: E402
     WRITE_VALIDATION_IDS,
     TASK11J_VALIDATION_IDS,
     bind_validation_ids,
+    bound_descriptor_ids_by_role,
     validation_registry,
 )
 from ws_code_agent.supervised_work import (  # noqa: E402
@@ -30,6 +31,7 @@ from ws_code_agent.supervised_work import (  # noqa: E402
     SupervisedWorkController,
     SupervisedWorkError,
 )
+from ws_code_agent.validation import ValidationRole  # noqa: E402
 
 
 CANDIDATE_MANIFEST = ROOT / "docs/qualification/qwen25-coder-32b-v2-admission-candidate.yaml"
@@ -113,6 +115,15 @@ class LocalContainedRunner:
             "CONTAINMENT_NETWORK": "DENIED",
             "CONTAINMENT_RESULT": "completed",
         }
+
+
+class RecordingPassRunner:
+    def __init__(self) -> None:
+        self.descriptor_ids: list[str] = []
+
+    def run(self, context, descriptor):
+        self.descriptor_ids.append(descriptor.descriptor_id)
+        return ContainedExecution(0, b"bounded pass", b"", LocalContainedRunner._evidence())
 
 
 class SupervisedValidationTests(unittest.TestCase):
@@ -218,6 +229,80 @@ class SupervisedValidationTests(unittest.TestCase):
             self.assertEqual(HIDDEN_VALIDATION_ID, review["hidden_validation"]["descriptor_id"])
             self.assertEqual("MATCH", review["source_state"])
             self.assertEqual("MATCH", review["candidate_integrity"])
+
+    def test_bound_roles_resolve_task11j_pair_without_historical_fallback(self):
+        contract = bind_validation_ids(TASK11J_VALIDATION_IDS)
+        resolved = bound_descriptor_ids_by_role(contract)
+        self.assertEqual(TASK11J_VALIDATION_IDS[0], resolved[ValidationRole.VISIBLE])
+        self.assertEqual(TASK11J_VALIDATION_IDS[1], resolved[ValidationRole.HIDDEN_ORACLE])
+        for mutation in ("version", "descriptor_identity", "containment_required"):
+            changed = json.loads(json.dumps(contract))
+            changed["descriptors"][0][mutation] = "wrong" if mutation != "containment_required" else False
+            with self.assertRaisesRegex(ValueError, "binding mismatch"):
+                bound_descriptor_ids_by_role(changed)
+
+    def test_advance_validation_uses_exact_session_bound_task11j_pair(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            controller = self._controller(Path(temporary))
+            manifest_path = controller.root / "session-manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["validation"] = bind_validation_ids(TASK11J_VALIDATION_IDS)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            runner = RecordingPassRunner()
+            restarted = SupervisedWorkController(controller.root, runner)
+            restarted.advance_validation()
+            restarted.advance_validation()
+            self.assertEqual(list(TASK11J_VALIDATION_IDS), runner.descriptor_ids)
+
+    def test_explicit_preexecution_recovery_is_identity_bound_and_audited(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            controller = self._controller(Path(temporary))
+            candidate = controller._turns._case("WORK")["case_state"]["candidate"]
+            candidate_identity = candidate["candidate_snapshot_identity"]
+            contract = controller.manifest()["validation"]
+            visible_identity = contract["descriptors"][0]["descriptor_identity"]
+            state_path = controller.root / "validation-state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["candidate_snapshot_identity"] = candidate_identity
+            state["phase"] = "VISIBLE_VALIDATION_STARTED"
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            restarted = SupervisedWorkController(controller.root, LocalContainedRunner())
+            with self.assertRaisesRegex(SupervisedWorkError, "BINDING_MISMATCH"):
+                restarted.recover_preexecution_validation(candidate_identity, "0" * 64)
+            record = restarted.recover_preexecution_validation(
+                candidate_identity,
+                visible_identity,
+            )
+            self.assertEqual("VALIDATION_PREEXECUTION_RECOVERY", record["record_type"])
+            self.assertEqual(VISIBLE_VALIDATION_ID, record["descriptor_id"])
+            self.assertEqual("NOT_STARTED", record["recovered_phase"])
+            self.assertFalse(record["evaluator_evidence_present"])
+            self.assertEqual("VALIDATION_PASS", restarted.advance_validation()["status"])
+            self.assertEqual("VALIDATION_PASS", restarted.advance_validation()["status"])
+            with self.assertRaisesRegex(SupervisedWorkError, "NOT_APPLICABLE"):
+                restarted.recover_preexecution_validation(candidate_identity, visible_identity)
+
+    def test_preexecution_recovery_refuses_existing_evaluator_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            controller = self._controller(Path(temporary))
+            candidate = controller._turns._case("WORK")["case_state"]["candidate"]
+            candidate_identity = candidate["candidate_snapshot_identity"]
+            contract = controller.manifest()["validation"]
+            visible_identity = contract["descriptors"][0]["descriptor_identity"]
+            state_path = controller.root / "validation-state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state.update({
+                "candidate_snapshot_identity": candidate_identity,
+                "phase": "VISIBLE_VALIDATION_STARTED",
+            })
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            evidence = controller.root / "evaluator/validation/visible.json"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(SupervisedWorkError, "OUTCOME_AMBIGUOUS"):
+                SupervisedWorkController(
+                    controller.root, LocalContainedRunner()
+                ).recover_preexecution_validation(candidate_identity, visible_identity)
 
     def test_visible_and_hidden_failure_remain_distinct(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -6,7 +6,7 @@ from dataclasses import asdict
 import hashlib
 import json
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from .validation import ValidationDescriptor, ValidationRole
 
@@ -135,3 +135,29 @@ def binding_matches(contract: dict[str, object]) -> bool:
         return contract == bind_validation_ids(ids)
     except (KeyError, TypeError, ValueError):
         return False
+
+
+def bound_descriptor_ids_by_role(contract: Mapping[str, object]) -> dict[ValidationRole, str]:
+    """Resolve the exact evaluator-bound validation pair without a fallback."""
+
+    material = dict(contract)
+    if not binding_matches(material):
+        raise ValueError("validation descriptor binding mismatch")
+    descriptors = material.get("descriptors")
+    if not isinstance(descriptors, list):
+        raise ValueError("validation descriptor binding mismatch")
+    resolved: dict[ValidationRole, str] = {}
+    for item in descriptors:
+        if not isinstance(item, dict):
+            raise ValueError("validation descriptor binding mismatch")
+        try:
+            role = ValidationRole(str(item["role"]))
+            descriptor_id = str(item["descriptor_id"])
+        except (KeyError, ValueError) as error:
+            raise ValueError("validation descriptor binding mismatch") from error
+        if role in resolved:
+            raise ValueError("validation descriptor role is ambiguous")
+        resolved[role] = descriptor_id
+    if set(resolved) != {ValidationRole.VISIBLE, ValidationRole.HIDDEN_ORACLE}:
+        raise ValueError("visible and hidden validation descriptors are required")
+    return resolved

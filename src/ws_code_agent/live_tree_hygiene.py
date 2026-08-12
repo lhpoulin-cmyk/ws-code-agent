@@ -13,6 +13,8 @@ HISTORICAL_RECORDS = {
     "docs/contracts/CODING_AGENT_FOUNDATION_CONTRACT.md",
     "docs/experiments/task11j-first-real-local-repository-v3-pilot.md",
     "docs/experiments/task11n-distinct-real-code-interactive-pilot.md",
+    "docs/experiments/task11o-katra-ws-code-agent-characterization-closeout.md",
+    "docs/work/katra-ws-code-agent-characterization-closeout-v1.yaml",
 }
 PILOT_MANIFESTS = {
     "docs/work/task11j-ws-doc-writer-real-repository-pilot-v1.json":

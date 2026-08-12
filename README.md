@@ -240,6 +240,16 @@ validation therefore did not run. The result is
 `VALIDATION_FAILED`. V3 and the frozen envelope remain unchanged, the real
 source was not mutated, and broad capability is not claimed.
 
+Task 11O closes the Katra ws-code-agent characterization phase without model
+inference or historical rescoring. It freezes
+`RTX_5070_TI_KATRA_WS_CODE_AGENT_BASELINE_V1`, retires the canonical Task
+10/11 sessions in place as historical evidence, removes only proven disposable
+temporary residue, and preserves cuda-compute, Ollama, all model artifacts,
+and Doc Writer continuity. The frozen V3 envelope remains unchanged and
+general production use remains ungranted. A comparison handoff names
+`hv-matrix` and a new VM 320, but Matrix migration remains `NOT_STARTED` and
+was explicitly belayed in this checkpoint.
+
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and

@@ -1,0 +1,79 @@
+schema_version: 1
+checkpoint: TASK11O-KATRA-WS-CODE-AGENT-CHARACTERIZATION-CLOSEOUT
+baseline_id: RTX_5070_TI_KATRA_WS_CODE_AGENT_BASELINE_V1
+status:
+  katra_characterization: COMPLETE
+  katra_ws_code_agent_execution: RETIRED_AFTER_TASK11N
+  katra_benchmark_baseline: FROZEN
+  ws_doc_writer_on_cuda_compute: CONTINUES
+  next_ws_code_agent_platform: HV_MATRIX_VM320
+  matrix_migration: NOT_STARTED
+  model_inference_count: 0
+production:
+  envelope: INTERACTIVE_PRACTICAL_CODER_V3_PRODUCTION_ENVELOPE_V1
+  envelope_status: FROZEN
+  general_production_use: NOT_YET_GRANTED
+historical_dispositions:
+  task11f: INTERACTIVE_PRACTICAL_CODER_V3_SOURCE_GROUNDED_ACCEPTANCE_PASS
+  task11g: INTERACTIVE_PRACTICAL_CODER_V3_PRODUCTION_ENVELOPE_FROZEN
+  task11j: TASK11J_REAL_LOCAL_REPOSITORY_PILOT_INFRASTRUCTURE_BLOCKED
+  task11k_apparatus: TASK11K_REAL_PILOT_VALIDATION_APPARATUS_REPAIRED
+  task11j_preserved_candidate: TASK11J_PRESERVED_CANDIDATE_VALIDATION_FAILED
+  task11l:
+    disposition: FIRST_REAL_LOCAL_REPOSITORY_INTERACTIVE_PILOT_ESCALATED
+    reason: VALIDATION_FAILED
+  task11m: DISTINCT_REAL_MIDFILE_INTERACTIVE_PILOT_PASS
+  task11n:
+    disposition: DISTINCT_REAL_CODE_INTERACTIVE_PILOT_ESCALATED
+    reason: VALIDATION_FAILED
+capability:
+  governance_containment: DEMONSTRATED
+  source_grounding: DEMONSTRATED
+  structured_exact_replacement: DEMONSTRATED
+  real_bounded_edit_selection: DEMONSTRATED
+  broad_interactive_practical_coder_capability: NOT_ESTABLISHED
+  general_production_use: NOT_GRANTED
+retirement:
+  authority: TASK11O_EVALUATOR_CLOSEOUT
+  state: CLOSED_HISTORICAL
+  raw_session_state_rewritten: false
+  canonical_store: /home/louis/.local/share/ws-code-agent/work
+  canonical_store_action: PRESERVE
+  sessions:
+    - work-20260810T235703Z-098d4639fe2c
+    - work-20260811T000243Z-ec4f331237b6
+    - work-20260811T003519Z-c880816d82b4
+    - work-20260811T003944Z-98433b647c4f
+    - work-20260811T034116Z-106d6e9a67df
+    - work-20260811T034325Z-5f9f28568beb
+    - work-task10n-a-devstral-forensic-20260811T051637Z
+    - work-task10n-b-devstral-forensic-20260811T131549Z
+    - work-task10n-devstral-clarification-20260811T045455Z
+    - work-task10n-devstral-write-20260811T045353Z
+    - work-task10r-restart-qwen25-clarification-20260811T191417Z
+    - work-task10r-restart-qwen25-write-20260811T191242Z
+    - work-task10v-qwen25-32b-clarification-20260811T204600Z
+    - work-task10v-qwen25-32b-write-20260811T203928Z
+    - work-task10y-qwen25-14b-clarification-20260811T235900Z
+    - work-task10y-qwen25-14b-write-20260811T235900Z
+    - work-task11a-qwen25-14b-positive-20260812T142051Z
+    - work-task11d-qwen25-14b-v3-20260812T154829Z
+    - work-task11f-qwen25-14b-grounded-20260812T170353Z
+    - work-task11j-ws-doc-writer-20260812T194000Z
+    - work-task11l-ws-doc-writer-20260812T212019Z
+    - work-task11m-gpu-compute-20260812T220520Z
+    - work-task11n-ws-doc-writer-20260812T223509Z
+  candidates:
+    work-task10v-qwen25-32b-write-20260811T203928Z: HISTORICAL_EVIDENCE_NOT_PROMOTED
+    work-task11f-qwen25-14b-grounded-20260812T170353Z: HISTORICAL_EVIDENCE_NOT_PROMOTED
+    work-task11j-ws-doc-writer-20260812T194000Z: HISTORICAL_EVIDENCE_NOT_PROMOTED
+    work-task11l-ws-doc-writer-20260812T212019Z: HISTORICAL_EVIDENCE_NOT_PROMOTED
+    work-task11m-gpu-compute-20260812T220520Z: HISTORICAL_EVIDENCE_NOT_PROMOTED
+    work-task11n-ws-doc-writer-20260812T223509Z: HISTORICAL_EVIDENCE_NOT_PROMOTED
+matrix_handoff:
+  next_host: hv-matrix
+  next_appliance: new VM 320
+  runtime_authority: gpu-compute
+  application: ws-code-agent
+  migration: NOT_STARTED
+  action_in_task11o: BELAYED

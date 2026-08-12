@@ -11,7 +11,7 @@ from typing import Any, Protocol
 
 from .executor_feedback import bounded_executor_feedback
 from .isolated_patch import ApplicationStatus, IsolatedContext, IsolatedPatchExecutor, PatchProposal
-from .readonly_executor import ExecutorOperationError, RepositorySnapshot, ReadOnlyExecutor
+from .readonly_executor import ExecutorOperationError, ReadResult, RepositorySnapshot, ReadOnlyExecutor
 from .request_protocol import ProtocolSpec, SINGLE_REPOSITORY_PROTOCOL
 from .structured_edit import (
     StructuredTextReplacement,
@@ -19,6 +19,7 @@ from .structured_edit import (
     StructuredTextReplacementResult,
     TextReplacementStatus,
 )
+from .source_grounding import SOURCE_READ_REQUIRED
 
 
 MAX_RAW_RESPONSE_BYTES = 32_768
@@ -120,14 +121,17 @@ class DispositionHarness:
         *,
         protocol: ProtocolSpec = SINGLE_REPOSITORY_PROTOCOL,
         structured_editor: StructuredTextReplacementExecutor | None = None,
+        structured_grounded_paths: frozenset[str] = frozenset(),
     ) -> None:
         self.task = task
         self._observer = observer or ReadOnlyExecutor()
         self._patcher = patcher or IsolatedPatchExecutor(self._observer)
         self._protocol = protocol
         self._structured_editor = structured_editor
+        self._structured_grounded_paths = structured_grounded_paths
         self._context: IsolatedContext | None = None
         self._structured_result: StructuredTextReplacementResult | None = None
+        self._read_result: ReadResult | None = None
         self._turn = 0
 
     def close(self) -> None:
@@ -190,6 +194,7 @@ class DispositionHarness:
             return self._record(request, "VALID", error.fact.error_classification or "EXECUTOR_ERROR", "READ_FILE",
                                 {"status": "STALE" if error.fact.error_classification == "STATE_STALE" else "ERROR", "error": error.fact.error_classification}, None)
         content = result.content[:MAX_READ_BYTES].decode("utf-8", errors="replace")
+        self._read_result = result
         return self._record(request, "VALID", "AUTHORIZED", "READ_FILE", {"status": "OK", "path": path, "content": content, "truncated": len(result.content) > MAX_READ_BYTES}, None)
 
     def _search(self, request: ModelRequest) -> HarnessStep:
@@ -253,13 +258,24 @@ class DispositionHarness:
                 request, "VALID", "DENIED_AUTHORITY", None,
                 {"status": "DENIED", "application": "DENIED_AUTHORITY"}, None,
             )
+        path = request.arguments["path"]
+        if path not in self.task.allowed_patch_paths:
+            return self._record(
+                request, "VALID", "DENIED_AUTHORITY", None,
+                {"status": "DENIED", "application": "DENIED_AUTHORITY"}, None,
+            )
+        if path not in self._structured_grounded_paths:
+            return self._record(
+                request, "VALID", SOURCE_READ_REQUIRED, None,
+                {"status": SOURCE_READ_REQUIRED, "path": path}, None,
+            )
         try:
             if self._context is None:
                 self._context = self._structured_editor.build_isolated_copy(self.task.snapshot)
             proposal = StructuredTextReplacement.create(
                 self.task.snapshot,
                 raw_request_sha256=request.raw_sha256,
-                path=request.arguments["path"],
+                path=path,
                 old_text=request.arguments["old_text"],
                 new_text=request.arguments["new_text"],
             )

@@ -30,6 +30,7 @@ INTERACTIVE_RECOVERY_FAILED = "INTERACTIVE_RECOVERY_FAILED"
 INTERACTIVE_AUTHORITY_MISJUDGMENT = "INTERACTIVE_AUTHORITY_MISJUDGMENT"
 INTERACTIVE_REQUIREMENTS_JUDGMENT_FAILED = "INTERACTIVE_REQUIREMENTS_JUDGMENT_FAILED"
 INTERACTIVE_STRUCTURED_EDIT_RECOVERY_FAILED = "INTERACTIVE_STRUCTURED_EDIT_RECOVERY_FAILED"
+INTERACTIVE_SOURCE_GROUNDING_FAILED = "INTERACTIVE_SOURCE_GROUNDING_FAILED"
 
 DELIBERATIVE_OVERNIGHT_CODER = "DELIBERATIVE_OVERNIGHT_CODER"
 OPERATOR = "OPERATOR"
@@ -38,6 +39,7 @@ DELIBERATIVE_OVERNIGHT_CODER_OR_OPERATOR = "DELIBERATIVE_OVERNIGHT_CODER_OR_OPER
 ESCALATION_REASONS = (
     "PATCH_REPAIR_EXHAUSTED",
     "STRUCTURED_EDIT_REPAIR_EXHAUSTED",
+    "SOURCE_GROUNDING_NONCOMPLIANCE",
     "NO_CHANGE_AFTER_PATCH_REJECTED",
     "AUTHORITY_MISJUDGMENT",
     "REQUIREMENTS_JUDGMENT_FAILED",
@@ -177,6 +179,21 @@ def classify(
             "VALID_REQUEST_CLARIFICATION",
             recommended_next_worker=OPERATOR,
         )
+
+    consecutive_ungrounded_writes = 0
+    for item in turns:
+        if item.get("authority_outcome") == "SOURCE_READ_REQUIRED":
+            consecutive_ungrounded_writes += 1
+        else:
+            consecutive_ungrounded_writes = 0
+        if consecutive_ungrounded_writes < 2:
+            continue
+        return _escalate(
+            INTERACTIVE_SOURCE_GROUNDING_FAILED,
+            "SOURCE_GROUNDING_NONCOMPLIANCE",
+        )
+    if consecutive_ungrounded_writes:
+        return PolicyDecision(CONTINUE, "SOURCE_READ_REQUIRED")
 
     structured_failures = [
         index for index, item in enumerate(turns)

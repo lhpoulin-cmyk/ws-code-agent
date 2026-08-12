@@ -142,6 +142,20 @@ No candidate or validation run existed. The result is
 diff serialization from the test, exposing a source-alignment failure without
 repairing it or broadening the lane.
 
+Task 11E adds the supervisor-only
+`SOURCE_GROUNDED_STRUCTURED_EDIT_V1` precondition. A V3 existing-file
+replacement now reaches exact-match execution only after a successful
+same-session `READ_FILE` of that exact path, durably bound to the current Source
+Snapshot X. An ungrounded request receives only `SOURCE_READ_REQUIRED` and its
+requested path; no match is counted and no source content is disclosed. A
+second consecutive ungrounded write escalates as
+`SOURCE_GROUNDING_NONCOMPLIANCE`, without consuming or expanding the existing
+match-repair allowance. Retrospective policy replay separates the prior
+failures: Task 11A was source-grounded and then failed patch transport, while
+Task 11D was never source-grounded and therefore would not have reached the
+structured executor. V3's render, structured-edit semantics, authority, and
+all historical dispositions remain unchanged.
+
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and

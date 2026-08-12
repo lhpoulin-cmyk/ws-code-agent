@@ -266,6 +266,26 @@ candidates:
           duplicate_inference: 0
           recommended_next_worker: DELIBERATIVE_OVERNIGHT_CODER
           automatic_handoff_performed: false
+        task11e_source_grounding_precondition:
+          policy_id: SOURCE_GROUNDED_STRUCTURED_EDIT_V1
+          status: READY
+          applies_to: PROPOSE_TEXT_REPLACEMENT
+          same_session_read_required: true
+          exact_path_required: true
+          source_snapshot_binding_required: true
+          durable_executor_read_fact_required: true
+          ungrounded_result: SOURCE_READ_REQUIRED
+          ungrounded_match_attempted: false
+          consecutive_ungrounded_write_limit: 2
+          escalation_reason: SOURCE_GROUNDING_NONCOMPLIANCE
+          match_repair_allowance_changed: false
+          authority_broadened: false
+          task11a_control: GROUNDING_PRECONDITION_PASS_PATCH_TRANSPORT_FAILED
+          task11d_retrospective_primary: INTERACTIVE_SOURCE_GROUNDING_FAILED
+          task11d_retrospective_consequence: STRUCTURED_EDIT_REPAIR_EXHAUSTED
+          task11d_historical_disposition: UNCHANGED
+          model_inferences_14b: 0
+          model_inferences_32b: 0
         task11b_patch_serialization_forensics:
           status: COMPLETE
           disposition: PATCH_SERIALIZATION_INTERFACE_MISMATCH_CONFIRMED
@@ -304,6 +324,7 @@ candidates:
       - ../docs/experiments/task11b-interactive-patch-serialization-forensics.md
       - ../docs/experiments/task11c-deterministic-structured-edit-transport.md
       - ../docs/experiments/task11d-v3-structured-edit-acceptance.md
+      - ../docs/experiments/task11e-source-grounded-structured-edit-precondition.md
 
   - id: gpt-oss-20b-mxfp4
     status: INELIGIBLE_FROZEN_COMPARISON_SEAM

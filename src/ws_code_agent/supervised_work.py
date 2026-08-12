@@ -81,6 +81,12 @@ from .supervised_validation import (
     validation_registry,
 )
 from .structured_edit import StructuredTextReplacementExecutor, TextReplacementStatus
+from .source_grounding import (
+    POLICY_ID as SOURCE_GROUNDING_POLICY_ID,
+    SOURCE_GROUNDING_INVALIDATED,
+    grounded_paths_from_turns,
+    record_successful_read,
+)
 from .validation import DescriptorValidationExecutor, ValidationRole, ValidationRun, ValidationStatus
 
 
@@ -1209,6 +1215,7 @@ class SupervisedWorkController:
                 "canonical_diff_origin": "evaluator",
                 "candidate_state": "CANDIDATE",
                 "live_default": False,
+                "source_grounding_policy": SOURCE_GROUNDING_POLICY_ID,
             }
         if fixture_contract_sha256 is not None:
             manifest["fixture"] = {
@@ -1252,6 +1259,8 @@ class SupervisedWorkController:
                 "validation_status": validation_status,
             },
         }
+        if session_kind == TASK11D_STRUCTURED_SESSION_KIND:
+            case["case_state"]["source_grounding"] = {}
         if interactive_boundary is not None:
             case["interactive_work_boundary"] = interactive_boundary
             case["case_state"]["interactive_policy"] = {
@@ -1306,6 +1315,17 @@ class SupervisedWorkController:
         case = self._turns._case(WORK_CASE_ID)
         if case["case_status"] not in {"READY", "ACTIVE"}:
             raise SupervisedWorkError("SESSION_MAY_NOT_ADVANCE")
+        snapshot = _snapshot(case["snapshot_x"])
+        if (
+            self.manifest().get("structured_transport", {}).get("source_grounding_policy")
+            == SOURCE_GROUNDING_POLICY_ID
+            and case["case_state"].get("source_grounding")
+            and ReadOnlyExecutor().compare_snapshot(snapshot).status is not CompareStatus.MATCH
+        ):
+            state["status"] = "INVALIDATED"
+            state["source_grounding_status"] = SOURCE_GROUNDING_INVALIDATED
+            _atomic_json(self.root / "session-state.json", state)
+            raise SupervisedWorkError(SOURCE_GROUNDING_INVALIDATED)
         try:
             result = self._turns.step(WORK_CASE_ID, _IntentRecordingBackend(self, backend), self._process_turn)
         except Exception as error:
@@ -1339,6 +1359,7 @@ class SupervisedWorkController:
         observer = ReadOnlyExecutor()
         if observer.compare_snapshot(snapshot).status is not CompareStatus.MATCH:
             raise ExperimentError("authoritative source no longer matches frozen session snapshot")
+        current_turn = case["turn_committed"] + 1
         task = HarnessTask(
             case["interaction_id"], WORK_CASE_ID, snapshot,
             tuple(self.manifest()["authority"]["read_scopes"]),
@@ -1352,9 +1373,20 @@ class SupervisedWorkController:
             if protocol.protocol_id == STRUCTURED_EDIT_PROTOCOL_ID
             else None
         )
+        prior_turns = self._committed_harness_results(case)
+        grounded = (
+            grounded_paths_from_turns(
+                prior_turns,
+                source_snapshot_identity=snapshot.snapshot_identity,
+                before_turn=current_turn,
+            )
+            if protocol.protocol_id == STRUCTURED_EDIT_PROTOCOL_ID
+            else {}
+        )
         harness = DispositionHarness(
             task, observer, IsolatedPatchExecutor(observer),
             protocol=protocol, structured_editor=structured_editor,
+            structured_grounded_paths=frozenset(grounded),
         )
         try:
             adapter = self._response_adapter_binding()
@@ -1364,7 +1396,7 @@ class SupervisedWorkController:
                 normalized = normalize_single_markdown_json_fence(raw.encode("utf-8"))
                 parser_input = normalized.normalized_parser_input.decode("utf-8", errors="strict")
                 normalization_evidence = normalized.evidence()
-                turn = case["turn_committed"] + 1
+                turn = current_turn
                 directory = self.root / "cases" / WORK_CASE_ID / "turns" / f"{turn:04d}"
                 _atomic_bytes(directory / "normalized-parser-input.txt", normalized.normalized_parser_input)
                 _atomic_json(directory / "normalization-evidence.json", normalization_evidence)
@@ -1372,7 +1404,7 @@ class SupervisedWorkController:
             record = asdict(step.record)
             result: dict[str, Any] = {
                 **record,
-                "turn": case["turn_committed"] + 1,
+                "turn": current_turn,
                 "projection": step.model_projection,
                 "evaluator_evidence": {
                     "source_snapshot_preserved": observer.compare_snapshot(snapshot).status.value,
@@ -1383,6 +1415,16 @@ class SupervisedWorkController:
                 result["parser_input_sha256"] = record["raw_sha256"]
                 result["raw_sha256"] = normalization_evidence["raw_sha256"]
                 result["normalization"] = normalization_evidence
+            if harness._read_result is not None:
+                read_evidence = record_successful_read(
+                    harness._read_result,
+                    snapshot,
+                    turn=current_turn,
+                )
+                result["evaluator_evidence"]["source_grounding_read"] = read_evidence
+                case["case_state"].setdefault("source_grounding", {})[
+                    read_evidence["path"]
+                ] = read_evidence
             if self._cross_repository_shape(parser_input, protocol):
                 result["authority_outcome"] = "SUPERVISION_REQUIRED_CROSS_REPOSITORY"
                 result["projection"] = {"status": "DENIED", "error": "SUPERVISION_REQUIRED_CROSS_REPOSITORY"}
@@ -1418,6 +1460,17 @@ class SupervisedWorkController:
             return result
         finally:
             harness.close()
+
+    def _committed_harness_results(self, case: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+        """Load only hash-chain-committed turn results for supervisor policy."""
+
+        return [
+            _load(
+                self.root / "cases" / WORK_CASE_ID / "turns" / f"{turn:04d}"
+                / "harness-result.json"
+            )
+            for turn in range(1, int(case["turn_committed"]) + 1)
+        ]
 
     def _response_adapter_binding(self) -> dict[str, Any]:
         """Require the immutable lane binding to agree across durable state."""
@@ -1465,6 +1518,7 @@ class SupervisedWorkController:
                 and transport.get("executor_component") == "ws-code-agent-structured-text-replacement/v1"
                 and transport.get("candidate_state") == "CANDIDATE"
                 and transport.get("live_default") is False
+                and transport.get("source_grounding_policy") == SOURCE_GROUNDING_POLICY_ID
             ):
                 raise SupervisedWorkError("V3_TRANSPORT_BINDING_MISMATCH")
         return protocol
@@ -1856,6 +1910,7 @@ class SupervisedWorkController:
             "response_adapter": self._response_adapter_binding(),
             "interactive_work_boundary": self.manifest().get("interactive_work_boundary"),
             "interactive_policy": case["case_state"].get("interactive_policy"),
+            "source_grounding": case["case_state"].get("source_grounding", {}),
             "invocation_integrity": {
                 "invocation_ids": invocation_ids,
                 "runtime_jobs": runtime_jobs,
@@ -1949,6 +2004,9 @@ class SupervisedWorkController:
                 "executor_operation": result.get("executor_operation"),
                 "projection": result.get("projection"),
                 "terminal_disposition": result.get("terminal_disposition"),
+                "source_grounding_read": result.get("evaluator_evidence", {}).get(
+                    "source_grounding_read"
+                ),
             })
         validation = self._validation_summary()
         candidate = case["case_state"].get("candidate")
@@ -1973,6 +2031,7 @@ class SupervisedWorkController:
             "secondary_evidence": decision.get("secondary_evidence", []),
             "recommended_next_worker": decision.get("recommended_next_worker"),
             "candidate": candidate,
+            "source_grounding": case["case_state"].get("source_grounding", {}),
             "automatic_handoff_performed": False,
         }
         _atomic_json(self.root / "evaluator" / "handoff-packet.json", packet)
@@ -2039,6 +2098,9 @@ class SupervisedWorkController:
                 "raw_sha256": result.get("raw_sha256"),
                 "parser_input_sha256": result.get("parser_input_sha256", result.get("raw_sha256")),
                 "normalization": result.get("normalization"),
+                "source_grounding_read": result.get("evaluator_evidence", {}).get(
+                    "source_grounding_read"
+                ),
             })
             if "DENIED" in str(result.get("authority_outcome")) or result.get("authority_outcome") == "FORBIDDEN_RECORDED":
                 anomalies.append({"turn": turn, "authority_outcome": result.get("authority_outcome")})
@@ -2073,6 +2135,7 @@ class SupervisedWorkController:
             "operator_disposition": _load(self.root / "session-state.json").get("operator_disposition"),
             "interactive_work_boundary": manifest.get("interactive_work_boundary"),
             "interactive_policy": case["case_state"].get("interactive_policy"),
+            "source_grounding": case["case_state"].get("source_grounding", {}),
         }
         _atomic_json(self.root / "review-packet.json", packet)
         return packet

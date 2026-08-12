@@ -195,6 +195,18 @@ The exact disposition is
 repository remained unchanged, no candidate was promoted, and the frozen
 envelope and all historical evidence remain unchanged.
 
+Task 11K repairs both Task 11J apparatus defects without model inference or
+candidate mutation. Validation now resolves the exact visible and hidden
+descriptors from the immutable session contract, with no Task 10 fallback, and
+an explicit identity-bound recovery records the proven pre-execution failure.
+The hygiene gate now evaluates the pre-publication tree and distinguishes the
+exact external pilot-target record from forbidden runtime inheritance. After
+the repair was published and all gates passed, the original Task 11J visible
+validator ran under containment and returned `VALIDATION_FAIL`; hidden
+validation therefore did not run. The forward-only supplemental result is
+`TASK11J_PRESERVED_CANDIDATE_VALIDATION_FAILED`. Task 11J remains historically
+infrastructure-blocked, and the source repository remains unchanged.
+
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and

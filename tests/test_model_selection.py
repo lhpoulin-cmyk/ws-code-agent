@@ -178,6 +178,27 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn("NO_CHANGE_AFTER_PATCH_REJECTED", boundary_evidence)
         self.assertIn("automatic_handoff_performed: false", boundary_evidence)
         self.assertIn("model inference count: 0", boundary_evidence)
+        task11a_evidence = (
+            ROOT / "docs/experiments/task11a-restricted-interactive-coder-acceptance.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "INTERACTIVE_PRACTICAL_CODER_RESTRICTED_ACCEPTANCE_ESCALATED",
+            task11a_evidence,
+        )
+        self.assertIn("PATCH_REPAIR_EXHAUSTED", task11a_evidence)
+        self.assertIn("14B inferences: 3", task11a_evidence)
+        self.assertIn("32B inferences: 0", task11a_evidence)
+        self.assertIn("duplicate inference: 0", task11a_evidence)
+        self.assertIn("automatic_handoff_performed: false", task11a_evidence)
+        self.assertIn(
+            "NEXT: REVIEW THE EXACT ESCALATION EVIDENCE BEFORE CHANGING THE INTERACTIVE WORK BOUNDARY",
+            task11a_evidence,
+        )
+        self.assertIn(
+            "disposition: INTERACTIVE_PRACTICAL_CODER_RESTRICTED_ACCEPTANCE_ESCALATED",
+            candidate,
+        )
+        self.assertIn("reason: PATCH_REPAIR_EXHAUSTED", candidate)
 
     def test_qwen25_coder_32b_scale_control_preserves_inconclusive_admission(self):
         matrix = (ROOT / "models/candidate-matrix.yaml").read_text(encoding="utf-8")

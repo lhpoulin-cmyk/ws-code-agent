@@ -229,6 +229,25 @@ candidates:
           disposition: ESCALATION_REQUIRED
           historical_rescore: false
           model_inferences: 0
+        task11a_restricted_acceptance:
+          fixture_id: task11a-interactive-positive-existing-file/synthetic-v1
+          session_id: work-task11a-qwen25-14b-positive-20260812T142051Z
+          requirements_status: COMPLETE
+          entry_status: INTERACTIVE_ENTRY_ACCEPTED
+          status: ESCALATED
+          disposition: INTERACTIVE_PRACTICAL_CODER_RESTRICTED_ACCEPTANCE_ESCALATED
+          classification: INTERACTIVE_RECOVERY_FAILED
+          reason: PATCH_REPAIR_EXHAUSTED
+          turns: 3
+          model_inferences_14b: 3
+          model_inferences_32b: 0
+          candidate: NOT_CREATED
+          technical_validation: NOT_EVALUATED_NO_CANDIDATE
+          source_snapshot: MATCH
+          turn_hash_chain: PASS
+          duplicate_inference: 0
+          recommended_next_worker: DELIBERATIVE_OVERNIGHT_CODER
+          automatic_handoff_performed: false
     baseline_disposition:
       practical_coding_baseline: YES
       runtime_accepted: YES
@@ -246,6 +265,7 @@ candidates:
       - ../docs/experiments/task10x-qwen25-coder-14b-adapter-calibration.md
       - ../docs/experiments/task10y-qwen25-coder-14b-normalized-production-lane.md
       - ../docs/experiments/task10z-interactive-practical-coder-boundary.md
+      - ../docs/experiments/task11a-restricted-interactive-coder-acceptance.md
 
   - id: gpt-oss-20b-mxfp4
     status: INELIGIBLE_FROZEN_COMPARISON_SEAM

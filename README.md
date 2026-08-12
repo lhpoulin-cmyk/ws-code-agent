@@ -87,6 +87,16 @@ Escalation recommends the deliberative/overnight coder or operator but never
 invokes either automatically. A validated candidate remains
 `AWAITING_OPERATOR_REVIEW` and is never promoted automatically.
 
+Task 11A exercised that boundary on a fresh requirements-complete, bounded,
+single-repository change. Entry passed and the 14B worker made a valid read,
+then proposed the correct semantic change twice; both patch envelopes were
+corrupt. The second rejection exhausted the one ordinary repair opportunity,
+so the supervisor stopped after three inferences with durable
+`ESCALATION_REQUIRED` / `PATCH_REPAIR_EXHAUSTED` evidence and no candidate.
+This is `INTERACTIVE_PRACTICAL_CODER_RESTRICTED_ACCEPTANCE_ESCALATED`, not an
+infrastructure failure or acceptance. No overnight worker was invoked and no
+source effect was promoted.
+
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and

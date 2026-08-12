@@ -84,14 +84,19 @@ from .production_envelope import (
     TASK11M_TARGET_HEAD,
     TASK11M_TARGET_ORIGIN,
     TASK11M_TARGET_PATH,
+    TASK11N_PILOT_INSTANCE_ID,
+    TASK11N_TARGET_FILE,
+    TASK11N_TARGET_FILE_SHA256,
     task11j_pilot_instance,
     task11l_pilot_instance,
     task11m_pilot_instance,
+    task11n_pilot_instance,
 )
 from .supervised_validation import (
     WRITE_VALIDATION_IDS,
     TASK11J_VALIDATION_IDS,
     TASK11M_VALIDATION_IDS,
+    TASK11N_VALIDATION_IDS,
     bind_validation_ids,
     binding_matches,
     bound_descriptor_ids_by_role,
@@ -1280,6 +1285,37 @@ class SupervisedWorkController:
             target_path=TASK11M_TARGET_FILE,
             target_sha256=TASK11M_TARGET_FILE_SHA256,
             validation_ids=TASK11M_VALIDATION_IDS,
+        )
+
+    @classmethod
+    def start_task11n_real_code_pilot(
+        cls,
+        store: Path,
+        *,
+        session_id: str,
+        candidate_path: Path,
+        harness_sha: str,
+    ) -> "SupervisedWorkController":
+        """Start the distinct Task 11N executable-code pilot."""
+
+        try:
+            instance = task11n_pilot_instance(Path(__file__).resolve().parents[2])
+        except Exception as error:
+            raise SupervisedWorkError(str(error)) from error
+        return cls._start_bound_real_repository_pilot(
+            store,
+            session_id=session_id,
+            candidate_path=candidate_path,
+            harness_sha=harness_sha,
+            instance=instance,
+            fixture_identity=TASK11N_PILOT_INSTANCE_ID,
+            error_prefix="TASK11N",
+            expected_path=TASK11J_TARGET_PATH,
+            expected_origin=TASK11J_TARGET_ORIGIN,
+            expected_head=TASK11J_TARGET_HEAD,
+            target_path=TASK11N_TARGET_FILE,
+            target_sha256=TASK11N_TARGET_FILE_SHA256,
+            validation_ids=TASK11N_VALIDATION_IDS,
         )
 
     @classmethod

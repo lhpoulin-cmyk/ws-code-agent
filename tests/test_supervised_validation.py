@@ -23,6 +23,7 @@ from ws_code_agent.supervised_validation import (  # noqa: E402
     WRITE_VALIDATION_IDS,
     TASK11J_VALIDATION_IDS,
     TASK11M_VALIDATION_IDS,
+    TASK11N_VALIDATION_IDS,
     bind_validation_ids,
     bound_descriptor_ids_by_role,
     validation_registry,
@@ -202,7 +203,7 @@ class SupervisedValidationTests(unittest.TestCase):
     def test_registry_is_exact_and_rejects_unauthorized_identity(self):
         registry = validation_registry()
         self.assertEqual(
-            set(WRITE_VALIDATION_IDS + TASK11J_VALIDATION_IDS + TASK11M_VALIDATION_IDS),
+            set(WRITE_VALIDATION_IDS + TASK11J_VALIDATION_IDS + TASK11M_VALIDATION_IDS + TASK11N_VALIDATION_IDS),
             set(registry),
         )
         contract = bind_validation_ids(WRITE_VALIDATION_IDS)

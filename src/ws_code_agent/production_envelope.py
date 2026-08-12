@@ -58,6 +58,10 @@ TASK11M_PILOT_INSTANCE_PATH = Path(
     "docs/work/task11m-gpu-compute-current-state-midfile-v1.json"
 )
 TASK11M_PILOT_INSTANCE_ID = "task11m-gpu-compute-current-state-ollama-version/v1"
+TASK11N_PILOT_INSTANCE_PATH = Path(
+    "docs/work/task11n-ws-doc-writer-writing-setup-code-v1.json"
+)
+TASK11N_PILOT_INSTANCE_ID = "task11n-ws-doc-writer-writing-setup-custom-policy/v1"
 TASK11J_TARGET_PATH = "/home/louis/src/ws-doc-writer"
 TASK11J_TARGET_ORIGIN = "git@github.com:lhpoulin-cmyk/ws-doc-writer.git"
 TASK11J_TARGET_BRANCH = "work/multi-backend-multi-model-v1-20260809"
@@ -71,6 +75,8 @@ TASK11M_TARGET_HEAD = "282cffabfa165b9d9906a35a9372cb077bdf6153"
 TASK11M_TARGET_SNAPSHOT = "15ffd022f1817067e332c69f0a02ff67cbc39de5a015a37ad7c7ec24890efc72"
 TASK11M_TARGET_FILE = "CURRENT_STATE.md"
 TASK11M_TARGET_FILE_SHA256 = "5a06e84ce48c47bda4503e4b49b1eaf0348f2215d71455e7257f1044200d814d"
+TASK11N_TARGET_FILE = "src/" + "doc" + "writer_web/writing_setup.py"
+TASK11N_TARGET_FILE_SHA256 = "f6031119600919e4004c57c6229b7bd911f6befb9e67af04ce719da99f444a6f"
 
 TASK11F_CHECKPOINT = "TASK11F-FRESH-V3-SOURCE-GROUNDED-INTERACTIVE-ACCEPTANCE"
 TASK11F_DISPOSITION = "INTERACTIVE_PRACTICAL_CODER_V3_SOURCE_GROUNDED_ACCEPTANCE_PASS"
@@ -514,6 +520,73 @@ def task11m_pilot_instance(root: Path | None = None) -> dict[str, Any]:
         or pilot.get("patch_paths") != [TASK11M_TARGET_FILE]
     ):
         raise PilotManifestError("TASK11M_PILOT_BINDING_MISMATCH")
+    return {**instance, "validation_result": validated}
+
+
+def task11n_pilot_instance(root: Path | None = None) -> dict[str, Any]:
+    """Load and verify the distinct Task 11N executable-code pilot packet."""
+
+    repository = root or Path(__file__).resolve().parents[2]
+    path = repository / TASK11N_PILOT_INSTANCE_PATH
+    try:
+        instance = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise PilotManifestError("TASK11N_PILOT_INSTANCE_UNAVAILABLE") from error
+    if set(instance) != {
+        "schema_version", "pilot_instance_id", "checkpoint", "source_binding",
+        "model_binding", "generation_method", "pilot_manifest",
+    }:
+        raise PilotManifestError("TASK11N_PILOT_INSTANCE_FIELDS_MISMATCH")
+    if (
+        instance.get("schema_version") != 1
+        or instance.get("pilot_instance_id") != TASK11N_PILOT_INSTANCE_ID
+        or instance.get("checkpoint") != "TASK11N-DISTINCT-REAL-CODE-INTERACTIVE-PILOT"
+    ):
+        raise PilotManifestError("TASK11N_PILOT_INSTANCE_IDENTITY_MISMATCH")
+    source = instance.get("source_binding")
+    expected_source = {
+        "canonical_path": TASK11J_TARGET_PATH,
+        "origin": TASK11J_TARGET_ORIGIN,
+        "branch": TASK11J_TARGET_BRANCH,
+        "remote_ref": f"refs/heads/{TASK11J_TARGET_BRANCH}",
+        "target_path": TASK11N_TARGET_FILE,
+        "target_sha256": TASK11N_TARGET_FILE_SHA256,
+        "submodule_identity": hashlib.sha256(b"").hexdigest(),
+    }
+    if source != expected_source:
+        raise PilotManifestError("TASK11N_SOURCE_BINDING_MISMATCH")
+    envelope = frozen_envelope(repository)
+    expected_model = {
+        "work_role": WORK_ROLE,
+        "model": envelope["worker"]["model"],
+        "manifest": envelope["worker"]["manifest"],
+        "runtime_profile": envelope["worker"]["runtime_profile"],
+        "context": envelope["worker"]["context"],
+        "placement": envelope["worker"]["placement"],
+    }
+    if instance.get("model_binding") != expected_model:
+        raise PilotManifestError("TASK11N_MODEL_BINDING_MISMATCH")
+    if instance.get("generation_method") != {
+        "request_fields": ["model", "prompt", "stream"],
+        "stream": False,
+        "seed_override": "ABSENT",
+        "temperature_override": "ABSENT",
+        "top_p_override": "ABSENT",
+        "top_k_override": "ABSENT",
+        "other_generation_overrides": [],
+        "interpretation": "OBSERVED_REPRODUCIBILITY",
+    }:
+        raise PilotManifestError("TASK11N_GENERATION_METHOD_BINDING_MISMATCH")
+    pilot = instance.get("pilot_manifest")
+    validated = validate_pilot_manifest(pilot)
+    if (
+        pilot.get("pilot_id") != TASK11N_PILOT_INSTANCE_ID
+        or pilot.get("repository", {}).get("head") != TASK11J_TARGET_HEAD
+        or pilot.get("repository", {}).get("source_snapshot_x") != TASK11J_TARGET_SNAPSHOT
+        or pilot.get("read_scopes") != [TASK11N_TARGET_FILE]
+        or pilot.get("patch_paths") != [TASK11N_TARGET_FILE]
+    ):
+        raise PilotManifestError("TASK11N_PILOT_BINDING_MISMATCH")
     return {**instance, "validation_result": validated}
 
 

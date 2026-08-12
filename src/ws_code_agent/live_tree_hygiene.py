@@ -18,6 +18,8 @@ PILOT_MANIFESTS = {
         "TASK11J-FIRST-REAL-LOCAL-REPOSITORY-V3-PILOT",
     "docs/work/task11l-ws-doc-writer-real-repository-pilot-v1.json":
         "TASK11L-FRESH-REAL-REPOSITORY-PILOT-UNDER-REPAIRED-APPARATUS",
+    "docs/work/task11n-ws-doc-writer-writing-setup-code-v1.json":
+        "TASK11N-DISTINCT-REAL-CODE-INTERACTIVE-PILOT",
 }
 PILOT_MANIFEST = "docs/work/task11j-ws-doc-writer-real-repository-pilot-v1.json"
 EXACT_PILOT_SURFACES = {
@@ -25,6 +27,10 @@ EXACT_PILOT_SURFACES = {
     "tools/calibrate_task11j_validation.py",
     "validation-assets/task11j-ws-doc-writer-src-readme-hidden-v1.py",
     "validation-assets/task11j-ws-doc-writer-src-readme-visible-v1.py",
+    "tests/test_task11n_real_code_pilot.py",
+    "tools/calibrate_task11n_validation.py",
+    "validation-assets/task11n-ws-doc-writer-writing-setup-hidden-v1.py",
+    "validation-assets/task11n-ws-doc-writer-writing-setup-visible-v1.py",
 }
 MARKERS = ("doc" + "writer", "/srv/ws-" + "doc" + "writer")
 ACTIVE_MARKERS = MARKERS + ("ws-" + "doc" + "-writer",)

@@ -180,6 +180,21 @@ state remains `NOT_YET_RUN` and general production use remains
 requirements-complete, operator-authorized task with one writable file. No
 pilot target was fabricated or selected.
 
+Task 11J bound the first already-local real-repository pilot to the frozen
+envelope and the pinned `ws-doc-writer` source snapshot. In three fresh 14B
+turns the supervisor denied an ungrounded write, the worker read the exact
+target, and an authority-valid one-path structured candidate was created in
+isolation. The run is not scored as PASS or model failure: the first validation
+transition selected the historical Task 10 visible-validator ID instead of the
+Task 11J descriptor durably bound in the session, so neither contained
+validator ran. The post-run gate also exposed that the tracked pilot manifest
+conflicts with the inherited live-tree hygiene rule; its pre-commit test had
+missed the then-untracked file. Neither defect was repaired after model output.
+The exact disposition is
+`TASK11J_REAL_LOCAL_REPOSITORY_PILOT_INFRASTRUCTURE_BLOCKED`. The source
+repository remained unchanged, no candidate was promoted, and the frozen
+envelope and all historical evidence remain unchanged.
+
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and

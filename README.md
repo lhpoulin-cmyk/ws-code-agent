@@ -207,6 +207,15 @@ validation therefore did not run. The forward-only supplemental result is
 `TASK11J_PRESERVED_CANDIDATE_VALIDATION_FAILED`. Task 11J remains historically
 infrastructure-blocked, and the source repository remains unchanged.
 
+Task 11L runs a fresh independent real-repository pilot through the repaired
+apparatus without reusing the Task 11J session or candidate. The worker was
+denied before reading, grounded the exact target, and produced an authorized
+one-file isolated candidate in three turns. The session-bound visible validator
+then returned `VALIDATION_FAIL`, so hidden validation did not run and the fresh
+result is `FIRST_REAL_LOCAL_REPOSITORY_INTERACTIVE_PILOT_ESCALATED` with reason
+`VALIDATION_FAILED`. The real source remained unchanged, and no automatic
+handoff or promotion occurred.
+
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and

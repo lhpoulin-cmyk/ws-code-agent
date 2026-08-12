@@ -129,8 +129,18 @@ normalizer, the value-free V3 render, the exact Task 10W validators, and the
 existing isolated candidate/review machinery. `PROPOSE_PATCH` is unavailable;
 accepted replacements retain the model's exact path and old/new text while the
 evaluator owns occurrence counting and canonical review-diff construction.
-This apparatus is not the default interactive lane and carries no behavioral
-result until its separately published fresh acceptance session runs.
+This apparatus is not the default interactive lane. Its separately published
+fresh acceptance session then emitted two parser-valid, authority-valid
+structured requests. Both selected `src/message.py` and replacement code that
+returns `"hello"`, but neither selected `old_text` that existed in the frozen
+source: turn 1 selected a `return 'world'` body and turn 2 selected `pass`.
+Both exact-match counts were zero. The second failure exhausted the one
+ordinary forward correction opportunity, producing
+`ESCALATION_REQUIRED / STRUCTURED_EDIT_REPAIR_EXHAUSTED` after two inferences.
+No candidate or validation run existed. The result is
+`INTERACTIVE_PRACTICAL_CODER_V3_RESTRICTED_ACCEPTANCE_ESCALATED`; V3 removed
+diff serialization from the test, exposing a source-alignment failure without
+repairing it or broadening the lane.
 
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its

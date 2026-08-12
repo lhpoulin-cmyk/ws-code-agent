@@ -75,6 +75,18 @@ patch authority being `NONE`. The authority layer denied it. Both are semantic
 failures, so the normalized lane is `NOT_ACCEPTED`; the adapter remains bounded
 and the historical strict score remains unchanged.
 
+Task 10Z converts those results into supervisor routing policy rather than a
+broader adapter. `INTERACTIVE_BOUNDED_WORK_V1` admits the interactive/practical
+coder only for requirements-complete, single-repository work with explicit
+authority, pre-bound validators, a frozen clean source snapshot, the accepted
+14B runtime profile, and the existing fence-only normalizer. One rejected patch
+gets one ordinary forward repair opportunity; a second construction failure,
+`NO_CHANGE` after rejection, an authority mistake, a turn/repeat limit, or
+another semantic failure produces durable `ESCALATION_REQUIRED` evidence.
+Escalation recommends the deliberative/overnight coder or operator but never
+invokes either automatically. A validated candidate remains
+`AWAITING_OPERATOR_REVIEW` and is never promoted automatically.
+
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and

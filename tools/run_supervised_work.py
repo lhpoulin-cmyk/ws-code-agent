@@ -68,9 +68,15 @@ def main() -> int:
     qwen25_v2.add_argument("--turn-limit", type=int, default=8)
     qwen25_v2.add_argument("--session-id")
     qwen25_interactive = sub.add_parser("start-qwen25-interactive-normalized")
-    qwen25_interactive.add_argument("--fixture", choices=SYNTHETIC_V2_FIXTURES, required=True)
+    qwen25_interactive.add_argument("--fixture", choices=("write",), required=True)
     qwen25_interactive.add_argument("--turn-limit", type=int, default=8)
     qwen25_interactive.add_argument("--session-id")
+    qwen25_interactive.add_argument(
+        "--requirements-status",
+        choices=("COMPLETE", "UNRESOLVED"),
+        required=True,
+        help="operator/spec-authority assertion required by INTERACTIVE_BOUNDED_WORK_V1",
+    )
     qwen25_32b_v2 = sub.add_parser("start-qwen25-32b-v2")
     qwen25_32b_v2.add_argument("--fixture", choices=SYNTHETIC_V2_FIXTURES, required=True)
     qwen25_32b_v2.add_argument("--turn-limit", type=int, default=8)
@@ -143,6 +149,7 @@ def main() -> int:
                 fixture_kind=args.fixture,
                 candidate_path=QWEN25_CANDIDATE,
                 harness_sha=_head(),
+                requirements_status=args.requirements_status,
                 turn_limit=args.turn_limit,
             )
             output = controller.status()

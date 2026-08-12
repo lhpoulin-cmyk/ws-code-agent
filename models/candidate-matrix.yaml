@@ -207,6 +207,28 @@ candidates:
         task10y_32b_inferences: 0
         retry: NOT_PERFORMED
         disposition: INTERACTIVE_14B_NORMALIZED_LANE_NOT_ACCEPTED
+      interactive_work_boundary:
+        policy_id: INTERACTIVE_BOUNDED_WORK_V1
+        status: READY
+        requirements_status_required: COMPLETE
+        single_repository_required: true
+        explicit_authority_required: true
+        validation_descriptors_required_before_inference: true
+        source_snapshot_clean_and_frozen_required: true
+        accepted_runtime_profile_required: qwen25-coder-14b-katra-4096
+        response_adapter: SINGLE_MARKDOWN_JSON_FENCE_NORMALIZATION_V1
+        maximum_patch_construction_failures: 2
+        repair_opportunities_after_first_patch_rejection: 1
+        automatic_cross_model_invocation: false
+        successful_candidate_state: AWAITING_OPERATOR_REVIEW
+        task10y_retrospective:
+          write: INTERACTIVE_RECOVERY_FAILED
+          write_reason: NO_CHANGE_AFTER_PATCH_REJECTED
+          clarification: INTERACTIVE_AUTHORITY_MISJUDGMENT
+          clarification_secondary: INTERACTIVE_REQUIREMENTS_JUDGMENT_FAILED
+          disposition: ESCALATION_REQUIRED
+          historical_rescore: false
+          model_inferences: 0
     baseline_disposition:
       practical_coding_baseline: YES
       runtime_accepted: YES
@@ -223,6 +245,7 @@ candidates:
       - ../docs/experiments/task10r-qwen25-coder-14b-v2-admission.md
       - ../docs/experiments/task10x-qwen25-coder-14b-adapter-calibration.md
       - ../docs/experiments/task10y-qwen25-coder-14b-normalized-production-lane.md
+      - ../docs/experiments/task10z-interactive-practical-coder-boundary.md
 
   - id: gpt-oss-20b-mxfp4
     status: INELIGIBLE_FROZEN_COMPARISON_SEAM

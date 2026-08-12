@@ -126,6 +126,14 @@ class ModelSelectionTests(unittest.TestCase):
             "        task10y_14b_inferences: 5",
             "        task10y_32b_inferences: 0",
             "        disposition: INTERACTIVE_14B_NORMALIZED_LANE_NOT_ACCEPTED",
+            "        policy_id: INTERACTIVE_BOUNDED_WORK_V1",
+            "        requirements_status_required: COMPLETE",
+            "        maximum_patch_construction_failures: 2",
+            "        repair_opportunities_after_first_patch_rejection: 1",
+            "        automatic_cross_model_invocation: false",
+            "          write: INTERACTIVE_RECOVERY_FAILED",
+            "          clarification: INTERACTIVE_AUTHORITY_MISJUDGMENT",
+            "          historical_rescore: false",
         )
         self.assertTrue(all(value in candidate for value in required_candidate))
         self.assertNotIn("PRODUCTION_ADMITTED", candidate)
@@ -162,6 +170,14 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn("INTERACTIVE_WRITE_FAIL", lane_evidence)
         self.assertIn("INTERACTIVE_CLARIFICATION_FAIL", lane_evidence)
         self.assertIn("14B STRICT_RAW historical FAIL: UNCHANGED", lane_evidence)
+        boundary_evidence = (
+            ROOT / "docs/experiments/task10z-interactive-practical-coder-boundary.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("INTERACTIVE_PRACTICAL_CODER_BOUNDARY_READY", boundary_evidence)
+        self.assertIn("INTERACTIVE_ENTRY_DENIED_REQUIREMENTS_UNRESOLVED", boundary_evidence)
+        self.assertIn("NO_CHANGE_AFTER_PATCH_REJECTED", boundary_evidence)
+        self.assertIn("automatic_handoff_performed: false", boundary_evidence)
+        self.assertIn("model inference count: 0", boundary_evidence)
 
     def test_qwen25_coder_32b_scale_control_preserves_inconclusive_admission(self):
         matrix = (ROOT / "models/candidate-matrix.yaml").read_text(encoding="utf-8")

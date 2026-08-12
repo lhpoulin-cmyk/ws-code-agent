@@ -501,6 +501,7 @@ class SupervisedWorkTests(unittest.TestCase):
                 fixture_kind=SYNTHETIC_V2_WRITE,
                 candidate_path=QWEN25_CANDIDATE,
                 harness_sha="frozen-harness",
+                requirements_status="COMPLETE",
             )
             self.assertEqual(
                 {"mode": STRICT_RAW, "adapter_id": "NONE", "adapter_version": None},
@@ -541,9 +542,10 @@ class SupervisedWorkTests(unittest.TestCase):
             controller = SupervisedWorkController.start_qwen25_interactive_normalized(
                 root / "store",
                 session_id="work-qwen25-normalized-evidence",
-                fixture_kind=SYNTHETIC_V2_CLARIFICATION,
+                fixture_kind=SYNTHETIC_V2_WRITE,
                 candidate_path=QWEN25_CANDIDATE,
                 harness_sha="frozen-harness",
+                requirements_status="COMPLETE",
             )
             payload = request("NO_CHANGE", {})
             raw = f"```json\n{payload}\n```"
@@ -573,6 +575,7 @@ class SupervisedWorkTests(unittest.TestCase):
                 fixture_kind=SYNTHETIC_V2_WRITE,
                 candidate_path=QWEN25_CANDIDATE,
                 harness_sha="frozen-harness",
+                requirements_status="COMPLETE",
             )
             denied = normalized.step(Qwen25QueueBackend([fenced]))
             self.assertEqual("DENIED_SCOPE", denied["authority_outcome"])
@@ -590,6 +593,83 @@ class SupervisedWorkTests(unittest.TestCase):
             ]))
             self.assertEqual("MALFORMED_REQUEST", malformed["terminal_disposition"])
             self.assertFalse((strict.root / "cases/WORK/turns/0001/normalized-parser-input.txt").exists())
+
+    def test_interactive_boundary_requires_complete_validated_entry_and_persists_handoff(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaisesRegex(
+                SupervisedWorkError, "INTERACTIVE_ENTRY_DENIED_REQUIREMENTS_UNRESOLVED"
+            ):
+                SupervisedWorkController.start_qwen25_interactive_normalized(
+                    root / "store",
+                    session_id="work-qwen25-unresolved-entry",
+                    fixture_kind=SYNTHETIC_V2_WRITE,
+                    candidate_path=QWEN25_CANDIDATE,
+                    harness_sha="frozen-harness",
+                    requirements_status="UNRESOLVED",
+                )
+            self.assertFalse((root / "store/_synthetic-v2-fixtures/work-qwen25-unresolved-entry").exists())
+
+            with self.assertRaisesRegex(
+                SupervisedWorkError, "INTERACTIVE_ENTRY_DENIED_VALIDATION_DESCRIPTORS_CONFIGURED"
+            ):
+                SupervisedWorkController.start_qwen25_interactive_normalized(
+                    root / "store",
+                    session_id="work-qwen25-no-validator-entry",
+                    fixture_kind=SYNTHETIC_V2_CLARIFICATION,
+                    candidate_path=QWEN25_CANDIDATE,
+                    harness_sha="frozen-harness",
+                    requirements_status="COMPLETE",
+                )
+
+            corrupt = request("PROPOSE_PATCH", {
+                "patch": "diff --git a/src/message.py b/src/message.py\ncorrupt\n",
+                "proposed_paths": ["src/message.py"],
+            })
+            controller = SupervisedWorkController.start_qwen25_interactive_normalized(
+                root / "store",
+                session_id="work-qwen25-policy-handoff",
+                fixture_kind=SYNTHETIC_V2_WRITE,
+                candidate_path=QWEN25_CANDIDATE,
+                harness_sha="frozen-harness",
+                requirements_status="COMPLETE",
+            )
+            boundary = controller.manifest()["interactive_work_boundary"]
+            self.assertEqual("INTERACTIVE_BOUNDED_WORK_V1", boundary["policy_id"])
+            self.assertEqual("COMPLETE", boundary["requirements_status"])
+            self.assertFalse(boundary["automatic_cross_model_invocation"])
+
+            controller.step(Qwen25QueueBackend([corrupt]))
+            self.assertEqual("REPAIR_OPPORTUNITY", controller.status()["interactive_policy"]["state"])
+            controller.step(Qwen25QueueBackend([request("NO_CHANGE", {})]))
+            status = controller.status()
+            self.assertEqual("ESCALATION_REQUIRED", status["session_status"])
+            self.assertEqual("INTERACTIVE_RECOVERY_FAILED", status["interactive_policy"]["classification"])
+            packet = json.loads(
+                (controller.root / "evaluator/handoff-packet.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual("DELIBERATIVE_OVERNIGHT_CODER", packet["recommended_next_worker"])
+            self.assertEqual("NO_CHANGE_AFTER_PATCH_REJECTED", packet["reason"])
+            self.assertEqual(2, len(packet["turn_sequence"]))
+            self.assertFalse(packet["automatic_handoff_performed"])
+            self.assertNotIn("implementation", json.dumps(packet["validation_outcomes"]))
+
+            candidate_controller = SupervisedWorkController.start_qwen25_interactive_normalized(
+                root / "store",
+                session_id="work-qwen25-policy-validation-required",
+                fixture_kind=SYNTHETIC_V2_WRITE,
+                candidate_path=QWEN25_CANDIDATE,
+                harness_sha="frozen-harness",
+                requirements_status="COMPLETE",
+            )
+            valid_patch = request("PROPOSE_PATCH", {
+                "patch": new_file_patch("src/message.py", 'def message():\n    return "hello"\n'),
+                "proposed_paths": ["src/message.py"],
+            })
+            candidate_controller.step(Qwen25QueueBackend([valid_patch]))
+            self.assertEqual("VALIDATION_REQUIRED", candidate_controller.status()["session_status"])
+            with self.assertRaisesRegex(SupervisedWorkError, "OPERATOR_REVIEW_NOT_READY"):
+                candidate_controller.disposition("APPROVE")
 
     def test_qwen25_32b_admission_binding_is_exact_separate_and_stale_safe(self):
         with tempfile.TemporaryDirectory() as temporary:

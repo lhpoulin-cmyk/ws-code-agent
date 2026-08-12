@@ -23,6 +23,20 @@ from .alpha_experiment import AlphaExperimentController, ExperimentError, TurnBa
 from .disposition_harness import DispositionHarness, HarnessTask, RequestType, parse_request
 from .contained_validation import SystemdContainedValidationRunner
 from .isolated_patch import IsolatedContext, IsolatedPatchExecutor, PatchProposal
+from .interactive_work_policy import (
+    AWAITING_OPERATOR_REVIEW,
+    CONTINUE,
+    ESCALATION_REQUIRED,
+    INFRASTRUCTURE_REPAIR_REQUIRED,
+    OPERATOR_CLARIFICATION_REQUIRED,
+    POLICY_ID as INTERACTIVE_WORK_POLICY_ID,
+    REPAIR_OPPORTUNITY,
+    REQUIREMENTS_COMPLETE,
+    VALIDATION_REQUIRED,
+    InteractiveWorkPolicyError,
+    bind_entry as bind_interactive_entry,
+    classify as classify_interactive_work,
+)
 from .katra_ollama_backend import (
     DEVSTRAL_MODEL_DIGEST,
     DEVSTRAL_MODEL_QUANTIZATION,
@@ -735,12 +749,17 @@ class SupervisedWorkController:
         fixture_kind: str,
         candidate_path: Path,
         harness_sha: str,
+        requirements_status: str,
         turn_limit: int = DEFAULT_TURN_LIMIT,
     ) -> "SupervisedWorkController":
         """Start the exact 14B lane with downstream wrapper normalization."""
 
         if not SESSION_ID.fullmatch(session_id):
             raise SupervisedWorkError("INVALID_SESSION_ID")
+        if requirements_status != REQUIREMENTS_COMPLETE:
+            raise SupervisedWorkError("INTERACTIVE_ENTRY_DENIED_REQUIREMENTS_UNRESOLVED")
+        if fixture_kind != SYNTHETIC_V2_WRITE:
+            raise SupervisedWorkError("INTERACTIVE_ENTRY_DENIED_VALIDATION_DESCRIPTORS_CONFIGURED")
         qualification, model_artifact = _qwen25_candidate_binding(candidate_path)
         protocol_qualification = _candidate_protocol_qualification(candidate_path)
         if (
@@ -772,6 +791,7 @@ class SupervisedWorkController:
             fixture_identity=fixture_identity,
             validation_ids=WRITE_VALIDATION_IDS if fixture_kind == SYNTHETIC_V2_WRITE else (),
             response_adapter=INTERACTIVE_NORMALIZED_ADAPTER_BINDING,
+            interactive_requirements_status=requirements_status,
         )
 
     @classmethod
@@ -840,6 +860,7 @@ class SupervisedWorkController:
         fixture_identity: str,
         validation_ids: tuple[str, ...],
         response_adapter: Mapping[str, Any] | None = None,
+        interactive_requirements_status: str | None = None,
     ) -> "SupervisedWorkController":
         if not SESSION_ID.fullmatch(session_id):
             raise SupervisedWorkError("INVALID_SESSION_ID")
@@ -875,6 +896,26 @@ class SupervisedWorkController:
             INTERACTIVE_NORMALIZED_ADAPTER_BINDING,
         ):
             raise SupervisedWorkError("RESPONSE_ADAPTER_BINDING_INVALID")
+        interactive_boundary = None
+        if session_kind == QWEN25_14B_INTERACTIVE_NORMALIZED_SESSION_KIND:
+            try:
+                interactive_boundary = bind_interactive_entry(
+                    requirements_status=str(interactive_requirements_status),
+                    repository_count=1,
+                    objective_present=bool(objective),
+                    read_authority_present=bool(bounded_reads),
+                    patch_authority_declared=patch_paths is not None,
+                    validation_configured=bool(validation_ids),
+                    source_clean_and_frozen=True,
+                    runtime_accepted=(
+                        model_artifact.get("digest") == QWEN25_MODEL_DIGEST
+                        and model_artifact.get("runtime_profile_id") == QWEN25_RUNTIME_PROFILE.profile_id
+                        and model_artifact.get("context") == 4096
+                    ),
+                    bounded_adapter_only=adapter_binding == INTERACTIVE_NORMALIZED_ADAPTER_BINDING,
+                )
+            except InteractiveWorkPolicyError as error:
+                raise SupervisedWorkError(str(error)) from error
         created_at = datetime.now(timezone.utc).isoformat()
         manifest = {
             "experiment_id": session_id,
@@ -898,6 +939,8 @@ class SupervisedWorkController:
             "validation": validation_contract,
             "response_adapter": adapter_binding,
         }
+        if interactive_boundary is not None:
+            manifest["interactive_work_boundary"] = interactive_boundary
         conversation = [{
             "role": "user",
             "content": {
@@ -932,6 +975,15 @@ class SupervisedWorkController:
                 "validation_status": validation_status,
             },
         }
+        if interactive_boundary is not None:
+            case["interactive_work_boundary"] = interactive_boundary
+            case["case_state"]["interactive_policy"] = {
+                "state": CONTINUE,
+                "classification": "ENTRY_ACCEPTED",
+                "reason": None,
+                "recommended_next_worker": None,
+                "secondary_evidence": [],
+            }
         controller = AlphaExperimentController.start(store, manifest, (case,))
         _atomic_json(controller.root / "session-manifest.json", manifest)
         _atomic_json(controller.root / "session-state.json", {
@@ -943,6 +995,13 @@ class SupervisedWorkController:
             "operator_disposition": None,
             "response_adapter": adapter_binding,
         })
+        if interactive_boundary is not None:
+            state_path = controller.root / "session-state.json"
+            state = _load(state_path)
+            state["interactive_work_boundary"] = interactive_boundary
+            state["interactive_policy"] = case["case_state"]["interactive_policy"]
+            _atomic_json(state_path, state)
+            _atomic_json(controller.root / "interactive-policy-state.json", state["interactive_policy"])
         if validation_ids:
             _atomic_json(controller.root / "validation-state.json", {
                 "contract_origin": "SESSION_MANIFEST",
@@ -958,7 +1017,13 @@ class SupervisedWorkController:
     def step(self, backend: TurnBackend) -> dict[str, Any]:
         state = _load(self.root / "session-state.json")
         self._response_adapter_binding()
-        if state["status"] in {"AWAITING_REVIEW", "AWAITING_CLARIFICATION", "TERMINAL", "TURN_LIMIT", "APPROVED", "REJECTED", "INVALIDATED"}:
+        if state["status"] in {
+            "AWAITING_REVIEW", AWAITING_OPERATOR_REVIEW,
+            "AWAITING_CLARIFICATION", OPERATOR_CLARIFICATION_REQUIRED,
+            ESCALATION_REQUIRED, INFRASTRUCTURE_REPAIR_REQUIRED,
+            VALIDATION_REQUIRED, "TERMINAL", "TURN_LIMIT", "APPROVED",
+            "REJECTED", "INVALIDATED",
+        }:
             raise SupervisedWorkError("SESSION_MAY_NOT_ADVANCE")
         case = self._turns._case(WORK_CASE_ID)
         if case["case_status"] not in {"READY", "ACTIVE"}:
@@ -985,6 +1050,7 @@ class SupervisedWorkController:
             case["case_status"] = "TURN_LIMIT"
             case["terminal_disposition"] = "TURN_LIMIT"
             self._turns._write_case(case)
+        self._apply_interactive_policy()
         self._refresh_state()
         if self._turns._case(WORK_CASE_ID)["case_state"].get("candidate"):
             self._write_review_packet()
@@ -1278,6 +1344,8 @@ class SupervisedWorkController:
                 state["status"] = run.status.value
         _atomic_json(state_path, state)
         self._set_session_validation_status(state["status"])
+        self._apply_interactive_policy()
+        self._refresh_state()
         self._write_review_packet()
         return evidence
 
@@ -1387,6 +1455,8 @@ class SupervisedWorkController:
             "protocol_id": case["protocol_id"],
             "protocol_qualification": self.manifest()["protocol_qualification"],
             "response_adapter": self._response_adapter_binding(),
+            "interactive_work_boundary": self.manifest().get("interactive_work_boundary"),
+            "interactive_policy": case["case_state"].get("interactive_policy"),
             "invocation_integrity": {
                 "invocation_ids": invocation_ids,
                 "runtime_jobs": runtime_jobs,
@@ -1424,13 +1494,107 @@ class SupervisedWorkController:
         except (OSError, KeyError, json.JSONDecodeError):
             return "FAIL"
 
+    def _apply_interactive_policy(self) -> None:
+        """Apply supervisor routing to durable facts for the normalized 14B lane."""
+
+        manifest = self.manifest()
+        if manifest.get("interactive_work_boundary", {}).get("policy_id") != INTERACTIVE_WORK_POLICY_ID:
+            return
+        case = self._turns._case(WORK_CASE_ID)
+        turns = []
+        for turn in range(1, int(case["turn_committed"]) + 1):
+            turns.append(_load(
+                self.root / "cases" / WORK_CASE_ID / "turns" / f"{turn:04d}" / "harness-result.json"
+            ))
+        validation_status = self._validation_summary()["status"]
+        decision = classify_interactive_work(
+            turns,
+            patch_authorized=bool(manifest["authority"]["patch_paths"]),
+            candidate_exists=case["case_state"].get("candidate") is not None,
+            validation_status=validation_status,
+            turn_limit_reached=case["case_status"] == "TURN_LIMIT",
+        )
+        evidence = decision.evidence()
+        case["case_state"]["interactive_policy"] = evidence
+        if decision.state in {ESCALATION_REQUIRED, INFRASTRUCTURE_REPAIR_REQUIRED}:
+            case["case_status"] = "TERMINAL"
+            case["terminal_disposition"] = decision.state
+        self._turns._write_case(case)
+        _atomic_json(self.root / "interactive-policy-state.json", evidence)
+        if decision.state == ESCALATION_REQUIRED:
+            self._write_handoff_packet(evidence, turns)
+
+    def _write_handoff_packet(
+        self,
+        decision: Mapping[str, Any],
+        turns: list[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Create evaluator-owned escalation evidence without invoking a worker."""
+
+        manifest = self.manifest()
+        case = self._turns._case(WORK_CASE_ID)
+        sequence = []
+        for number, result in enumerate(turns, 1):
+            directory = self.root / "cases" / WORK_CASE_ID / "turns" / f"{number:04d}"
+            raw = (directory / "raw-response.txt").read_bytes()
+            normalized_path = directory / "normalized-parser-input.txt"
+            normalized = normalized_path.read_bytes() if normalized_path.is_file() else raw
+            sequence.append({
+                "turn": number,
+                "request_type": result.get("request_type"),
+                "raw_model_response": raw.decode("utf-8", errors="strict"),
+                "raw_sha256": hashlib.sha256(raw).hexdigest(),
+                "normalized_parser_input": normalized.decode("utf-8", errors="strict"),
+                "normalized_sha256": hashlib.sha256(normalized).hexdigest(),
+                "authority_outcome": result.get("authority_outcome"),
+                "executor_operation": result.get("executor_operation"),
+                "projection": result.get("projection"),
+                "terminal_disposition": result.get("terminal_disposition"),
+            })
+        validation = self._validation_summary()
+        candidate = case["case_state"].get("candidate")
+        packet = {
+            "record_type": "INTERACTIVE_WORK_ESCALATION_HANDOFF_V1",
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "session_id": self.root.name,
+            "policy_id": INTERACTIVE_WORK_POLICY_ID,
+            "original_objective": manifest["objective"],
+            "source_snapshot": case["snapshot_x"],
+            "authority": manifest["authority"],
+            "requirements_status": manifest["interactive_work_boundary"]["requirements_status"],
+            "turn_sequence": sequence,
+            "validation_outcomes": {
+                "status": validation["status"],
+                "technical_correctness": validation["technical_correctness"],
+                "visible_validation": validation.get("visible_validation"),
+                "hidden_validation": validation.get("hidden_validation"),
+            },
+            "classification": decision["classification"],
+            "reason": decision.get("reason"),
+            "secondary_evidence": decision.get("secondary_evidence", []),
+            "recommended_next_worker": decision.get("recommended_next_worker"),
+            "candidate": candidate,
+            "automatic_handoff_performed": False,
+        }
+        _atomic_json(self.root / "evaluator" / "handoff-packet.json", packet)
+        return packet
+
     def _refresh_state(self) -> None:
         case = self._turns._case(WORK_CASE_ID)
         state = _load(self.root / "session-state.json")
         state.pop("pending_inference", None)
         state.pop("last_step_error", None)
+        policy = case["case_state"].get("interactive_policy")
         if case["case_status"] == "INVALIDATED":
             state["status"] = "INVALIDATED"
+        elif policy and policy["state"] in {
+            AWAITING_OPERATOR_REVIEW,
+            OPERATOR_CLARIFICATION_REQUIRED,
+            ESCALATION_REQUIRED,
+            INFRASTRUCTURE_REPAIR_REQUIRED,
+            VALIDATION_REQUIRED,
+        }:
+            state["status"] = policy["state"]
         elif case["case_status"] == "TURN_LIMIT":
             state["status"] = "TURN_LIMIT"
         elif case["case_state"].get("candidate"):
@@ -1508,6 +1672,8 @@ class SupervisedWorkController:
             "candidate_integrity": self._candidate_integrity(candidate) if candidate else "NOT_PRESENT",
             "clarification": case["case_state"].get("clarification"),
             "operator_disposition": _load(self.root / "session-state.json").get("operator_disposition"),
+            "interactive_work_boundary": manifest.get("interactive_work_boundary"),
+            "interactive_policy": case["case_state"].get("interactive_policy"),
         }
         _atomic_json(self.root / "review-packet.json", packet)
         return packet
@@ -1519,6 +1685,13 @@ class SupervisedWorkController:
         if state.get("operator_disposition") is not None:
             raise SupervisedWorkError("OPERATOR_DISPOSITION_ALREADY_RECORDED")
         case = self._turns._case(WORK_CASE_ID)
+        if (
+            self.manifest().get("interactive_work_boundary", {}).get("policy_id")
+            == INTERACTIVE_WORK_POLICY_ID
+            and case["case_state"].get("interactive_policy", {}).get("state")
+            != AWAITING_OPERATOR_REVIEW
+        ):
+            raise SupervisedWorkError("OPERATOR_REVIEW_NOT_READY")
         if not case["case_state"].get("candidate"):
             raise SupervisedWorkError("NO_CANDIDATE_EFFECT")
         packet = self.review()

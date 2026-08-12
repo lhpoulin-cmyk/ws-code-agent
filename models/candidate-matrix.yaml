@@ -286,6 +286,35 @@ candidates:
           task11d_historical_disposition: UNCHANGED
           model_inferences_14b: 0
           model_inferences_32b: 0
+        task11f_source_grounded_v3_acceptance:
+          lane_id: QWEN25_14B_INTERACTIVE_STRUCTURED_V3_V1
+          fixture_id: task11f-source-grounded-structured-existing-file/synthetic-v1
+          session_id: work-task11f-qwen25-14b-grounded-20260812T170353Z
+          protocol: WS_CODE_AGENT_REQUEST_PROTOCOL_V3_SINGLE_STRUCTURED_EDIT
+          grounding_policy: SOURCE_GROUNDED_STRUCTURED_EDIT_V1
+          requirements_status: COMPLETE
+          entry_status: INTERACTIVE_ENTRY_ACCEPTED
+          status: ACCEPTED
+          disposition: INTERACTIVE_PRACTICAL_CODER_V3_SOURCE_GROUNDED_ACCEPTANCE_PASS
+          turns: 3
+          write_before_read: true
+          source_read_required_count: 1
+          source_grounded_turn: 2
+          structured_edit_turn: 3
+          exact_match_count: 1
+          candidate: CREATED
+          changed_paths: [src/message.py]
+          visible_validation: PASS
+          hidden_validation: PASS
+          technical_correctness: VALIDATED
+          final_state: AWAITING_OPERATOR_REVIEW
+          source_snapshot: MATCH
+          turn_hash_chain: PASS
+          duplicate_inference: 0
+          model_inferences_14b: 3
+          model_inferences_32b: 0
+          automatic_promotion: false
+          historical_rescore: false
         task11b_patch_serialization_forensics:
           status: COMPLETE
           disposition: PATCH_SERIALIZATION_INTERFACE_MISMATCH_CONFIRMED
@@ -325,6 +354,7 @@ candidates:
       - ../docs/experiments/task11c-deterministic-structured-edit-transport.md
       - ../docs/experiments/task11d-v3-structured-edit-acceptance.md
       - ../docs/experiments/task11e-source-grounded-structured-edit-precondition.md
+      - ../docs/experiments/task11f-source-grounded-v3-interactive-acceptance.md
 
   - id: gpt-oss-20b-mxfp4
     status: INELIGIBLE_FROZEN_COMPARISON_SEAM

@@ -156,6 +156,18 @@ Task 11D was never source-grounded and therefore would not have reached the
 structured executor. V3's render, structured-edit semantics, authority, and
 all historical dispositions remain unchanged.
 
+Task 11F then exercised that exact policy in one fresh V3 session. The 14B
+worker first attempted an ungrounded replacement and received only the bounded
+`SOURCE_READ_REQUIRED` fact. It next read `src/message.py`, establishing exact
+same-session Source Snapshot X grounding, then supplied the exact existing
+`return "hi"` selection and desired `return "hello"` replacement. The
+unchanged structured executor found one match and produced an isolated
+single-path candidate; both contained validators passed. The final state is
+`AWAITING_OPERATOR_REVIEW` with disposition
+`INTERACTIVE_PRACTICAL_CODER_V3_SOURCE_GROUNDED_ACCEPTANCE_PASS`. Three 14B
+inferences were consumed, no 32B inference or automatic promotion occurred,
+and strict V2 history remains unchanged.
+
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and

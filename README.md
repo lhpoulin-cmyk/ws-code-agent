@@ -228,6 +228,18 @@ implemented contained validators passed, yielding `VALIDATED` and
 remains unchanged, broad real-task capability is not claimed, and the frozen
 envelope was not modified.
 
+Task 11N characterizes the same frozen worker on distinct real executable
+Python code in the selected `ws-doc-writer` `writing_setup.py`. The worker
+read and grounded the exact source, selected an 84-byte bounded target region,
+and produced an authorized isolated one-file candidate. The candidate gave a
+nonblank custom policy precedence, but tested raw truthiness before cleaning,
+so a whitespace-only custom value incorrectly erased the selected standard
+policy. The contained visible validator returned `VALIDATION_FAIL`; hidden
+validation therefore did not run. The result is
+`DISTINCT_REAL_CODE_INTERACTIVE_PILOT_ESCALATED` with reason
+`VALIDATION_FAILED`. V3 and the frozen envelope remain unchanged, the real
+source was not mutated, and broad capability is not claimed.
+
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and

@@ -12,6 +12,7 @@ from typing import Any
 HISTORICAL_RECORDS = {
     "docs/contracts/CODING_AGENT_FOUNDATION_CONTRACT.md",
     "docs/experiments/task11j-first-real-local-repository-v3-pilot.md",
+    "docs/experiments/task11n-distinct-real-code-interactive-pilot.md",
 }
 PILOT_MANIFESTS = {
     "docs/work/task11j-ws-doc-writer-real-repository-pilot-v1.json":

@@ -85,6 +85,14 @@ def main() -> int:
         choices=("COMPLETE", "UNRESOLVED"),
         required=True,
     )
+    task11d = sub.add_parser("start-task11d-v3-interactive")
+    task11d.add_argument("--turn-limit", type=int, default=8)
+    task11d.add_argument("--session-id")
+    task11d.add_argument(
+        "--requirements-status",
+        choices=("COMPLETE", "UNRESOLVED"),
+        required=True,
+    )
     qwen25_32b_v2 = sub.add_parser("start-qwen25-32b-v2")
     qwen25_32b_v2.add_argument("--fixture", choices=SYNTHETIC_V2_FIXTURES, required=True)
     qwen25_32b_v2.add_argument("--turn-limit", type=int, default=8)
@@ -164,6 +172,17 @@ def main() -> int:
         elif args.command == "start-task11a-interactive":
             session_id = args.session_id or generated_session_id()
             controller = SupervisedWorkController.start_task11a_interactive_acceptance(
+                STORE,
+                session_id=session_id,
+                candidate_path=QWEN25_CANDIDATE,
+                harness_sha=_head(),
+                requirements_status=args.requirements_status,
+                turn_limit=args.turn_limit,
+            )
+            output = controller.status()
+        elif args.command == "start-task11d-v3-interactive":
+            session_id = args.session_id or generated_session_id()
+            controller = SupervisedWorkController.start_task11d_v3_interactive_acceptance(
                 STORE,
                 session_id=session_id,
                 candidate_path=QWEN25_CANDIDATE,

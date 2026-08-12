@@ -122,6 +122,16 @@ narrow scope. The result is `STRUCTURED_EDIT_TRANSPORT_CANDIDATE_READY`.
 V2, `INTERACTIVE_BOUNDED_WORK_V1`, and the live interactive lane remain
 unchanged pending a fresh V3 acceptance run.
 
+Task 11D prepares that fresh run through a separate candidate lane,
+`QWEN25_14B_INTERACTIVE_STRUCTURED_V3_V1`. The lane durably binds the accepted
+14B artifact/profile, `INTERACTIVE_BOUNDED_WORK_V1`, the unchanged fence-only
+normalizer, the value-free V3 render, the exact Task 10W validators, and the
+existing isolated candidate/review machinery. `PROPOSE_PATCH` is unavailable;
+accepted replacements retain the model's exact path and old/new text while the
+evaluator owns occurrence counting and canonical review-diff construction.
+This apparatus is not the default interactive lane and carries no behavioral
+result until its separately published fresh acceptance session runs.
+
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and

@@ -60,7 +60,10 @@ from .katra_ollama_backend import (
 from .readonly_executor import CompareStatus, ExecutorFact, ReadOnlyExecutor, RepositorySnapshot
 from .request_protocol import (
     SINGLE_REPOSITORY_PROTOCOL_ID,
+    STRUCTURED_EDIT_PROTOCOL,
+    STRUCTURED_EDIT_PROTOCOL_ID,
     VALUE_FREE_SINGLE_REPOSITORY_PROTOCOL_ID,
+    protocol_by_id,
 )
 from .response_normalization import (
     ADAPTER_ID,
@@ -77,6 +80,7 @@ from .supervised_validation import (
     descriptor_binding,
     validation_registry,
 )
+from .structured_edit import StructuredTextReplacementExecutor, TextReplacementStatus
 from .validation import DescriptorValidationExecutor, ValidationRole, ValidationRun, ValidationStatus
 
 
@@ -97,6 +101,8 @@ QWEN25_CANDIDATE_ID = "qwen25-coder-14b-q4"
 QWEN25_14B_INTERACTIVE_NORMALIZED_SESSION_KIND = "QWEN25_14B_INTERACTIVE_NORMALIZED_V1"
 TASK11A_INTERACTIVE_ACCEPTANCE_SESSION_KIND = "TASK11A_INTERACTIVE_BOUNDED_WORK_V1"
 TASK11A_FIXTURE_ID = "task11a-interactive-positive-existing-file/synthetic-v1"
+TASK11D_STRUCTURED_SESSION_KIND = "QWEN25_14B_INTERACTIVE_STRUCTURED_V3_V1"
+TASK11D_FIXTURE_ID = "task11d-interactive-structured-existing-file/synthetic-v1"
 INTERACTIVE_NORMALIZED = "INTERACTIVE_NORMALIZED"
 QWEN25_32B_V2_SESSION_KIND = "QWEN25_32B_V2_SUPERVISED_PRODUCTION_ADMISSION"
 QWEN25_32B_CANDIDATE_ID = "qwen25-coder-32b-q4"
@@ -139,6 +145,7 @@ _TASK11A_OBJECTIVE = (
     "Make no other functional change.\n"
 )
 _TASK11A_SOURCE = 'def message():\n    return "hi"\n'
+_V3_RENDER_SHA256 = "d060b7b15538ce781ecd50cee1478a3395a1122c3476047e8e02efc6b7f36993"
 
 
 class SupervisedWorkError(RuntimeError):
@@ -593,6 +600,60 @@ def _initialize_task11a_fixture(
     )
 
 
+def _task11d_fixture_contract_sha256() -> str:
+    payload = json.dumps(
+        [
+            _TASK11A_OBJECTIVE,
+            _TASK11A_SOURCE,
+            TASK11D_FIXTURE_ID,
+            (".",),
+            ("src/message.py",),
+        ],
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _initialize_task11d_fixture(
+    store: Path,
+    session_id: str,
+) -> tuple[Path, str, tuple[str, ...], tuple[str, ...], str]:
+    repository = store / "_task11d-fixtures" / session_id / "repository"
+    if repository.exists():
+        raise SupervisedWorkError("TASK11D_FIXTURE_EXISTS")
+    repository.mkdir(mode=0o700, parents=True)
+    (repository / "src").mkdir(mode=0o700)
+    (repository / "src" / "message.py").write_text(_TASK11A_SOURCE, encoding="utf-8")
+    commands = (
+        ("git", "-C", str(repository), "init", "-q"),
+        ("git", "-C", str(repository), "add", "src/message.py"),
+    )
+    for command in commands:
+        result = subprocess.run(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False,
+        )
+        if result.returncode:
+            raise SupervisedWorkError("TASK11D_FIXTURE_GIT_FAILURE")
+    environment = dict(os.environ)
+    environment.update({
+        "GIT_AUTHOR_NAME": "Task11D",
+        "GIT_AUTHOR_EMAIL": "task11d@example.invalid",
+        "GIT_AUTHOR_DATE": "2000-01-01T00:00:00+0000",
+        "GIT_COMMITTER_NAME": "Task11D",
+        "GIT_COMMITTER_EMAIL": "task11d@example.invalid",
+        "GIT_COMMITTER_DATE": "2000-01-01T00:00:00+0000",
+    })
+    result = subprocess.run(
+        ["git", "-C", str(repository), "commit", "-qm", "Task 11D V3 structured acceptance fixture"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=environment, check=False,
+    )
+    if result.returncode:
+        raise SupervisedWorkError("TASK11D_FIXTURE_GIT_FAILURE")
+    return repository, _TASK11A_OBJECTIVE, (".",), ("src/message.py",), TASK11D_FIXTURE_ID
+
+
 def _same_material(left: RepositorySnapshot, right: RepositorySnapshot) -> bool:
     return (
         left.head_commit,
@@ -926,6 +987,68 @@ class SupervisedWorkController:
         )
 
     @classmethod
+    def start_task11d_v3_interactive_acceptance(
+        cls,
+        store: Path,
+        *,
+        session_id: str,
+        candidate_path: Path,
+        harness_sha: str,
+        requirements_status: str,
+        turn_limit: int = DEFAULT_TURN_LIMIT,
+    ) -> "SupervisedWorkController":
+        """Start the fresh 14B acceptance lane for candidate V3 transport."""
+
+        if not SESSION_ID.fullmatch(session_id):
+            raise SupervisedWorkError("INVALID_SESSION_ID")
+        if requirements_status != REQUIREMENTS_COMPLETE:
+            raise SupervisedWorkError("INTERACTIVE_ENTRY_DENIED_REQUIREMENTS_UNRESOLVED")
+        qualification, model_artifact = _qwen25_candidate_binding(candidate_path)
+        if hashlib.sha256(STRUCTURED_EDIT_PROTOCOL.render().encode()).hexdigest() != _V3_RENDER_SHA256:
+            raise SupervisedWorkError("V3_PROTOCOL_RENDER_MISMATCH")
+        protocol_qualification = {
+            "id": STRUCTURED_EDIT_PROTOCOL_ID,
+            "qualification_status": "CANDIDATE",
+            "production_qualified": False,
+            "synthetic_acceptance": "PENDING",
+            "operating_class": OPERATING_CLASS,
+            "render_sha256": _V3_RENDER_SHA256,
+            "authority": "TASK11C-DESIGN-DETERMINISTIC-STRUCTURED-EDIT-TRANSPORT",
+            "live_default": False,
+        }
+        qualification = dict(qualification)
+        qualification.update({
+            "evaluation_scope": "V3_STRUCTURED_EDIT_RESTRICTED_ACCEPTANCE",
+            "protocol": protocol_qualification,
+        })
+        repository, objective, read_scopes, patch_paths, fixture_identity = (
+            _initialize_task11d_fixture(store, session_id)
+        )
+        expected_head = _git(repository, "rev-parse", "HEAD")
+        return cls._start_bound(
+            store,
+            session_id=session_id,
+            repository=repository,
+            expected_head=expected_head,
+            objective=objective,
+            read_scopes=read_scopes,
+            patch_paths=patch_paths,
+            harness_sha=harness_sha,
+            turn_limit=turn_limit,
+            protocol_id=STRUCTURED_EDIT_PROTOCOL_ID,
+            protocol_qualification=protocol_qualification,
+            qualification=qualification,
+            model_artifact=model_artifact,
+            session_kind=TASK11D_STRUCTURED_SESSION_KIND,
+            fixture_identity=fixture_identity,
+            fixture_contract_sha256=_task11d_fixture_contract_sha256(),
+            fixture_content_sha256=hashlib.sha256(_TASK11A_SOURCE.encode()).hexdigest(),
+            validation_ids=WRITE_VALIDATION_IDS,
+            response_adapter=INTERACTIVE_NORMALIZED_ADAPTER_BINDING,
+            interactive_requirements_status=requirements_status,
+        )
+
+    @classmethod
     def start_qwen25_32b_v2_admission(
         cls,
         store: Path,
@@ -1033,6 +1156,7 @@ class SupervisedWorkController:
         if session_kind in {
             QWEN25_14B_INTERACTIVE_NORMALIZED_SESSION_KIND,
             TASK11A_INTERACTIVE_ACCEPTANCE_SESSION_KIND,
+            TASK11D_STRUCTURED_SESSION_KIND,
         }:
             try:
                 interactive_boundary = bind_interactive_entry(
@@ -1075,6 +1199,17 @@ class SupervisedWorkController:
             "validation": validation_contract,
             "response_adapter": adapter_binding,
         }
+        if session_kind == TASK11D_STRUCTURED_SESSION_KIND:
+            manifest["structured_transport"] = {
+                "lane_id": TASK11D_STRUCTURED_SESSION_KIND,
+                "protocol_id": STRUCTURED_EDIT_PROTOCOL_ID,
+                "protocol_render_sha256": _V3_RENDER_SHA256,
+                "request_type": RequestType.PROPOSE_TEXT_REPLACEMENT.value,
+                "executor_component": "ws-code-agent-structured-text-replacement/v1",
+                "canonical_diff_origin": "evaluator",
+                "candidate_state": "CANDIDATE",
+                "live_default": False,
+            }
         if fixture_contract_sha256 is not None:
             manifest["fixture"] = {
                 "fixture_id": fixture_identity,
@@ -1158,6 +1293,7 @@ class SupervisedWorkController:
 
     def step(self, backend: TurnBackend) -> dict[str, Any]:
         state = _load(self.root / "session-state.json")
+        self._protocol_binding()
         self._response_adapter_binding()
         if state["status"] in {
             "AWAITING_REVIEW", AWAITING_OPERATOR_REVIEW,
@@ -1210,7 +1346,16 @@ class SupervisedWorkController:
             tuple(self.manifest()["authority"]["patch_paths"]),
             int(case["turn_limit"]),
         )
-        harness = DispositionHarness(task, observer, IsolatedPatchExecutor(observer))
+        protocol = self._protocol_binding()
+        structured_editor = (
+            StructuredTextReplacementExecutor(observer)
+            if protocol.protocol_id == STRUCTURED_EDIT_PROTOCOL_ID
+            else None
+        )
+        harness = DispositionHarness(
+            task, observer, IsolatedPatchExecutor(observer),
+            protocol=protocol, structured_editor=structured_editor,
+        )
         try:
             adapter = self._response_adapter_binding()
             parser_input = raw
@@ -1238,19 +1383,27 @@ class SupervisedWorkController:
                 result["parser_input_sha256"] = record["raw_sha256"]
                 result["raw_sha256"] = normalization_evidence["raw_sha256"]
                 result["normalization"] = normalization_evidence
-            if self._cross_repository_shape(parser_input):
+            if self._cross_repository_shape(parser_input, protocol):
                 result["authority_outcome"] = "SUPERVISION_REQUIRED_CROSS_REPOSITORY"
                 result["projection"] = {"status": "DENIED", "error": "SUPERVISION_REQUIRED_CROSS_REPOSITORY"}
             if step.record.projection.get("status") == "ACCEPTED":
                 if harness._context is None:
                     raise ExperimentError("accepted patch lacks isolated result")
-                request = parse_request(parser_input)
-                proposal = PatchProposal.create(
-                    snapshot,
-                    request.arguments["patch"].encode("utf-8"),
-                    tuple(request.arguments["proposed_paths"]),
-                )
-                candidate = self._freeze_candidate(harness._context.isolated_root, proposal, tuple(step.record.projection["changed_paths"]))
+                request = parse_request(parser_input, protocol=protocol)
+                if request.request_type is RequestType.PROPOSE_TEXT_REPLACEMENT:
+                    if harness._structured_result is None:
+                        raise ExperimentError("accepted structured edit lacks result evidence")
+                    candidate = self._freeze_structured_candidate(harness._structured_result)
+                else:
+                    proposal = PatchProposal.create(
+                        snapshot,
+                        request.arguments["patch"].encode("utf-8"),
+                        tuple(request.arguments["proposed_paths"]),
+                    )
+                    candidate = self._freeze_candidate(
+                        harness._context.isolated_root, proposal,
+                        tuple(step.record.projection["changed_paths"]),
+                    )
                 case["case_state"]["candidate"] = candidate
                 result["terminal_disposition"] = "CANDIDATE_READY"
                 result["case_status"] = "TERMINAL"
@@ -1286,10 +1439,40 @@ class SupervisedWorkController:
             raise SupervisedWorkError("RESPONSE_ADAPTER_BINDING_MISMATCH")
         return dict(manifest_binding)
 
-    @staticmethod
-    def _cross_repository_shape(raw: str) -> bool:
+    def _protocol_binding(self):
+        """Bind the durable session and case to one immutable protocol."""
+
+        manifest = self.manifest()
+        case = self._turns._case(WORK_CASE_ID)
+        protocol_id = manifest.get("protocol_id")
+        if case.get("protocol_id") != protocol_id:
+            raise SupervisedWorkError("PROTOCOL_BINDING_MISMATCH")
         try:
-            request = parse_request(raw)
+            protocol = protocol_by_id(str(protocol_id))
+        except ValueError as error:
+            raise SupervisedWorkError("PROTOCOL_BINDING_MISMATCH") from error
+        qualification = manifest.get("protocol_qualification", {})
+        if qualification.get("id") != protocol_id:
+            raise SupervisedWorkError("PROTOCOL_BINDING_MISMATCH")
+        if protocol_id == STRUCTURED_EDIT_PROTOCOL_ID:
+            transport = manifest.get("structured_transport", {})
+            render_sha = hashlib.sha256(protocol.render().encode()).hexdigest()
+            if not (
+                render_sha == _V3_RENDER_SHA256
+                and qualification.get("render_sha256") == _V3_RENDER_SHA256
+                and transport.get("protocol_id") == STRUCTURED_EDIT_PROTOCOL_ID
+                and transport.get("protocol_render_sha256") == _V3_RENDER_SHA256
+                and transport.get("executor_component") == "ws-code-agent-structured-text-replacement/v1"
+                and transport.get("candidate_state") == "CANDIDATE"
+                and transport.get("live_default") is False
+            ):
+                raise SupervisedWorkError("V3_TRANSPORT_BINDING_MISMATCH")
+        return protocol
+
+    @staticmethod
+    def _cross_repository_shape(raw: str, protocol=None) -> bool:
+        try:
+            request = parse_request(raw, protocol=protocol or protocol_by_id(SINGLE_REPOSITORY_PROTOCOL_ID))
         except Exception:
             return False
         values: list[str] = []
@@ -1299,6 +1482,8 @@ class SupervisedWorkController:
             values.append(request.arguments["scope"])
         elif request.request_type is RequestType.PROPOSE_PATCH:
             values.extend(request.arguments["proposed_paths"])
+        elif request.request_type is RequestType.PROPOSE_TEXT_REPLACEMENT:
+            values.append(request.arguments["path"])
         return any(PurePosixPath(item).is_absolute() or ".." in PurePosixPath(item).parts for item in values)
 
     def _freeze_candidate(self, isolated_root: str, proposal: PatchProposal, changed_paths: tuple[str, ...]) -> dict[str, Any]:
@@ -1324,6 +1509,77 @@ class SupervisedWorkController:
                 "candidate_snapshot_identity": candidate_snapshot.snapshot_identity,
                 "isolated_result_location": str(destination / "repository"),
                 "application": "SUCCESS",
+                "technical_correctness": "NOT_CLAIMED",
+            }
+            os.replace(temporary, destination)
+            final_snapshot = ReadOnlyExecutor().observe_repository(destination / "repository").snapshot
+            if not _same_material(final_snapshot, isolated_snapshot):
+                raise ExperimentError("candidate final identity mismatch")
+            metadata["candidate_snapshot"] = asdict(final_snapshot)
+            metadata["candidate_snapshot_identity"] = final_snapshot.snapshot_identity
+            _atomic_json(destination / "candidate.json", metadata)
+            directory = os.open(self.root, os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+            return metadata
+        finally:
+            if temporary.exists():
+                shutil.rmtree(temporary)
+
+    def _freeze_structured_candidate(self, result) -> dict[str, Any]:
+        if (
+            result.status is not TextReplacementStatus.STRUCTURED_EDIT_ACCEPTED
+            or result.context is None
+            or result.canonical_diff is None
+            or result.candidate_identity is None
+        ):
+            raise ExperimentError("structured candidate is not accepted")
+        destination = self.root / "candidate"
+        if destination.exists():
+            raise ExperimentError("candidate effect already exists")
+        temporary = Path(tempfile.mkdtemp(prefix=".candidate-", dir=self.root))
+        try:
+            repository = temporary / "repository"
+            shutil.copytree(result.context.isolated_root, repository, symlinks=True)
+            candidate_snapshot = ReadOnlyExecutor().observe_repository(repository).snapshot
+            isolated_snapshot = ReadOnlyExecutor().observe_repository(result.context.isolated_root).snapshot
+            if not _same_material(candidate_snapshot, isolated_snapshot):
+                raise ExperimentError("candidate reconstruction mismatch")
+            _atomic_bytes(temporary / "patch.diff", result.canonical_diff)
+            _atomic_json(temporary / "structured-request.json", {
+                "origin": "model",
+                "request_type": RequestType.PROPOSE_TEXT_REPLACEMENT.value,
+                "path": result.proposal.path,
+                "old_text": result.proposal.old_text,
+                "new_text": result.proposal.new_text,
+                "structured_request_sha256": result.proposal.structured_request_sha256,
+                "raw_request_sha256": result.proposal.raw_request_sha256,
+                "path_sha256": result.proposal.path_sha256,
+                "old_text_sha256": result.proposal.old_text_sha256,
+                "new_text_sha256": result.proposal.new_text_sha256,
+            })
+            metadata = {
+                "proposal_identity": result.proposal.structured_request_sha256,
+                "structured_request_sha256": result.proposal.structured_request_sha256,
+                "raw_request_sha256": result.proposal.raw_request_sha256,
+                "path_sha256": result.proposal.path_sha256,
+                "old_text_sha256": result.proposal.old_text_sha256,
+                "new_text_sha256": result.proposal.new_text_sha256,
+                "before_file_sha256": result.before_file_sha256,
+                "after_file_sha256": result.after_file_sha256,
+                "canonical_diff_sha256": result.canonical_diff_sha256,
+                "canonical_diff_origin": "evaluator",
+                "structured_candidate_identity": result.candidate_identity,
+                "proposed_paths": [result.proposal.path],
+                "changed_paths": list(result.actual_changed_paths),
+                "source_snapshot_identity": result.proposal.source_snapshot_identity,
+                "candidate_snapshot": asdict(candidate_snapshot),
+                "candidate_snapshot_identity": candidate_snapshot.snapshot_identity,
+                "isolated_result_location": str(destination / "repository"),
+                "application": TextReplacementStatus.STRUCTURED_EDIT_ACCEPTED.value,
+                "exact_match_count": result.exact_match_count,
                 "technical_correctness": "NOT_CLAIMED",
             }
             os.replace(temporary, destination)
@@ -1556,6 +1812,7 @@ class SupervisedWorkController:
         _atomic_json(self.root / "session-state.json", state)
 
     def status(self) -> dict[str, Any]:
+        self._protocol_binding()
         case = self._turns._case(WORK_CASE_ID)
         state = _load(self.root / "session-state.json")
         source_status = ReadOnlyExecutor().compare_snapshot(_snapshot(case["snapshot_x"])).status.value

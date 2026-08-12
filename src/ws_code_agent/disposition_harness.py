@@ -13,6 +13,12 @@ from .executor_feedback import bounded_executor_feedback
 from .isolated_patch import ApplicationStatus, IsolatedContext, IsolatedPatchExecutor, PatchProposal
 from .readonly_executor import ExecutorOperationError, RepositorySnapshot, ReadOnlyExecutor
 from .request_protocol import ProtocolSpec, SINGLE_REPOSITORY_PROTOCOL
+from .structured_edit import (
+    StructuredTextReplacement,
+    StructuredTextReplacementExecutor,
+    StructuredTextReplacementResult,
+    TextReplacementStatus,
+)
 
 
 MAX_RAW_RESPONSE_BYTES = 32_768
@@ -106,16 +112,30 @@ class RequestParseError(ValueError):
 class DispositionHarness:
     """Maps one validated model request at a time to bounded executor operations."""
 
-    def __init__(self, task: HarnessTask, observer: ReadOnlyExecutor | None = None, patcher: IsolatedPatchExecutor | None = None) -> None:
+    def __init__(
+        self,
+        task: HarnessTask,
+        observer: ReadOnlyExecutor | None = None,
+        patcher: IsolatedPatchExecutor | None = None,
+        *,
+        protocol: ProtocolSpec = SINGLE_REPOSITORY_PROTOCOL,
+        structured_editor: StructuredTextReplacementExecutor | None = None,
+    ) -> None:
         self.task = task
         self._observer = observer or ReadOnlyExecutor()
         self._patcher = patcher or IsolatedPatchExecutor(self._observer)
+        self._protocol = protocol
+        self._structured_editor = structured_editor
         self._context: IsolatedContext | None = None
+        self._structured_result: StructuredTextReplacementResult | None = None
         self._turn = 0
 
     def close(self) -> None:
         if self._context is not None:
-            self._patcher.cleanup(self._context)
+            if self._structured_editor is not None:
+                self._structured_editor.cleanup(self._context)
+            else:
+                self._patcher.cleanup(self._context)
             self._context = None
 
     def step(self, raw_response: str) -> HarnessStep:
@@ -124,7 +144,7 @@ class DispositionHarness:
         if self._turn > self.task.max_turns:
             return self._failure(raw_hash, "TURN_LIMIT", "turn limit exceeded")
         try:
-            request = parse_request(raw_response)
+            request = parse_request(raw_response, protocol=self._protocol)
         except RequestParseError as error:
             return self._failure(raw_hash, "MALFORMED_REQUEST", str(error))
         if request.request_type in FORBIDDEN_REQUESTS:
@@ -140,7 +160,11 @@ class DispositionHarness:
             return self._read(request)
         if request.request_type is RequestType.SEARCH:
             return self._search(request)
-        return self._propose_patch(request)
+        if request.request_type is RequestType.PROPOSE_PATCH:
+            return self._propose_patch(request)
+        if request.request_type is RequestType.PROPOSE_TEXT_REPLACEMENT:
+            return self._propose_text_replacement(request)
+        return self._failure(request.raw_sha256, "MALFORMED_REQUEST", "unsupported request type")
 
     def run(self, backend: ModelBackend, initial_messages: tuple[dict[str, Any], ...]) -> tuple[HarnessStep, ...]:
         """A bounded fake/real-backend loop; caller supplies only projected messages."""
@@ -217,6 +241,57 @@ class DispositionHarness:
             )
         return self._record(request, "VALID", result.status.value, "APPLY_PATCH_ISOLATED",
                             projection, None)
+
+    def _propose_text_replacement(self, request: ModelRequest) -> HarnessStep:
+        if self._structured_editor is None:
+            return self._record(
+                request, "VALID", "EXECUTOR_ERROR", "APPLY_TEXT_REPLACEMENT_ISOLATED",
+                {"status": "ERROR", "application": "EXECUTOR_ERROR"}, None,
+            )
+        if not self.task.patch_permitted:
+            return self._record(
+                request, "VALID", "DENIED_AUTHORITY", None,
+                {"status": "DENIED", "application": "DENIED_AUTHORITY"}, None,
+            )
+        try:
+            if self._context is None:
+                self._context = self._structured_editor.build_isolated_copy(self.task.snapshot)
+            proposal = StructuredTextReplacement.create(
+                self.task.snapshot,
+                raw_request_sha256=request.raw_sha256,
+                path=request.arguments["path"],
+                old_text=request.arguments["old_text"],
+                new_text=request.arguments["new_text"],
+            )
+            result = self._structured_editor.apply_text_replacement_isolated(
+                self._context, proposal, self.task.allowed_patch_paths,
+            )
+            self._structured_result = result
+        except Exception as error:
+            return self._record(
+                request, "VALID", "EXECUTOR_ERROR", "APPLY_TEXT_REPLACEMENT_ISOLATED",
+                {"status": "ERROR", "application": "EXECUTOR_ERROR", "error": type(error).__name__}, None,
+            )
+        accepted = result.status is TextReplacementStatus.STRUCTURED_EDIT_ACCEPTED
+        projection = {
+            "status": "ACCEPTED" if accepted else "REJECTED",
+            "application": result.status.value,
+            "exact_match_count": result.exact_match_count,
+            "changed_paths": list(result.actual_changed_paths),
+        }
+        if accepted:
+            projection.update({
+                "structured_request_sha256": result.proposal.structured_request_sha256,
+                "before_file_sha256": result.before_file_sha256,
+                "after_file_sha256": result.after_file_sha256,
+                "canonical_diff_sha256": result.canonical_diff_sha256,
+                "canonical_diff_origin": "evaluator",
+                "candidate_identity": result.candidate_identity,
+            })
+        return self._record(
+            request, "VALID", result.status.value, "APPLY_TEXT_REPLACEMENT_ISOLATED",
+            projection, None,
+        )
 
     def _feedback_roots(self) -> tuple[str, ...]:
         roots = [str(self.task.snapshot.canonical_root)]

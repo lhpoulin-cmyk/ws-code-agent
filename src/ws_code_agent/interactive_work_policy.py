@@ -29,6 +29,7 @@ INTERACTIVE_CANDIDATE_VALIDATED = "INTERACTIVE_CANDIDATE_VALIDATED"
 INTERACTIVE_RECOVERY_FAILED = "INTERACTIVE_RECOVERY_FAILED"
 INTERACTIVE_AUTHORITY_MISJUDGMENT = "INTERACTIVE_AUTHORITY_MISJUDGMENT"
 INTERACTIVE_REQUIREMENTS_JUDGMENT_FAILED = "INTERACTIVE_REQUIREMENTS_JUDGMENT_FAILED"
+INTERACTIVE_STRUCTURED_EDIT_RECOVERY_FAILED = "INTERACTIVE_STRUCTURED_EDIT_RECOVERY_FAILED"
 
 DELIBERATIVE_OVERNIGHT_CODER = "DELIBERATIVE_OVERNIGHT_CODER"
 OPERATOR = "OPERATOR"
@@ -36,6 +37,7 @@ DELIBERATIVE_OVERNIGHT_CODER_OR_OPERATOR = "DELIBERATIVE_OVERNIGHT_CODER_OR_OPER
 
 ESCALATION_REASONS = (
     "PATCH_REPAIR_EXHAUSTED",
+    "STRUCTURED_EDIT_REPAIR_EXHAUSTED",
     "NO_CHANGE_AFTER_PATCH_REJECTED",
     "AUTHORITY_MISJUDGMENT",
     "REQUIREMENTS_JUDGMENT_FAILED",
@@ -134,9 +136,20 @@ def classify(
     ):
         return _escalate("MODEL_REPEAT_LIMIT", "MODEL_REPEAT_LIMIT")
 
+    if any(item.get("authority_outcome") in {
+        "STATE_STALE", "REPOSITORY_MISMATCH", "EXECUTOR_ERROR",
+    } for item in turns):
+        return PolicyDecision(
+            INFRASTRUCTURE_REPAIR_REQUIRED,
+            next(item["authority_outcome"] for item in turns if item.get("authority_outcome") in {
+                "STATE_STALE", "REPOSITORY_MISMATCH", "EXECUTOR_ERROR",
+            }),
+            recommended_next_worker=OPERATOR,
+        )
+
     authority_violation = any(
         (
-            item.get("request_type") == "PROPOSE_PATCH" and not patch_authorized
+            item.get("request_type") in {"PROPOSE_PATCH", "PROPOSE_TEXT_REPLACEMENT"} and not patch_authorized
         )
         or item.get("authority_outcome") in {
             "DENIED_AUTHORITY",
@@ -164,6 +177,32 @@ def classify(
             "VALID_REQUEST_CLARIFICATION",
             recommended_next_worker=OPERATOR,
         )
+
+    structured_failures = [
+        index for index, item in enumerate(turns)
+        if item.get("authority_outcome") in {"TEXT_MATCH_ZERO", "TEXT_MATCH_MULTIPLE"}
+        or item.get("projection", {}).get("application") in {"TEXT_MATCH_ZERO", "TEXT_MATCH_MULTIPLE"}
+    ]
+    if len(structured_failures) >= 2:
+        return _escalate(
+            INTERACTIVE_STRUCTURED_EDIT_RECOVERY_FAILED,
+            "STRUCTURED_EDIT_REPAIR_EXHAUSTED",
+        )
+    if structured_failures:
+        later = turns[structured_failures[0] + 1:]
+        if later:
+            if later[0].get("request_type") != "PROPOSE_TEXT_REPLACEMENT":
+                return _escalate(
+                    INTERACTIVE_STRUCTURED_EDIT_RECOVERY_FAILED,
+                    "OTHER_SEMANTIC_FAILURE",
+                )
+        else:
+            return PolicyDecision(REPAIR_OPPORTUNITY, "FIRST_STRUCTURED_MATCH_FAILURE")
+
+    if any(item.get("authority_outcome") in {
+        "TEXT_REPLACEMENT_NO_EFFECT", "TEXT_ENCODING_UNSUPPORTED",
+    } for item in turns):
+        return _escalate("INTERACTIVE_SEMANTIC_FAILURE", "OTHER_SEMANTIC_FAILURE")
 
     rejected_indexes = [
         index for index, item in enumerate(turns)
@@ -197,7 +236,7 @@ def classify(
         return PolicyDecision(VALIDATION_REQUIRED, "CANDIDATE_READY")
 
     if not patch_authorized and any(
-        item.get("request_type") in {"NO_CHANGE", "PROPOSE_PATCH"} for item in turns
+        item.get("request_type") in {"NO_CHANGE", "PROPOSE_PATCH", "PROPOSE_TEXT_REPLACEMENT"} for item in turns
     ):
         return _escalate(
             INTERACTIVE_REQUIREMENTS_JUDGMENT_FAILED,

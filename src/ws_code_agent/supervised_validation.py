@@ -14,9 +14,17 @@ from .validation import ValidationDescriptor, ValidationRole
 VISIBLE_VALIDATION_ID = "task10k-c-write-visible-v1"
 HIDDEN_VALIDATION_ID = "task10k-c-write-hidden-v1"
 WRITE_VALIDATION_IDS = (VISIBLE_VALIDATION_ID, HIDDEN_VALIDATION_ID)
+TASK11J_VISIBLE_VALIDATION_ID = "task11j-ws-doc-writer-src-readme-visible-v1"
+TASK11J_HIDDEN_VALIDATION_ID = "task11j-ws-doc-writer-src-readme-hidden-v1"
+TASK11J_VALIDATION_IDS = (
+    TASK11J_VISIBLE_VALIDATION_ID,
+    TASK11J_HIDDEN_VALIDATION_ID,
+)
 REGISTRY_ROOT = Path(__file__).resolve().parents[2] / "validation-assets"
 VISIBLE_SOURCE = REGISTRY_ROOT / f"{VISIBLE_VALIDATION_ID}.py"
 HIDDEN_SOURCE = REGISTRY_ROOT / f"{HIDDEN_VALIDATION_ID}.py"
+TASK11J_VISIBLE_SOURCE = REGISTRY_ROOT / f"{TASK11J_VISIBLE_VALIDATION_ID}.py"
+TASK11J_HIDDEN_SOURCE = REGISTRY_ROOT / f"{TASK11J_HIDDEN_VALIDATION_ID}.py"
 
 
 def validation_registry() -> dict[str, ValidationDescriptor]:
@@ -44,13 +52,40 @@ def validation_registry() -> dict[str, ValidationDescriptor]:
         repository_writes_allowed=False,
         containment_required=True,
     )
-    return {visible.descriptor_id: visible, hidden.descriptor_id: hidden}
+    task11j_visible = ValidationDescriptor(
+        TASK11J_VISIBLE_VALIDATION_ID,
+        "v1",
+        "/usr/bin/python3",
+        ("-B", str(TASK11J_VISIBLE_SOURCE)),
+        ".",
+        10,
+        ValidationRole.VISIBLE,
+        True,
+        repository_writes_allowed=False,
+        containment_required=True,
+    )
+    task11j_hidden = ValidationDescriptor(
+        TASK11J_HIDDEN_VALIDATION_ID,
+        "v1",
+        "/usr/bin/python3",
+        ("-B", str(TASK11J_HIDDEN_SOURCE)),
+        ".",
+        10,
+        ValidationRole.HIDDEN_ORACLE,
+        True,
+        repository_writes_allowed=False,
+        containment_required=True,
+    )
+    descriptors = (visible, hidden, task11j_visible, task11j_hidden)
+    return {descriptor.descriptor_id: descriptor for descriptor in descriptors}
 
 
 def descriptor_source(descriptor_id: str) -> Path:
     sources = {
         VISIBLE_VALIDATION_ID: VISIBLE_SOURCE,
         HIDDEN_VALIDATION_ID: HIDDEN_SOURCE,
+        TASK11J_VISIBLE_VALIDATION_ID: TASK11J_VISIBLE_SOURCE,
+        TASK11J_HIDDEN_VALIDATION_ID: TASK11J_HIDDEN_SOURCE,
     }
     try:
         source = sources[descriptor_id]

@@ -71,10 +71,19 @@ from .response_normalization import (
     STRICT_RAW,
     normalize_single_markdown_json_fence,
 )
+from .production_envelope import (
+    TASK11J_PILOT_INSTANCE_ID,
+    TASK11J_README_SHA256,
+    TASK11J_TARGET_HEAD,
+    TASK11J_TARGET_ORIGIN,
+    TASK11J_TARGET_PATH,
+    task11j_pilot_instance,
+)
 from .supervised_validation import (
     HIDDEN_VALIDATION_ID,
     VISIBLE_VALIDATION_ID,
     WRITE_VALIDATION_IDS,
+    TASK11J_VALIDATION_IDS,
     bind_validation_ids,
     binding_matches,
     descriptor_binding,
@@ -110,6 +119,7 @@ TASK11A_FIXTURE_ID = "task11a-interactive-positive-existing-file/synthetic-v1"
 TASK11D_STRUCTURED_SESSION_KIND = "QWEN25_14B_INTERACTIVE_STRUCTURED_V3_V1"
 TASK11D_FIXTURE_ID = "task11d-interactive-structured-existing-file/synthetic-v1"
 TASK11F_FIXTURE_ID = "task11f-source-grounded-structured-existing-file/synthetic-v1"
+TASK11J_REAL_REPOSITORY_SESSION_KIND = "INTERACTIVE_PRACTICAL_CODER_REAL_REPOSITORY_PILOT_V1"
 INTERACTIVE_NORMALIZED = "INTERACTIVE_NORMALIZED"
 QWEN25_32B_V2_SESSION_KIND = "QWEN25_32B_V2_SUPERVISED_PRODUCTION_ADMISSION"
 QWEN25_32B_CANDIDATE_ID = "qwen25-coder-32b-q4"
@@ -1171,6 +1181,107 @@ class SupervisedWorkController:
         )
 
     @classmethod
+    def start_task11j_real_repository_pilot(
+        cls,
+        store: Path,
+        *,
+        session_id: str,
+        candidate_path: Path,
+        harness_sha: str,
+    ) -> "SupervisedWorkController":
+        """Start the exact published Task 11J pilot against frozen ws-doc-writer."""
+
+        if not SESSION_ID.fullmatch(session_id):
+            raise SupervisedWorkError("INVALID_SESSION_ID")
+        root = Path(__file__).resolve().parents[2]
+        try:
+            instance = task11j_pilot_instance(root)
+        except Exception as error:
+            raise SupervisedWorkError(str(error)) from error
+        pilot = instance["pilot_manifest"]
+        source = instance["source_binding"]
+        repository = Path(source["canonical_path"])
+        if str(repository.resolve()) != TASK11J_TARGET_PATH:
+            raise SupervisedWorkError("TASK11J_SOURCE_PATH_MISMATCH")
+        if _git(repository, "remote", "get-url", "origin") != TASK11J_TARGET_ORIGIN:
+            raise SupervisedWorkError("TASK11J_SOURCE_ORIGIN_MISMATCH")
+        remote = subprocess.run(
+            ["git", "-C", str(repository), "ls-remote", "--exit-code", "origin", source["remote_ref"]],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if remote.returncode or remote.stdout.split() != [TASK11J_TARGET_HEAD, source["remote_ref"]]:
+            raise SupervisedWorkError("TASK11J_DIRECT_REMOTE_PARITY_MISMATCH")
+        observed = ReadOnlyExecutor().observe_repository(repository).snapshot
+        expected = pilot["repository"]
+        actual = {
+            "identity": observed.repository_identity,
+            "head": observed.head_commit,
+            "source_snapshot_x": observed.snapshot_identity,
+            "index_identity": observed.index_identity,
+            "tracked_worktree_identity": observed.tracked_worktree_identity,
+            "untracked_identity": observed.untracked_identity,
+        }
+        if any(actual[key] != expected[key] for key in actual):
+            raise SupervisedWorkError("TASK11J_SOURCE_STATE_MISMATCH")
+        if observed.submodule_identity != source["submodule_identity"]:
+            raise SupervisedWorkError("TASK11J_SOURCE_STATE_MISMATCH")
+        target = repository / source["readme_path"]
+        if (
+            not target.is_file()
+            or target.is_symlink()
+            or hashlib.sha256(target.read_bytes()).hexdigest() != TASK11J_README_SHA256
+        ):
+            raise SupervisedWorkError("TASK11J_SOURCE_STATE_MISMATCH")
+        qualification, model_artifact = _qwen25_candidate_binding(candidate_path)
+        if hashlib.sha256(STRUCTURED_EDIT_PROTOCOL.render().encode()).hexdigest() != _V3_RENDER_SHA256:
+            raise SupervisedWorkError("V3_PROTOCOL_RENDER_MISMATCH")
+        protocol_qualification = {
+            "id": STRUCTURED_EDIT_PROTOCOL_ID,
+            "qualification_status": "FROZEN_ENVELOPE",
+            "production_qualified": False,
+            "synthetic_acceptance": "PASS",
+            "operating_class": OPERATING_CLASS,
+            "render_sha256": _V3_RENDER_SHA256,
+            "authority": "INTERACTIVE_PRACTICAL_CODER_V3_PRODUCTION_ENVELOPE_V1",
+            "live_default": False,
+        }
+        qualification = dict(qualification)
+        qualification.update({
+            "evaluation_scope": "FIRST_REAL_LOCAL_REPOSITORY_V3_PILOT",
+            "protocol": protocol_qualification,
+        })
+        fixture_contract_sha256 = hashlib.sha256(
+            json.dumps(pilot, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        return cls._start_bound(
+            store,
+            session_id=session_id,
+            repository=repository,
+            expected_head=TASK11J_TARGET_HEAD,
+            objective=pilot["objective"],
+            read_scopes=tuple(pilot["read_scopes"]),
+            patch_paths=tuple(pilot["patch_paths"]),
+            harness_sha=harness_sha,
+            turn_limit=int(pilot["turn_limit"]),
+            protocol_id=STRUCTURED_EDIT_PROTOCOL_ID,
+            protocol_qualification=protocol_qualification,
+            qualification=qualification,
+            model_artifact=model_artifact,
+            session_kind=TASK11J_REAL_REPOSITORY_SESSION_KIND,
+            fixture_identity=TASK11J_PILOT_INSTANCE_ID,
+            fixture_contract_sha256=fixture_contract_sha256,
+            fixture_content_sha256=TASK11J_README_SHA256,
+            validation_ids=TASK11J_VALIDATION_IDS,
+            response_adapter=INTERACTIVE_NORMALIZED_ADAPTER_BINDING,
+            interactive_requirements_status=pilot["requirements_status"],
+            pilot_binding=instance,
+        )
+
+    @classmethod
     def start_qwen25_32b_v2_admission(
         cls,
         store: Path,
@@ -1239,6 +1350,7 @@ class SupervisedWorkController:
         validation_ids: tuple[str, ...],
         response_adapter: Mapping[str, Any] | None = None,
         interactive_requirements_status: str | None = None,
+        pilot_binding: Mapping[str, Any] | None = None,
     ) -> "SupervisedWorkController":
         if not SESSION_ID.fullmatch(session_id):
             raise SupervisedWorkError("INVALID_SESSION_ID")
@@ -1279,6 +1391,7 @@ class SupervisedWorkController:
             QWEN25_14B_INTERACTIVE_NORMALIZED_SESSION_KIND,
             TASK11A_INTERACTIVE_ACCEPTANCE_SESSION_KIND,
             TASK11D_STRUCTURED_SESSION_KIND,
+            TASK11J_REAL_REPOSITORY_SESSION_KIND,
         }:
             try:
                 interactive_boundary = bind_interactive_entry(
@@ -1321,9 +1434,9 @@ class SupervisedWorkController:
             "validation": validation_contract,
             "response_adapter": adapter_binding,
         }
-        if session_kind == TASK11D_STRUCTURED_SESSION_KIND:
+        if session_kind in {TASK11D_STRUCTURED_SESSION_KIND, TASK11J_REAL_REPOSITORY_SESSION_KIND}:
             manifest["structured_transport"] = {
-                "lane_id": TASK11D_STRUCTURED_SESSION_KIND,
+                "lane_id": session_kind,
                 "protocol_id": STRUCTURED_EDIT_PROTOCOL_ID,
                 "protocol_render_sha256": _V3_RENDER_SHA256,
                 "request_type": RequestType.PROPOSE_TEXT_REPLACEMENT.value,
@@ -1333,6 +1446,8 @@ class SupervisedWorkController:
                 "live_default": False,
                 "source_grounding_policy": SOURCE_GROUNDING_POLICY_ID,
             }
+        if pilot_binding is not None:
+            manifest["real_repository_pilot"] = dict(pilot_binding)
         if fixture_contract_sha256 is not None:
             manifest["fixture"] = {
                 "fixture_id": fixture_identity,
@@ -1375,7 +1490,7 @@ class SupervisedWorkController:
                 "validation_status": validation_status,
             },
         }
-        if session_kind == TASK11D_STRUCTURED_SESSION_KIND:
+        if session_kind in {TASK11D_STRUCTURED_SESSION_KIND, TASK11J_REAL_REPOSITORY_SESSION_KIND}:
             case["case_state"]["source_grounding"] = {}
         if interactive_boundary is not None:
             case["interactive_work_boundary"] = interactive_boundary
@@ -2252,6 +2367,23 @@ class SupervisedWorkController:
             "interactive_work_boundary": manifest.get("interactive_work_boundary"),
             "interactive_policy": case["case_state"].get("interactive_policy"),
             "source_grounding": case["case_state"].get("source_grounding", {}),
+            "real_repository_pilot": manifest.get("real_repository_pilot"),
+            "structured_candidate_evidence": (
+                {
+                    key: candidate.get(key)
+                    for key in (
+                        "structured_request_sha256", "path_sha256", "old_text_sha256",
+                        "new_text_sha256", "before_file_sha256", "after_file_sha256",
+                        "canonical_diff_sha256", "canonical_diff_origin",
+                        "structured_candidate_identity", "candidate_snapshot_identity",
+                        "exact_match_count",
+                    )
+                }
+                if candidate and candidate.get("structured_request_sha256")
+                else None
+            ),
+            "automatic_handoff_performed": False,
+            "automatic_promotion_performed": False,
         }
         _atomic_json(self.root / "review-packet.json", packet)
         return packet

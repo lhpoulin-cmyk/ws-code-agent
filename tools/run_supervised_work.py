@@ -101,6 +101,8 @@ def main() -> int:
         choices=("COMPLETE", "UNRESOLVED"),
         required=True,
     )
+    task11j = sub.add_parser("start-task11j-real-local-pilot")
+    task11j.add_argument("--session-id")
     qwen25_32b_v2 = sub.add_parser("start-qwen25-32b-v2")
     qwen25_32b_v2.add_argument("--fixture", choices=SYNTHETIC_V2_FIXTURES, required=True)
     qwen25_32b_v2.add_argument("--turn-limit", type=int, default=8)
@@ -208,6 +210,15 @@ def main() -> int:
                 harness_sha=_head(),
                 requirements_status=args.requirements_status,
                 turn_limit=args.turn_limit,
+            )
+            output = controller.status()
+        elif args.command == "start-task11j-real-local-pilot":
+            session_id = args.session_id or generated_session_id()
+            controller = SupervisedWorkController.start_task11j_real_repository_pilot(
+                STORE,
+                session_id=session_id,
+                candidate_path=QWEN25_CANDIDATE,
+                harness_sha=_head(),
             )
             output = controller.status()
         elif args.command == "start-qwen25-32b-v2":

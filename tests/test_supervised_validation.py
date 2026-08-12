@@ -21,6 +21,7 @@ from ws_code_agent.supervised_validation import (  # noqa: E402
     VISIBLE_SOURCE,
     VISIBLE_VALIDATION_ID,
     WRITE_VALIDATION_IDS,
+    TASK11J_VALIDATION_IDS,
     bind_validation_ids,
     validation_registry,
 )
@@ -188,7 +189,7 @@ class SupervisedValidationTests(unittest.TestCase):
 
     def test_registry_is_exact_and_rejects_unauthorized_identity(self):
         registry = validation_registry()
-        self.assertEqual(set(WRITE_VALIDATION_IDS), set(registry))
+        self.assertEqual(set(WRITE_VALIDATION_IDS + TASK11J_VALIDATION_IDS), set(registry))
         contract = bind_validation_ids(WRITE_VALIDATION_IDS)
         self.assertEqual(list(WRITE_VALIDATION_IDS), contract["authorized_validation_ids"])
         self.assertTrue(all(item["containment_required"] for item in contract["descriptors"]))

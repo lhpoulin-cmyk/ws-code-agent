@@ -29,6 +29,7 @@ from ws_code_agent.request_protocol import (  # noqa: E402
 from ws_code_agent.supervised_work import (  # noqa: E402
     TASK11D_FIXTURE_ID,
     TASK11D_STRUCTURED_SESSION_KIND,
+    TASK11F_FIXTURE_ID,
     SupervisedWorkController,
     SupervisedWorkError,
 )
@@ -138,6 +139,42 @@ class Task11DStructuredLaneTests(unittest.TestCase):
             manifest_path.write_text(json.dumps(tampered), encoding="utf-8")
             with self.assertRaisesRegex(SupervisedWorkError, "V3_TRANSPORT_BINDING_MISMATCH"):
                 SupervisedWorkController(controller.root).status()
+
+    def test_task11f_selector_uses_fresh_fixture_and_published_grounded_lane(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            task11d = self.start(root, "work-task11d-fixture-separation")
+            task11f = SupervisedWorkController.start_task11f_v3_source_grounded_acceptance(
+                root / "store",
+                session_id="work-task11f-fixture-separation",
+                candidate_path=CANDIDATE,
+                harness_sha="published-task11f-apparatus-sha",
+                requirements_status="COMPLETE",
+            )
+            manifest = task11f.manifest()
+            case = task11f._turns._case("WORK")
+            self.assertEqual(TASK11D_STRUCTURED_SESSION_KIND, manifest["session_kind"])
+            self.assertEqual(TASK11F_FIXTURE_ID, case["fixture_identity"])
+            self.assertNotEqual(
+                task11d.manifest()["fixture"]["fixture_id"],
+                manifest["fixture"]["fixture_id"],
+            )
+            self.assertNotEqual(
+                task11d.manifest()["fixture"]["contract_sha256"],
+                manifest["fixture"]["contract_sha256"],
+            )
+            self.assertEqual(STRUCTURED_EDIT_PROTOCOL_ID, manifest["protocol_id"])
+            self.assertEqual(
+                SOURCE_GROUNDING_POLICY_ID,
+                manifest["structured_transport"]["source_grounding_policy"],
+            )
+            self.assertEqual("INTERACTIVE_ENTRY_ACCEPTED", task11f.status()["interactive_work_boundary"]["entry_status"])
+            self.assertEqual({}, task11f.status()["source_grounding"])
+            repository = Path(manifest["repository"]["canonical_path"])
+            self.assertEqual(
+                'def message():\n    return "hi"\n',
+                (repository / "src/message.py").read_text(encoding="utf-8"),
+            )
 
     def test_fenced_structured_edit_preserves_semantics_and_validates(self):
         with tempfile.TemporaryDirectory() as temporary:

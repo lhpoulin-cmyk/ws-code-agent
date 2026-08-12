@@ -109,6 +109,7 @@ TASK11A_INTERACTIVE_ACCEPTANCE_SESSION_KIND = "TASK11A_INTERACTIVE_BOUNDED_WORK_
 TASK11A_FIXTURE_ID = "task11a-interactive-positive-existing-file/synthetic-v1"
 TASK11D_STRUCTURED_SESSION_KIND = "QWEN25_14B_INTERACTIVE_STRUCTURED_V3_V1"
 TASK11D_FIXTURE_ID = "task11d-interactive-structured-existing-file/synthetic-v1"
+TASK11F_FIXTURE_ID = "task11f-source-grounded-structured-existing-file/synthetic-v1"
 INTERACTIVE_NORMALIZED = "INTERACTIVE_NORMALIZED"
 QWEN25_32B_V2_SESSION_KIND = "QWEN25_32B_V2_SUPERVISED_PRODUCTION_ADMISSION"
 QWEN25_32B_CANDIDATE_ID = "qwen25-coder-32b-q4"
@@ -660,6 +661,59 @@ def _initialize_task11d_fixture(
     return repository, _TASK11A_OBJECTIVE, (".",), ("src/message.py",), TASK11D_FIXTURE_ID
 
 
+def _task11f_fixture_contract_sha256() -> str:
+    payload = json.dumps(
+        [
+            _TASK11A_OBJECTIVE,
+            _TASK11A_SOURCE,
+            TASK11F_FIXTURE_ID,
+            (".",),
+            ("src/message.py",),
+        ],
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _initialize_task11f_fixture(
+    store: Path,
+    session_id: str,
+) -> tuple[Path, str, tuple[str, ...], tuple[str, ...], str]:
+    repository = store / "_task11f-fixtures" / session_id / "repository"
+    if repository.exists():
+        raise SupervisedWorkError("TASK11F_FIXTURE_EXISTS")
+    repository.mkdir(mode=0o700, parents=True)
+    (repository / "src").mkdir(mode=0o700)
+    (repository / "src" / "message.py").write_text(_TASK11A_SOURCE, encoding="utf-8")
+    for command in (
+        ("git", "-C", str(repository), "init", "-q"),
+        ("git", "-C", str(repository), "add", "src/message.py"),
+    ):
+        result = subprocess.run(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False,
+        )
+        if result.returncode:
+            raise SupervisedWorkError("TASK11F_FIXTURE_GIT_FAILURE")
+    environment = dict(os.environ)
+    environment.update({
+        "GIT_AUTHOR_NAME": "Task11F",
+        "GIT_AUTHOR_EMAIL": "task11f@example.invalid",
+        "GIT_AUTHOR_DATE": "2000-01-01T00:00:00+0000",
+        "GIT_COMMITTER_NAME": "Task11F",
+        "GIT_COMMITTER_EMAIL": "task11f@example.invalid",
+        "GIT_COMMITTER_DATE": "2000-01-01T00:00:00+0000",
+    })
+    result = subprocess.run(
+        ["git", "-C", str(repository), "commit", "-qm", "Task 11F source-grounded V3 acceptance fixture"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=environment, check=False,
+    )
+    if result.returncode:
+        raise SupervisedWorkError("TASK11F_FIXTURE_GIT_FAILURE")
+    return repository, _TASK11A_OBJECTIVE, (".",), ("src/message.py",), TASK11F_FIXTURE_ID
+
+
 def _same_material(left: RepositorySnapshot, right: RepositorySnapshot) -> bool:
     return (
         left.head_commit,
@@ -1048,6 +1102,68 @@ class SupervisedWorkController:
             session_kind=TASK11D_STRUCTURED_SESSION_KIND,
             fixture_identity=fixture_identity,
             fixture_contract_sha256=_task11d_fixture_contract_sha256(),
+            fixture_content_sha256=hashlib.sha256(_TASK11A_SOURCE.encode()).hexdigest(),
+            validation_ids=WRITE_VALIDATION_IDS,
+            response_adapter=INTERACTIVE_NORMALIZED_ADAPTER_BINDING,
+            interactive_requirements_status=requirements_status,
+        )
+
+    @classmethod
+    def start_task11f_v3_source_grounded_acceptance(
+        cls,
+        store: Path,
+        *,
+        session_id: str,
+        candidate_path: Path,
+        harness_sha: str,
+        requirements_status: str,
+        turn_limit: int = DEFAULT_TURN_LIMIT,
+    ) -> "SupervisedWorkController":
+        """Start a fresh Task 11F fixture through the published grounded V3 lane."""
+
+        if not SESSION_ID.fullmatch(session_id):
+            raise SupervisedWorkError("INVALID_SESSION_ID")
+        if requirements_status != REQUIREMENTS_COMPLETE:
+            raise SupervisedWorkError("INTERACTIVE_ENTRY_DENIED_REQUIREMENTS_UNRESOLVED")
+        qualification, model_artifact = _qwen25_candidate_binding(candidate_path)
+        if hashlib.sha256(STRUCTURED_EDIT_PROTOCOL.render().encode()).hexdigest() != _V3_RENDER_SHA256:
+            raise SupervisedWorkError("V3_PROTOCOL_RENDER_MISMATCH")
+        protocol_qualification = {
+            "id": STRUCTURED_EDIT_PROTOCOL_ID,
+            "qualification_status": "CANDIDATE",
+            "production_qualified": False,
+            "synthetic_acceptance": "PENDING",
+            "operating_class": OPERATING_CLASS,
+            "render_sha256": _V3_RENDER_SHA256,
+            "authority": "TASK11C-DESIGN-DETERMINISTIC-STRUCTURED-EDIT-TRANSPORT",
+            "live_default": False,
+        }
+        qualification = dict(qualification)
+        qualification.update({
+            "evaluation_scope": "V3_SOURCE_GROUNDED_RESTRICTED_ACCEPTANCE",
+            "protocol": protocol_qualification,
+        })
+        repository, objective, read_scopes, patch_paths, fixture_identity = (
+            _initialize_task11f_fixture(store, session_id)
+        )
+        expected_head = _git(repository, "rev-parse", "HEAD")
+        return cls._start_bound(
+            store,
+            session_id=session_id,
+            repository=repository,
+            expected_head=expected_head,
+            objective=objective,
+            read_scopes=read_scopes,
+            patch_paths=patch_paths,
+            harness_sha=harness_sha,
+            turn_limit=turn_limit,
+            protocol_id=STRUCTURED_EDIT_PROTOCOL_ID,
+            protocol_qualification=protocol_qualification,
+            qualification=qualification,
+            model_artifact=model_artifact,
+            session_kind=TASK11D_STRUCTURED_SESSION_KIND,
+            fixture_identity=fixture_identity,
+            fixture_contract_sha256=_task11f_fixture_contract_sha256(),
             fixture_content_sha256=hashlib.sha256(_TASK11A_SOURCE.encode()).hexdigest(),
             validation_ids=WRITE_VALIDATION_IDS,
             response_adapter=INTERACTIVE_NORMALIZED_ADAPTER_BINDING,

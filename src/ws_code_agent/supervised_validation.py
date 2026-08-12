@@ -20,11 +20,19 @@ TASK11J_VALIDATION_IDS = (
     TASK11J_VISIBLE_VALIDATION_ID,
     TASK11J_HIDDEN_VALIDATION_ID,
 )
+TASK11M_VISIBLE_VALIDATION_ID = "task11m-gpu-compute-current-state-visible-v1"
+TASK11M_HIDDEN_VALIDATION_ID = "task11m-gpu-compute-current-state-hidden-v1"
+TASK11M_VALIDATION_IDS = (
+    TASK11M_VISIBLE_VALIDATION_ID,
+    TASK11M_HIDDEN_VALIDATION_ID,
+)
 REGISTRY_ROOT = Path(__file__).resolve().parents[2] / "validation-assets"
 VISIBLE_SOURCE = REGISTRY_ROOT / f"{VISIBLE_VALIDATION_ID}.py"
 HIDDEN_SOURCE = REGISTRY_ROOT / f"{HIDDEN_VALIDATION_ID}.py"
 TASK11J_VISIBLE_SOURCE = REGISTRY_ROOT / f"{TASK11J_VISIBLE_VALIDATION_ID}.py"
 TASK11J_HIDDEN_SOURCE = REGISTRY_ROOT / f"{TASK11J_HIDDEN_VALIDATION_ID}.py"
+TASK11M_VISIBLE_SOURCE = REGISTRY_ROOT / f"{TASK11M_VISIBLE_VALIDATION_ID}.py"
+TASK11M_HIDDEN_SOURCE = REGISTRY_ROOT / f"{TASK11M_HIDDEN_VALIDATION_ID}.py"
 
 
 def validation_registry() -> dict[str, ValidationDescriptor]:
@@ -76,7 +84,38 @@ def validation_registry() -> dict[str, ValidationDescriptor]:
         repository_writes_allowed=False,
         containment_required=True,
     )
-    descriptors = (visible, hidden, task11j_visible, task11j_hidden)
+    task11m_visible = ValidationDescriptor(
+        TASK11M_VISIBLE_VALIDATION_ID,
+        "v1",
+        "/usr/bin/python3",
+        ("-B", str(TASK11M_VISIBLE_SOURCE)),
+        ".",
+        10,
+        ValidationRole.VISIBLE,
+        True,
+        repository_writes_allowed=False,
+        containment_required=True,
+    )
+    task11m_hidden = ValidationDescriptor(
+        TASK11M_HIDDEN_VALIDATION_ID,
+        "v1",
+        "/usr/bin/python3",
+        ("-B", str(TASK11M_HIDDEN_SOURCE)),
+        ".",
+        10,
+        ValidationRole.HIDDEN_ORACLE,
+        True,
+        repository_writes_allowed=False,
+        containment_required=True,
+    )
+    descriptors = (
+        visible,
+        hidden,
+        task11j_visible,
+        task11j_hidden,
+        task11m_visible,
+        task11m_hidden,
+    )
     return {descriptor.descriptor_id: descriptor for descriptor in descriptors}
 
 
@@ -86,6 +125,8 @@ def descriptor_source(descriptor_id: str) -> Path:
         HIDDEN_VALIDATION_ID: HIDDEN_SOURCE,
         TASK11J_VISIBLE_VALIDATION_ID: TASK11J_VISIBLE_SOURCE,
         TASK11J_HIDDEN_VALIDATION_ID: TASK11J_HIDDEN_SOURCE,
+        TASK11M_VISIBLE_VALIDATION_ID: TASK11M_VISIBLE_SOURCE,
+        TASK11M_HIDDEN_VALIDATION_ID: TASK11M_HIDDEN_SOURCE,
     }
     try:
         source = sources[descriptor_id]

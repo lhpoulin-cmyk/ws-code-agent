@@ -78,12 +78,20 @@ from .production_envelope import (
     TASK11J_TARGET_ORIGIN,
     TASK11J_TARGET_PATH,
     TASK11L_PILOT_INSTANCE_ID,
+    TASK11M_PILOT_INSTANCE_ID,
+    TASK11M_TARGET_FILE,
+    TASK11M_TARGET_FILE_SHA256,
+    TASK11M_TARGET_HEAD,
+    TASK11M_TARGET_ORIGIN,
+    TASK11M_TARGET_PATH,
     task11j_pilot_instance,
     task11l_pilot_instance,
+    task11m_pilot_instance,
 )
 from .supervised_validation import (
     WRITE_VALIDATION_IDS,
     TASK11J_VALIDATION_IDS,
+    TASK11M_VALIDATION_IDS,
     bind_validation_ids,
     binding_matches,
     bound_descriptor_ids_by_role,
@@ -1204,6 +1212,12 @@ class SupervisedWorkController:
             instance=instance,
             fixture_identity=TASK11J_PILOT_INSTANCE_ID,
             error_prefix="TASK11J",
+            expected_path=TASK11J_TARGET_PATH,
+            expected_origin=TASK11J_TARGET_ORIGIN,
+            expected_head=TASK11J_TARGET_HEAD,
+            target_path="src/README.md",
+            target_sha256=TASK11J_README_SHA256,
+            validation_ids=TASK11J_VALIDATION_IDS,
         )
 
     @classmethod
@@ -1229,6 +1243,43 @@ class SupervisedWorkController:
             instance=instance,
             fixture_identity=TASK11L_PILOT_INSTANCE_ID,
             error_prefix="TASK11L",
+            expected_path=TASK11J_TARGET_PATH,
+            expected_origin=TASK11J_TARGET_ORIGIN,
+            expected_head=TASK11J_TARGET_HEAD,
+            target_path="src/README.md",
+            target_sha256=TASK11J_README_SHA256,
+            validation_ids=TASK11J_VALIDATION_IDS,
+        )
+
+    @classmethod
+    def start_task11m_real_repository_pilot(
+        cls,
+        store: Path,
+        *,
+        session_id: str,
+        candidate_path: Path,
+        harness_sha: str,
+    ) -> "SupervisedWorkController":
+        """Start the distinct Task 11M mid-file gpu-compute pilot."""
+
+        try:
+            instance = task11m_pilot_instance(Path(__file__).resolve().parents[2])
+        except Exception as error:
+            raise SupervisedWorkError(str(error)) from error
+        return cls._start_bound_real_repository_pilot(
+            store,
+            session_id=session_id,
+            candidate_path=candidate_path,
+            harness_sha=harness_sha,
+            instance=instance,
+            fixture_identity=TASK11M_PILOT_INSTANCE_ID,
+            error_prefix="TASK11M",
+            expected_path=TASK11M_TARGET_PATH,
+            expected_origin=TASK11M_TARGET_ORIGIN,
+            expected_head=TASK11M_TARGET_HEAD,
+            target_path=TASK11M_TARGET_FILE,
+            target_sha256=TASK11M_TARGET_FILE_SHA256,
+            validation_ids=TASK11M_VALIDATION_IDS,
         )
 
     @classmethod
@@ -1242,6 +1293,12 @@ class SupervisedWorkController:
         instance: Mapping[str, Any],
         fixture_identity: str,
         error_prefix: str,
+        expected_path: str,
+        expected_origin: str,
+        expected_head: str,
+        target_path: str,
+        target_sha256: str,
+        validation_ids: tuple[str, ...],
     ) -> "SupervisedWorkController":
         """Start one exact immutable real-repository pilot instance."""
 
@@ -1250,9 +1307,9 @@ class SupervisedWorkController:
         pilot = instance["pilot_manifest"]
         source = instance["source_binding"]
         repository = Path(source["canonical_path"])
-        if str(repository.resolve()) != TASK11J_TARGET_PATH:
+        if str(repository.resolve()) != expected_path:
             raise SupervisedWorkError(f"{error_prefix}_SOURCE_PATH_MISMATCH")
-        if _git(repository, "remote", "get-url", "origin") != TASK11J_TARGET_ORIGIN:
+        if _git(repository, "remote", "get-url", "origin") != expected_origin:
             raise SupervisedWorkError(f"{error_prefix}_SOURCE_ORIGIN_MISMATCH")
         remote = subprocess.run(
             ["git", "-C", str(repository), "ls-remote", "--exit-code", "origin", source["remote_ref"]],
@@ -1262,7 +1319,7 @@ class SupervisedWorkController:
             text=True,
             check=False,
         )
-        if remote.returncode or remote.stdout.split() != [TASK11J_TARGET_HEAD, source["remote_ref"]]:
+        if remote.returncode or remote.stdout.split() != [expected_head, source["remote_ref"]]:
             raise SupervisedWorkError(f"{error_prefix}_DIRECT_REMOTE_PARITY_MISMATCH")
         observed = ReadOnlyExecutor().observe_repository(repository).snapshot
         expected = pilot["repository"]
@@ -1278,11 +1335,11 @@ class SupervisedWorkController:
             raise SupervisedWorkError(f"{error_prefix}_SOURCE_STATE_MISMATCH")
         if observed.submodule_identity != source["submodule_identity"]:
             raise SupervisedWorkError(f"{error_prefix}_SOURCE_STATE_MISMATCH")
-        target = repository / source["readme_path"]
+        target = repository / target_path
         if (
             not target.is_file()
             or target.is_symlink()
-            or hashlib.sha256(target.read_bytes()).hexdigest() != TASK11J_README_SHA256
+            or hashlib.sha256(target.read_bytes()).hexdigest() != target_sha256
         ):
             raise SupervisedWorkError(f"{error_prefix}_SOURCE_STATE_MISMATCH")
         qualification, model_artifact = _qwen25_candidate_binding(candidate_path)
@@ -1310,7 +1367,7 @@ class SupervisedWorkController:
             store,
             session_id=session_id,
             repository=repository,
-            expected_head=TASK11J_TARGET_HEAD,
+            expected_head=expected_head,
             objective=pilot["objective"],
             read_scopes=tuple(pilot["read_scopes"]),
             patch_paths=tuple(pilot["patch_paths"]),
@@ -1323,8 +1380,8 @@ class SupervisedWorkController:
             session_kind=TASK11J_REAL_REPOSITORY_SESSION_KIND,
             fixture_identity=fixture_identity,
             fixture_contract_sha256=fixture_contract_sha256,
-            fixture_content_sha256=TASK11J_README_SHA256,
-            validation_ids=TASK11J_VALIDATION_IDS,
+            fixture_content_sha256=target_sha256,
+            validation_ids=validation_ids,
             response_adapter=INTERACTIVE_NORMALIZED_ADAPTER_BINDING,
             interactive_requirements_status=pilot["requirements_status"],
             pilot_binding=instance,

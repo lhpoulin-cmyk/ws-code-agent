@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "pilot_instance_id": "task11m-gpu-compute-current-state-ollama-version/v1",
+  "checkpoint": "TASK11M-DISTINCT-REAL-MIDFILE-INTERACTIVE-PILOT",
+  "source_binding": {
+    "canonical_path": "/home/louis/helix-arpa/gpu-compute",
+    "origin": "https://github.com/lhpoulin-cmyk/gpu-compute.git",
+    "branch": "master",
+    "remote_ref": "refs/heads/master",
+    "target_path": "CURRENT_STATE.md",
+    "target_sha256": "5a06e84ce48c47bda4503e4b49b1eaf0348f2215d71455e7257f1044200d814d",
+    "submodule_identity": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "model_binding": {
+    "work_role": "INTERACTIVE_PRACTICAL_CODER",
+    "model": "qwen2.5-coder:14b-instruct-q4_K_M",
+    "manifest": "9ec8897f747e246e970bc5cfdda85d22f1123dc2e3d34978a010a75968716849",
+    "runtime_profile": "qwen25-coder-14b-katra-4096",
+    "context": 4096,
+    "placement": "GPU_ONLY"
+  },
+  "generation_method": {
+    "request_fields": [
+      "model",
+      "prompt",
+      "stream"
+    ],
+    "stream": false,
+    "seed_override": "ABSENT",
+    "temperature_override": "ABSENT",
+    "top_p_override": "ABSENT",
+    "top_k_override": "ABSENT",
+    "other_generation_overrides": [],
+    "interpretation": "OBSERVED_REPRODUCIBILITY"
+  },
+  "pilot_manifest": {
+    "pilot_id": "task11m-gpu-compute-current-state-ollama-version/v1",
+    "pilot_policy_id": "INTERACTIVE_PRACTICAL_CODER_REAL_REPOSITORY_PILOT_V1",
+    "repository": {
+      "identity": "e77a2530e9a060d50a6999c0ff97671cb5f0556b62b69abe3d1685ad230eaa51",
+      "head": "282cffabfa165b9d9906a35a9372cb077bdf6153",
+      "source_snapshot_x": "15ffd022f1817067e332c69f0a02ff67cbc39de5a015a37ad7c7ec24890efc72",
+      "index_identity": "d2d15b44a7c0dbfa0c7ccd0c24d239160f90927e897155c16af9756aa620d2cd",
+      "tracked_worktree_identity": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untracked_identity": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "clean": true,
+      "frozen": true
+    },
+    "authority": {
+      "owning_domain": "gpu-compute appliance documentation authority",
+      "authorization_reference": "TASK11M-DISTINCT-REAL-MIDFILE-INTERACTIVE-PILOT"
+    },
+    "requirements_status": "COMPLETE",
+    "objective": "Update the accepted VM 320 Ollama version in CURRENT_STATE.md from `0.32.0` to `0.32.0+helix.repeatlimit.1`.\n\nMake no other change.\n",
+    "read_scopes": [
+      "CURRENT_STATE.md"
+    ],
+    "patch_paths": [
+      "CURRENT_STATE.md"
+    ],
+    "validation": {
+      "authorized_validation_ids": [
+        "task11m-gpu-compute-current-state-visible-v1",
+        "task11m-gpu-compute-current-state-hidden-v1"
+      ],
+      "descriptors": [
+        {
+          "descriptor_id": "task11m-gpu-compute-current-state-visible-v1",
+          "version": "v1",
+          "role": "VISIBLE",
+          "executable": "/usr/bin/python3",
+          "arguments": [
+            "-B",
+            "/home/louis/src/ws-code-agent/validation-assets/task11m-gpu-compute-current-state-visible-v1.py"
+          ],
+          "working_directory": ".",
+          "timeout_seconds": 10,
+          "model_visible_by_id_only": true,
+          "repository_writes_allowed": false,
+          "requires_post_patch": true,
+          "containment_required": true,
+          "source_sha256": "148182bb5abba6484cc912ef743d00bc529337fc44159d88d4fa42de53641f20",
+          "descriptor_identity": "90d29c7ab67f6592c2e5a7ba555f78111bcf6d6527ef5b5fabe947e2136f501a"
+        },
+        {
+          "descriptor_id": "task11m-gpu-compute-current-state-hidden-v1",
+          "version": "v1",
+          "role": "HIDDEN_ORACLE",
+          "executable": "/usr/bin/python3",
+          "arguments": [
+            "-B",
+            "/home/louis/src/ws-code-agent/validation-assets/task11m-gpu-compute-current-state-hidden-v1.py"
+          ],
+          "working_directory": ".",
+          "timeout_seconds": 10,
+          "model_visible_by_id_only": true,
+          "repository_writes_allowed": false,
+          "requires_post_patch": true,
+          "containment_required": true,
+          "source_sha256": "40639cd82991150e42e07f10292573429a362feb6efb865b558fdaafdd106699",
+          "descriptor_identity": "1b1272e6367091f560ec0aae06bc2ffd22ebf616ebf7f64f249596e456701a93"
+        }
+      ]
+    },
+    "worker_envelope_id": "INTERACTIVE_PRACTICAL_CODER_V3_PRODUCTION_ENVELOPE_V1",
+    "runtime_profile": "qwen25-coder-14b-katra-4096",
+    "protocol": {
+      "id": "WS_CODE_AGENT_REQUEST_PROTOCOL_V3_SINGLE_STRUCTURED_EDIT",
+      "render_sha256": "d060b7b15538ce781ecd50cee1478a3395a1122c3476047e8e02efc6b7f36993"
+    },
+    "grounding_policy": "SOURCE_GROUNDED_STRUCTURED_EDIT_V1",
+    "normalizer": {
+      "id": "SINGLE_MARKDOWN_JSON_FENCE_NORMALIZATION_V1",
+      "version": "v1"
+    },
+    "turn_limit": 8,
+    "promotion_authority": "OPERATOR_ONLY"
+  }
+}

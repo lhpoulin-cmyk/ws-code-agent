@@ -216,6 +216,18 @@ result is `FIRST_REAL_LOCAL_REPOSITORY_INTERACTIVE_PILOT_ESCALATED` with reason
 `VALIDATION_FAILED`. The real source remained unchanged, and no automatic
 handoff or promotion occurred.
 
+Task 11M characterizes edit-span selection with a distinct real, requirements-
+complete mid-file task in `gpu-compute/CURRENT_STATE.md`. The unchanged worker
+was first denied before reading, grounded the exact 13,306-byte source, then
+selected a 52-byte bounded target region rather than the whole file. The exact
+replacement produced an isolated one-path candidate; both separately
+implemented contained validators passed, yielding `VALIDATED` and
+`AWAITING_OPERATOR_REVIEW`. The result is
+`DISTINCT_REAL_MIDFILE_INTERACTIVE_PILOT_PASS`, with advisory finding
+`REAL_TASK_EDIT_SCOPE_FAILURE_NOT_SYSTEMATIC_IN_CURRENT_EVIDENCE`. Task 11L
+remains unchanged, broad real-task capability is not claimed, and the frozen
+envelope was not modified.
+
 `qwen25-coder-32b-q4` is retained as an intra-family scale control with
 operator-use role `DELIBERATIVE_OVERNIGHT_CODER`. Its
 exact official Q4_K_M artifact preserves the 14B system/template interface and

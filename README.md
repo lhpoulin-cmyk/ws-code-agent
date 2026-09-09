@@ -10,6 +10,52 @@ The project is intentionally not “give an LLM a shell and see what happens.”
 
 That distinction turned out to matter more than model size.
 
+## Why this exists: `ws-doc-writer` came first
+
+`ws-code-agent` exists because **`ws-doc-writer` worked well enough to make the next engineering question unavoidable**.
+
+`ws-doc-writer` was my first serious attempt to turn local AI into a bounded application rather than a novelty prompt box. It takes approved source material, runs controlled model evaluation, preserves provenance and evidence, exposes an authenticated operator review surface, and keeps generated prose behind an explicit `REVIEW_REQUIRED` boundary. The model can propose; it does not get to quietly publish its own answer.
+
+That project taught me that useful local AI depends as much on the **system around the model** as on the model itself: identity, trusted inputs, explicit ownership, versioned evidence, bounded effects, validation, and a human promotion boundary.
+
+The next logical engineering step was code.
+
+```text
+ws-doc-writer
+      approved source -> model proposal -> evidence -> human review
+
+            |
+            | same governing idea, harder effect surface
+            v
+
+ws-code-agent
+      authorized source -> model proposal -> isolated mutation
+      -> machine validation -> human review
+```
+
+Writing prose is comparatively forgiving because a bad draft can simply remain a bad draft. Coding raises the stakes: a plausible answer can mutate the wrong file, act on stale source, express the right idea through a broken patch, pass syntax while failing the requirement, or acquire more authority than the task intended.
+
+So `ws-code-agent` is not a separate fascination that happened to reuse some Doc Writer files. It is the **next deliberate engineering step from Doc Writer**: take the same operator-governed AI philosophy and test whether it survives contact with executable effects.
+
+### PKI was useful conceptual prior art
+
+The PKI work elsewhere in Helix-ARPA was also useful here as an engineering mental model.
+
+I am **not** claiming that every coding-agent action is cryptographically authenticated through PKI. The useful transfer was conceptual: PKI forced me to think explicitly about identity, trust chains, authenticated peers, scope, custody, and what should happen when authority cannot be proven.
+
+That maps surprisingly well onto agentic systems:
+
+- identity should be explicit rather than inferred;
+- possession of access is not the same thing as authority to act;
+- neighboring systems retain their own authority domains;
+- trust should be established through evidence rather than convenience;
+- escalation is better than silently widening permission; and
+- uncertainty should fail closed.
+
+`ws-doc-writer` had already put some of those ideas into application form: its authenticated review surface, TLS/reverse-proxy boundary, provenance records, and `REVIEW_REQUIRED` state kept generation separate from acceptance. `ws-code-agent` takes the same thinking into a domain where the proposed output can change executable source.
+
+That progression matters to the portfolio because it is how I actually learned this material: **build one bounded system, discover which ideas generalize, then push them into the next harder problem.**
+
 ## Portfolio view
 
 ### What I built
@@ -228,7 +274,7 @@ The project also taught me that a safety boundary can improve the experiment rat
 
 `ws-code-agent` has deliberately narrow application authority.
 
-- `ws-doc-writer` is a separate document-writing application and lineage source, not something this agent silently absorbed;
+- **`ws-doc-writer` is the direct engineering predecessor and lineage source for this project.** Its bounded proposal-and-review model is why `ws-code-agent` exists; this repository carries that pattern into executable source mutation without merging the two application authorities;
 - `ws-cp` owns workstation and local Ollama service mechanics;
 - GPU/runtime ownership belongs to the relevant GPU/compute control planes;
 - source repositories retain their own authority;
@@ -252,6 +298,6 @@ That is the same `*-cp` philosophy used across hypervisors, networking, storage,
 
 ## Engineering focus
 
-**Local LLMs · agentic systems · bounded authority · source grounding · structured tool protocols · isolated code mutation · deterministic validation · model evaluation · Ollama · GPU inference · Python · Git · escalation policy · human-in-the-loop systems**
+**Local LLMs · agentic systems · bounded authority · source grounding · structured tool protocols · isolated code mutation · deterministic validation · model evaluation · Ollama · GPU inference · Python · Git · PKI-influenced trust design · escalation policy · human-in-the-loop systems**
 
 In plain language: I am not trying to teach a model to be trusted. I am trying to build a system where **trust is never the only thing standing between a model and the source tree**.
